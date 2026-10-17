@@ -25,10 +25,10 @@ void app_main(void)
     // after repeated crashes during boot only the console and the display come up
     bool safe = selftest_boot_begin();
     ESP_ERROR_CHECK(settings_init());
+    ai_console_register();   // "ai" answers "not ready" until selftest_ready() (and in safe mode)
     // the console comes this early so a board that fails later is still reachable. Its own
     // failure is not fatal (an abort here would boot-loop even in safe mode); the self-test
     // rejects a pending OTA image without a console.
-    ai_console_register();   // answers "not ready" until selftest_ready() (and in safe mode)
     if (devconsole_start() != ESP_OK) {
         ESP_LOGE(TAG, "dev console unavailable");
     }
