@@ -4,6 +4,7 @@
 #include "ui_chat.h"
 #include "ui_geom.h"
 #include "ui_internal.h"
+#include "ui_list.h"
 #include "ui_orb.h"
 #include "ui_rim.h"
 #include "ui_scr.h"
@@ -885,8 +886,11 @@ static void audit_visit(lv_obj_t *obj, void *ctx)
     }
     lv_area_t a;
     // the arc title draws along r 148 inside its box, and the rim draws at r <= 168 by construction;
-    // transparent hit zones may extend past the circle (0.4)
-    bool exempt = lv_obj_check_type(obj, &lv_arclabel_class) || obj == ui_rim_obj() || !draws_something(obj);
+    // transparent hit zones may extend past the circle (0.4); list rows fade out towards the rim on purpose
+    // (3.7: fully opaque only within 79 px of the centre line)
+    bool fading = ui_list_is_row(obj) && lv_obj_get_style_opa(obj, LV_PART_MAIN) < LV_OPA_COVER;
+    bool exempt = lv_obj_check_type(obj, &lv_arclabel_class) || obj == ui_rim_obj() || !draws_something(obj) ||
+                  fading;
     if (!exempt && ui_obj_visible_area(obj, &a)) {
         float r = ui_obj_rmax(obj, &a);
         if (!ui_geom_fits(r)) {

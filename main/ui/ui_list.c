@@ -27,10 +27,24 @@ typedef struct {
     lv_event_cb_t cb;
 } row_t;
 
+static void row_delete_cb(lv_event_t *e);
+
+// Rows are recognised by their delete callback, never by dereferencing user data: other objects keep integers
+// there (chat wrappers hold their entry id)
 static row_t *meta(lv_obj_t *obj)
 {
-    row_t *m = obj ? lv_obj_get_user_data(obj) : NULL;
-    return m && m->magic == ROW_MAGIC ? m : NULL;
+    if (!obj) {
+        return NULL;
+    }
+    uint32_t n = lv_obj_get_event_count(obj);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_event_dsc_t *d = lv_obj_get_event_dsc(obj, i);
+        if (d && lv_event_dsc_get_cb(d) == row_delete_cb) {
+            row_t *m = lv_obj_get_user_data(obj);
+            return m && m->magic == ROW_MAGIC ? m : NULL;
+        }
+    }
+    return NULL;
 }
 
 bool ui_list_is_row(lv_obj_t *obj)

@@ -115,11 +115,14 @@ void ui_onboard_check(void)
 
 static bool back_cb(void)
 {
-    // PWR / back = previous step; O1 stays
+    // PWR / back = previous step; on O1 it leaves the flow to H (the only way out without finishing it, so a
+    // device without a key is never stuck in the onboarding)
     if (s_step > 1) {
         ui_nav_replace(UI_SCR_ONBOARD, (uint32_t)(s_step - 1));
+        return true;
     }
-    return true;
+    s_active = false;
+    return false;
 }
 
 static void loaded_cb(lv_event_t *e)
