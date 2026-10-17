@@ -1,0 +1,1620 @@
+{
+ "research:openrouter-ai": {
+  "findings": [
+   {
+    "topic": "(1) Audio input format: chat completions",
+    "claim": "POST https://openrouter.ai/api/v1/chat/completions. Put the audio in a user message as a content part: {\"type\":\"input_audio\",\"input_audio\":{\"data\":\"<base64 of raw file bytes>\",\"format\":\"wav\"}}, next to a {\"type\":\"text\",\"text\":\"...\"} part. The audio must be base64. The docs say URLs are not supported for audio. Accepted format values: wav, mp3, aiff, aac, ogg, flac, m4a, pcm16, pcm24. Support varies by model.",
+    "source_url": "https://openrouter.ai/docs/guides/overview/multimodal/audio",
+    "confidence": "high"
+   },
+   {
+    "topic": "(1) Audio input: size limits",
+    "claim": "OpenRouter does not publish a byte limit for chat completions. The API reference only lists HTTP 413 'Request payload too large'. For Gemini the upstream limit is 20 MB per request in total (prompt plus inline files). Gemini counts 32 tokens per second of audio (1 min = 1,920 tokens), downsamples input to 16 kbps and mixes it to mono. So a 16 kHz, 16-bit mono WAV (about 32 KB/s raw, about 43 KB/s as base64; 10 s is about 430 KB) is plenty. Higher sample rates only add upload time.",
+    "source_url": "https://ai.google.dev/gemini-api/docs/audio",
+    "confidence": "high"
+   },
+   {
+    "topic": "(1) On-device compression option",
+    "claim": "Espressif's esp_audio_codec v2.6.2 supports ESP32-S3. It encodes AAC, OPUS, ADPCM, G711 and others, and decodes MP3, AAC, OPUS, FLAC and others. Encoding the mic stream as AAC (ADTS) and sending format 'aac' (an accepted OpenRouter input format) could shrink uploads several times compared with WAV. The decoder can also play MP3 TTS.",
+    "source_url": "https://components.espressif.com/components/espressif/esp_audio_codec",
+    "confidence": "medium"
+   },
+   {
+    "topic": "(2) Audio-input models: cheapest candidates (live /models data, 2026-10-17)",
+    "claim": "GET /api/v1/models?input_modalities=audio returned 48 entries. Prices are per 1M tokens (input / output / audio-in): google/gemini-3.1-flash-lite (GA, May 2026) $0.25 / $1.50 / $0.50, reasoning optional (effort 'none' allowed, default 'minimal'). google/gemini-3.5-flash-lite $0.30 / $2.50 / $0.30, reasoning mandatory (default 'minimal'). google/gemini-2.5-flash-lite $0.10 / $0.40 / $0.30, but expiration_date is 2026-10-20 (3 days away), so avoid it. mistralai/voxtral-small-24b-2507 $0.10 / $0.30, audio listed as 0.0001 per unit, 32k context. qwen/qwen3.8-omni-flash $0.15 / $0.47 (Alibaba only). xiaomi/mimo-v2.6-flash $0.14 / $0.28, no separate audio price. openai/gpt-audio-mini $0.60 / $2.40, audio in $0.60, audio out $2.40, outputs text+audio. nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free is free.",
+    "source_url": "https://openrouter.ai/api/v1/models?input_modalities=audio",
+    "confidence": "high"
+   },
+   {
+    "topic": "(2) Gemini official pricing cross-check",
+    "claim": "Google's pricing page agrees. Gemini 3.1 Flash-Lite: input $0.25 (text/image/video) and $0.50 (audio) per 1M, output $1.50. Gemini 3.5 Flash-Lite: input $0.30 (including audio), output $2.50. At 32 tokens/s, one minute of speech costs about $0.00096 on 3.1 Flash-Lite and about $0.00058 on 3.5 Flash-Lite. A typical turn (10 s audio, about 300 system tokens, about 150 output tokens) costs roughly $0.0005.",
+    "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
+    "confidence": "high"
+   },
+   {
+    "topic": "(2) Gemini 3.1 Flash-Lite routing tiers",
+    "claim": "Gemini 3.1 Flash-Lite has several provider endpoints. google-ai-studio and vertex/global charge $0.25 / $1.50, audio $0.50. The /flex tiers cost half ($0.125 / $0.75, audio $0.25). The /priority tiers cost $0.45 / $2.70. Vertex eu/us cost $0.275 / $1.65. The ':floor' suffix uses flex endpoints and ':nitro' uses priority endpoints.",
+    "source_url": "https://openrouter.ai/api/v1/models/google/gemini-3.1-flash-lite/endpoints",
+    "confidence": "high"
+   },
+   {
+    "topic": "(2) Gemini 3.1 Flash-Lite capability",
+    "claim": "Google's model card lists audio and video inputs, MMMLU multilingual 88.9% and an output speed of 363 tokens/s. It names translation as a target use. It contains no Russian-specific ASR benchmark.",
+    "source_url": "https://deepmind.google/models/model-cards/gemini-3-1-flash-lite/",
+    "confidence": "medium"
+   },
+   {
+    "topic": "(2) Voxtral: Russian not listed",
+    "claim": "The Voxtral Small model card lists its strongest languages as English, Spanish, French, Portuguese, Hindi, German, Dutch and Italian. Russian is not named. Context is 32k (about 30 min for transcription). This makes it a weaker choice for Russian.",
+    "source_url": "https://huggingface.co/mistralai/Voxtral-Small-24B-2507",
+    "confidence": "high"
+   },
+   {
+    "topic": "(3) Speech-to-text endpoint",
+    "claim": "OpenRouter now has POST /api/v1/audio/transcriptions (announced May 1, 2026). It accepts JSON {\"model\":\"openai/whisper-large-v3-turbo\",\"input_audio\":{\"data\":\"<base64>\",\"format\":\"wav\"},\"language\":\"ru\"} or OpenAI-style multipart (file, model). Formats: wav, mp3, flac, m4a, ogg, webm, aac. Multipart is capped at 25 MB and processing at 60 s. The response is {\"text\":..., \"usage\":{\"seconds\",\"cost\",...}}. It is not streamed. Transcription models are listed via GET /api/v1/models?output_modalities=transcription.",
+    "source_url": "https://openrouter.ai/docs/guides/overview/multimodal/stt",
+    "confidence": "high"
+   },
+   {
+    "topic": "(3) STT model prices",
+    "claim": "26 transcription models are listed. STT is billed per second of audio. openai/whisper-large-v3-turbo costs $0.00000333/s on DeepInfra (about $0.012/h) and $0.0000111/s on Groq ($0.04/h). openai/whisper-large-v3 costs $0.0000075/s, openai/whisper-1 $0.0001/s. openai/gpt-4o-mini-transcribe is token-billed at $1.25 / $5 per 1M. qwen/qwen3-asr-0.6b costs $0.00000333/s.",
+    "source_url": "https://openrouter.ai/api/v1/models/openai/whisper-large-v3-turbo/endpoints",
+    "confidence": "high"
+   },
+   {
+    "topic": "(3) Text-to-speech endpoint",
+    "claim": "POST /api/v1/audio/speech takes JSON {model, input, voice, response_format: 'mp3'|'pcm' (default pcm), speed, instructions, provider}. The response is raw audio bytes, not JSON. Content-Type is audio/mpeg or audio/pcm (16-bit little-endian), plus an X-Generation-Id header. Streaming is not required. The docs recommend pcm when latency matters and suggest splitting long text to get the first audio chunk sooner. Most models bill per character. Gemini TTS bills per token.",
+    "source_url": "https://openrouter.ai/docs/api/api-reference/tts/create-speech",
+    "confidence": "high"
+   },
+   {
+    "topic": "(3) TTS models with Russian",
+    "claim": "GET /api/v1/models?output_modalities=speech returned 35 models. Ones that fit Russian: google/gemini-3.8-flash-lite-tts ($0.50 per 1M input-text tokens, $6 per 1M output-audio tokens, 30 voices such as Kore/Puck/Charon). microsoft/mai-voice-2.1-flash ($15 per 1M characters, ru-RU voices Lev, Masha, Grant, Harper). fish-audio/s2.1-pro ($15 per 1M chars; a :free variant exists). hexgrad/kokoro-82m is the cheapest ($0.62 per 1M chars) but has no Russian (8 languages). Voxtral Mini TTS is MP3-only according to the OpenRouter tutorial.",
+    "source_url": "https://openrouter.ai/api/v1/models?output_modalities=speech",
+    "confidence": "high"
+   },
+   {
+    "topic": "(3) Gemini TTS: Russian, format, cost",
+    "claim": "Gemini 3.8 Flash-Lite TTS supports 100+ languages, Russian included. Native output is 24 kHz mono 16-bit PCM. Audio output is 25 tokens per second, so at $6/M it costs about $0.00015 per second of speech (about $0.009/min). Google's page says the price doubles to $12/M on 2027-01-01.",
+    "source_url": "https://ai.google.dev/gemini-api/docs/speech-generation",
+    "confidence": "high"
+   },
+   {
+    "topic": "(3) Audio output from chat models",
+    "claim": "Chat completions can also return audio with \"modalities\":[\"text\",\"audio\"] and \"audio\":{\"voice\":\"alloy\",\"format\":\"wav|mp3|flac|opus|pcm16\"}. This needs stream:true. Audio arrives as SSE chunks in choices[].delta.audio.data (base64), with delta.audio.transcript alongside. Only openai/gpt-audio and openai/gpt-audio-mini (plus the Lyria music models) have audio output.",
+    "source_url": "https://openrouter.ai/docs/features/multimodal/audio",
+    "confidence": "high"
+   },
+   {
+    "topic": "(3) Stale docs example",
+    "claim": "The TTS guide's example model openai/gpt-4o-mini-tts-2025-12-15 returns 404 'Model not found' from GET /api/v1/model/... and does not appear in the speech listing. Do not hardcode it.",
+    "source_url": "https://openrouter.ai/api/v1/model/openai/gpt-4o-mini-tts-2025-12-15",
+    "confidence": "high"
+   },
+   {
+    "topic": "(4) One call for transcript + answer",
+    "claim": "Structured outputs work with response_format {\"type\":\"json_schema\",\"json_schema\":{\"name\":...,\"strict\":true,\"schema\":{...}}}. Gemini 3.1 and 3.5 Flash-Lite list structured_outputs and response_format among their parameters. Add provider.require_parameters:true so the request only goes to endpoints that honor the schema. One call can therefore return {transcript, reply} or {src_lang, transcript, translation} from audio input.",
+    "source_url": "https://openrouter.ai/docs/guides/features/structured-outputs",
+    "confidence": "high"
+   },
+   {
+    "topic": "(4) Latency controls",
+    "claim": "reasoning {\"effort\":\"none\"} or {\"enabled\":false} turns off thinking. It is rejected on models where reasoning is mandatory (for example gemini-3.5-flash-lite, where 'minimal' is the floor). OpenRouter maps Gemini 3 efforts to thinkingLevel. Provider routing supports sort by latency, preferred_max_latency {p90: ...}, and a 'models' array for automatic fallback. OpenRouter notes extra latency during the first 1-2 min of cold edge caches and when credit balance is low.",
+    "source_url": "https://openrouter.ai/docs/guides/best-practices/reasoning-tokens",
+    "confidence": "high"
+   },
+   {
+    "topic": "(4) Routing and fallback",
+    "claim": "The provider object supports order, sort ('price'|'throughput'|'latency'), allow_fallbacks, require_parameters, data_collection:'deny', zdr, only/ignore, and preferred_max_latency/preferred_min_throughput. A top-level \"models\": [\"primary\",\"fallback\"] array gives model-level failover. The ':nitro' suffix uses priority endpoints and ':floor' uses the cheapest (flex) ones.",
+    "source_url": "https://openrouter.ai/docs/guides/routing/provider-selection",
+    "confidence": "high"
+   },
+   {
+    "topic": "(5) Model list endpoint and filtering",
+    "claim": "GET /api/v1/models takes input_modalities (text, image, audio, file), output_modalities, supported_parameters, sort (e.g. pricing-low-to-high), q, offset/limit. If output_modalities is omitted, only text-output models are returned. Each entry has id, name, architecture.input_modalities/output_modalities, pricing.{prompt, completion, audio, input_audio_cache, ...} as USD per token (strings), supported_parameters, reasoning.{mandatory, supported_efforts}, supported_voices (TTS) and expiration_date. Tested: ?input_modalities=audio&output_modalities=text&sort=pricing-low-to-high&limit=12 works, returns total_count and links.next, and is about 21 KB per 12 models (the full audio list is about 96 KB). The docs say auth is required, but unauthenticated calls also returned 200 in testing.",
+    "source_url": "https://openrouter.ai/docs/api-reference/models/get-models",
+    "confidence": "high"
+   },
+   {
+    "topic": "(5) Picker filtering gotchas",
+    "claim": "The audio-input list also contains: ':batch' variants, which are for the async Batch API (POST /api/v1/batches, 24 h window) and unusable for live voice; router entries (openrouter/auto, openrouter/auto-beta) whose pricing is -1; '~google/gemini-flash-latest' aliases; and models with a non-null expiration_date. Filter all of these out on the device. For a TTS picker use output_modalities=speech and read supported_voices.",
+    "source_url": "https://openrouter.ai/docs/batch-quickstart",
+    "confidence": "medium"
+   },
+   {
+    "topic": "(6) Required and optional headers",
+    "claim": "Required: 'Authorization: Bearer <OPENROUTER_API_KEY>' and 'Content-Type: application/json'. Optional attribution: 'HTTP-Referer: <app URL>' (needed for rankings), 'X-OpenRouter-Title: <app name>' ('X-Title' is still accepted for backward compatibility), and X-OpenRouter-Categories / X-OpenRouter-App-Visibility: hidden.",
+    "source_url": "https://openrouter.ai/docs/app-attribution",
+    "confidence": "high"
+   },
+   {
+    "topic": "(6) TLS chain for openrouter.ai",
+    "claim": "Observed with openssl on 2026-10-17: Cloudflare edge, TLS 1.3 (TLS_AES_256_GCM_SHA384), ECDSA P-256 leaf CN=openrouter.ai valid Oct 17 2026 to Jan 15 2027 (about 90 days, so do not pin the leaf). Chain: leaf <- Google Trust Services 'WE1' <- 'GTS Root R4', with GTS Root R4 cross-signed by 'GlobalSign Root CA'. If you embed PEMs, include both GTS Root R4 and GlobalSign Root CA.",
+    "source_url": "https://openrouter.ai",
+    "confidence": "high"
+   },
+   {
+    "topic": "(6) ESP-IDF certificate bundle",
+    "claim": "ESP-IDF's x509 certificate bundle (esp_crt_bundle_attach via esp_http_client_config_t/esp_tls_cfg_t .crt_bundle_attach) ships Mozilla NSS roots. There is a full bundle (130+ roots) and a pre-selected 'common' subset (about 38 roots, about 99% market-share coverage). It can be updated through OTA. This is the simplest robust option against certificate rotation.",
+    "source_url": "https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/protocols/esp_crt_bundle.html",
+    "confidence": "high"
+   },
+   {
+    "topic": "Free-model limits",
+    "claim": "':free' models are limited to 20 requests/min, plus 50/day if less than 10 credits have ever been purchased or 1000/day with at least 10. GET /api/v1/key returns limit_remaining, usage, is_free_tier and free_model_daily_requests, which is useful for a balance screen in Settings.",
+    "source_url": "https://openrouter.ai/docs/api/reference/limits",
+    "confidence": "high"
+   },
+   {
+    "topic": "Gemini 2.5 generation status",
+    "claim": "Google says access to the 2.5 models is now limited to users who already used them. New projects are pointed to 3.5 Flash-Lite or 3.8 Flash. Current stable Flash-Lite models are gemini-3.5-flash-lite and gemini-3.1-flash-lite.",
+    "source_url": "https://ai.google.dev/gemini-api/docs/models",
+    "confidence": "high"
+   }
+  ],
+  "recommendation": "Default LLM: google/gemini-3.1-flash-lite. Fallback: google/gemini-3.5-flash-lite, sent together as \"models\": [\"google/gemini-3.1-flash-lite\", \"google/gemini-3.5-flash-lite\"] for automatic failover.\n\nWhy this default: 3.1 Flash-Lite is GA, accepts audio, supports structured outputs, and allows reasoning {\"effort\":\"none\"} for the lowest latency. It costs $0.25 / $1.50 per 1M tokens and $0.50 per 1M audio tokens, about $0.001 per minute of speech and about $0.0005 per turn. 3.5 Flash-Lite is cheaper on audio ($0.30/M) but always reasons (minimum 'minimal') and costs $2.50/M on output.\n\nDo not use:\n- gemini-2.5-flash-lite: it expires 2026-10-20.\n- Any ':batch' variant: these are async only.\n- Voxtral: Russian is not among its listed languages.\n- gpt-audio-mini as the main path: it needs SSE with base64 audio, and its listed audio price looks anomalous.\n\nPipeline per press:\n1. Record 16 kHz, 16-bit mono into PSRAM. Wrap it as WAV, or encode AAC with esp_audio_codec to shrink the upload, then base64 it.\n2. POST /api/v1/chat/completions with a text part (system prompt) plus {\"type\":\"input_audio\",\"input_audio\":{\"data\":..., \"format\":\"wav\"}}. Also send reasoning {\"effort\":\"none\"}, response_format json_schema with strict:true, and provider {\"require_parameters\":true, \"sort\":\"latency\"}.\n   - Assistant mode schema: {transcript, reply}.\n   - Translator mode schema: {src_lang, transcript, translation}. The prompt gives the two selected languages and tells the model to translate into whichever one was not spoken.\n   - Show the transcript and reply in the chat UI.\n3. If voice output is on, POST /api/v1/audio/speech with model google/gemini-3.8-flash-lite-tts (supports Russian, about $0.009/min, price doubles 2027-01-01), response_format \"pcm\" (16-bit LE, 24 kHz mono; read the rate from Content-Type). Feed bytes into I2S as they arrive. TTS fallback: microsoft/mai-voice-2.1-flash with voice ru-RU-Masha or ru-RU-Lev ($15 per 1M chars). For long replies, split TTS by sentence.\n4. Optional cheaper STT-only path for a \"transcribe\" setting: /api/v1/audio/transcriptions with openai/whisper-large-v3-turbo and language \"ru\" (about $0.012/h). It adds a second round trip, so it is not the default.\n\nSettings picker:\n- LLM list: GET /api/v1/models?input_modalities=audio&output_modalities=text&sort=pricing-low-to-high. Drop ids ending in ':batch', the 'openrouter/' routers, anything with negative prices, and anything with a non-null expiration_date. Show name plus pricing.prompt, completion and audio (multiply by 1e6 for $/M).\n- TTS list: GET /api/v1/models?output_modalities=speech. Use supported_voices for the voice list.\n- Balance: GET /api/v1/key.\n- Parse the model JSON (up to about 100 KB) into PSRAM.\n\nHeaders: Authorization: Bearer <key> and Content-Type: application/json. Optionally add HTTP-Referer and X-OpenRouter-Title (X-Title is the legacy name).\n\nTLS:\n- Use esp_crt_bundle_attach with the full Mozilla bundle. If you embed PEMs instead, include GTS Root R4 and GlobalSign Root CA. Never pin the 90-day leaf certificate.\n- Reuse one keep-alive connection for the LLM and TTS calls to avoid a second handshake.\n- Keep the key in NVS (ideally encrypted) and enter it with the round-screen keyboard.",
+  "open_questions": [
+   "OpenRouter publishes no byte limit for the chat-completions body; only HTTP 413 is listed. Gemini's upstream inline limit is 20 MB, so short PTT clips are well below any limit, but the exact OpenRouter cap is unconfirmed.",
+   "Real time-to-first-token for gemini-3.1-flash-lite with audio input through OpenRouter is unknown. The endpoints API returned latency_last_30m = null. Measure it end-to-end on the device (upload + inference + TTS first byte).",
+   "Russian ASR accuracy of Gemini 3.1 and 3.5 Flash-Lite is not benchmarked in the sources; the model card gives only MMMLU 88.9%. A quick A/B test against whisper-large-v3-turbo on Russian clips is advisable.",
+   "Does /api/v1/audio/speech with Gemini TTS actually stream progressively (first bytes before synthesis finishes), or does it return the whole buffer at once? The docs say 'raw audio bytestream' and the SDKs support streaming reads, but progressive delivery is unverified.",
+   "PCM sample rate per TTS model: 24 kHz mono is documented for MAI-Voice and is Gemini's native rate. Other models may differ, so the firmware should parse the rate/channels parameters in Content-Type.",
+   "Voxtral Small's 'audio' price of 0.0001: the unit is unclear (a search snippet says $100 per million seconds, but I could not confirm this on an opened page).",
+   "gpt-audio-mini lists audio input and output at $0.60 and $2.40 per 1M, the same as its text prices. That looks inconsistent with gpt-audio ($32/$64), so it may be a listing anomaly.",
+   "Whether all providers of xiaomi/mimo-v2.6-flash and qwen/qwen3.8-omni-flash actually accept audio (neither lists a separate audio price) is unverified, as is their Russian quality.",
+   "Whether the ESP-IDF 'common' (CMN) bundle subset includes GTS Root R4 / GlobalSign Root CA is unverified. Use the FULL bundle, or test the CMN bundle against openrouter.ai.",
+   "GET /api/v1/models answered without Authorization in testing, but the docs say auth is required. Send the key anyway in case this is enforced later."
+  ]
+ },
+ "research:tts-stt": {
+  "findings": [
+   {
+    "topic": "OpenRouter TTS endpoint (works with only an OpenRouter key)",
+    "claim": "OpenRouter has an OpenAI-compatible TTS endpoint: POST https://openrouter.ai/api/v1/audio/speech with header Authorization: Bearer <OPENROUTER_KEY>. Body fields: model, input, voice, instructions, speed, response_format. response_format accepts only 'mp3' or 'pcm', and the default is 'pcm'. The response body is raw audio bytes, not JSON: Content-Type audio/pcm (16-bit little-endian) or audio/mpeg, plus an X-Generation-Id header. Errors come back as JSON with status 400/401/402/429/5xx. OpenRouter announced the endpoint on 2026-05-01.",
+    "source_url": "https://openrouter.ai/docs/guides/overview/multimodal/tts",
+    "confidence": "high"
+   },
+   {
+    "topic": "OpenRouter TTS PCM sample rate",
+    "claim": "The PCM sample rate depends on the provider. The docs state 24 kHz mono PCM for the Azure MAI-Voice models, and the TTS collection lists 24 kHz/16-bit mono PCM for Gemini TTS. The API reference only says '16-bit little-endian'. Gemini TTS accepts only pcm and returns 400 if mp3 is requested. Voxtral Mini TTS returns only MP3. The firmware should read the rate from the response headers (the tutorial says audio/pcm carries optional rate and channels parameters) and fall back to 24000 Hz.",
+    "source_url": "https://openrouter.ai/docs/api/api-reference/tts/create-speech",
+    "confidence": "medium"
+   },
+   {
+    "topic": "OpenRouter speech model catalogue and prices (Models API, fetched 2026-10-17)",
+    "claim": "Per-character prices from GET /api/v1/models?output_modalities=speech: hexgrad/kokoro-82m $0.62/M chars (8 languages, no Russian); fish-audio/drama-3 $2/M UTF-8 bytes (80% promo discount; Cyrillic is 2 bytes per char, so about $4 per 1M Russian chars); heygen/heygen-voice-1-turbo $4/M (50% promo); microsoft/mai-voice-2.1-flash $15/M; x-ai/grok-voice-tts-1.0 $15/M; mistralai/voxtral-mini-tts-2603 $16/M; elevenlabs/eleven-flash-v2.5 and turbo-v2.5 $20/M (50% promo); microsoft/mai-voice-2.1 $22/M; elevenlabs multilingual-v2/v3/v4 $40/M; deepgram/aura-2 $30/M. Token-priced: google/gemini-3.8-flash-lite-tts $0.50/M input + $6/M audio tokens; gemini-3.8-flash-tts $0.50 + $9/M; gemini-3.1-flash-tts-preview $1 + $20/M. Free: fish-audio/s2.1-pro-free:free.",
+    "source_url": "https://openrouter.ai/api/v1/models?output_modalities=speech",
+    "confidence": "high"
+   },
+   {
+    "topic": "OpenAI TTS on OpenRouter",
+    "claim": "The TTS docs still use openai/gpt-4o-mini-tts-2025-12-15 in an example, but no OpenAI TTS model is listed in the speech Models API today. /api/v1/models/openai/gpt-4o-mini-tts/endpoints and /openai/tts-1/endpoints both return 404. Do not hard-code OpenAI TTS as the OpenRouter default.",
+    "source_url": "https://openrouter.ai/api/v1/models?output_modalities=speech",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Microsoft MAI-Voice-2.1-Flash via OpenRouter (Russian)",
+    "claim": "Microsoft MAI-Voice-2.1-Flash is served by Azure, costs $15/M chars, and is described as low-latency. It has Russian voices: ru-RU-Grant, ru-RU-Harper, ru-RU-Lev and ru-RU-Masha, each with the ':MAI-Voice-2.1-Flash' suffix. The voice's locale sets the synthesis language, so the translator needs a voice for each target language. It covers 28 locales: cs, da, de, en (AU/GB/IN/US), es (ES/MX), fi, fr, hi, hu, id, it, ko, nb, nl, pl, pt (BR/PT), ro, ru, sv, th, tr, vi, zh-CN. It has no Japanese, Ukrainian or Arabic. Output is mp3 or 24 kHz mono pcm.",
+    "source_url": "https://openrouter.ai/microsoft/mai-voice-2.1-flash",
+    "confidence": "high"
+   },
+   {
+    "topic": "Gemini TTS (direct API and via OpenRouter)",
+    "claim": "Gemini 3.8 Flash TTS supports 130+ languages and Gemini 3.8 Flash-Lite TTS supports 100+. Russian is explicitly listed, and there are 30 prebuilt voices. Called directly (POST https://generativelanguage.googleapis.com/v1beta/interactions), a normal request returns WAV (24 kHz, mono, 16-bit) and stream:true returns headerless raw L16 24 kHz PCM. Pricing: audio is 25 tokens per second. Flash-Lite TTS output costs $6/M tokens until 2026-12-31 and $12/M from 2027-01-01 (Flash: $9, then $18). That is about $0.009 per minute of speech now. My estimate is roughly $10-12 per 1M Russian characters at about 13-15 chars/s. Google AI Studio has a free tier.",
+    "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
+    "confidence": "high"
+   },
+   {
+    "topic": "Gemini API availability in Russia",
+    "claim": "Russia and Belarus are not on the list of regions where the Gemini API and Google AI Studio are available.",
+    "source_url": "https://ai.google.dev/gemini-api/docs/available-regions",
+    "confidence": "high"
+   },
+   {
+    "topic": "OpenAI TTS (direct)",
+    "claim": "Endpoint: POST https://api.openai.com/v1/audio/speech. Models: gpt-4o-mini-tts (supports an 'instructions' field for tone/accent/speed), tts-1, tts-1-hd. 13 voices (alloy, ash, ballad, coral, echo, fable, nova, onyx, sage, shimmer, verse, marin, cedar). Formats: mp3 (default), opus, aac, flac, wav, pcm. pcm is 24 kHz 16-bit signed little-endian with no header. Real-time playback is supported through chunked transfer encoding. Russian is in the supported-language list, but the voices are 'optimized for English'. gpt-4o-mini-tts accepts at most 2000 input tokens.",
+    "source_url": "https://developers.openai.com/api/docs/guides/text-to-speech",
+    "confidence": "high"
+   },
+   {
+    "topic": "OpenAI TTS/STT pricing and Russia availability",
+    "claim": "TTS: tts-1 $15/M chars, tts-1-hd $30/M chars, gpt-4o-mini-tts $0.60/M text input tokens + $12/M audio output tokens. STT: whisper-1 $0.006/min, gpt-4o-transcribe $0.006/min, gpt-transcribe $0.0045/min, gpt-4o-mini-transcribe $0.003/min. Russia and Belarus are not on OpenAI's list of supported countries, and using the API from an unsupported country can get the account blocked.",
+    "source_url": "https://developers.openai.com/api/docs/supported-countries",
+    "confidence": "high"
+   },
+   {
+    "topic": "OpenRouter access from Russia",
+    "claim": "OpenRouter has made no official statement. According to Russian tech media: on 2026-05-11 OpenRouter emailed Russia-linked accounts that it would stop processing their payments ('does not support usage, billing, or payment methods associated with your geography'). Existing credits kept working. Later, accounts with a Russian billing address were cut off from OpenAI, Anthropic and Google models ('All other models remain available'). From about 2026-06-27 there are reports of HTTP 403 'Not available in your region' for requests from Russian IP addresses.",
+    "source_url": "https://habr.com/ru/news/1034012/",
+    "confidence": "medium"
+   },
+   {
+    "topic": "ESP32 playback libraries (MP3 is possible on the S3 if needed)",
+    "claim": "The ESP32-audioI2S library (schreibfaul1) decodes wav, mp3, aac, flac, opus and vorbis on the ESP32-S3. It has a built-in openai_speech(), which posts stream:true to api.openai.com/v1/audio/speech with the host hard-coded (it would need a patch to point at openrouter.ai). It also has connecttospeech(), which streams Google Translate TTS MP3 over plain HTTP port 80 from translate.google.com.vn. Raw PCM avoids a decoder, but MP3 is a workable fallback.",
+    "source_url": "https://github.com/schreibfaul1/ESP32-audioI2S",
+    "confidence": "high"
+   },
+   {
+    "topic": "Unofficial Google Translate TTS (free, no key)",
+    "claim": "GET https://translate.google.com/translate_tts?ie=UTF-8&tl=<lang>&client=tw-ob&q=<urlencoded>. No auth and no SLA; it returns audio/mpeg (MP3, so a decoder is needed). Tested on 2026-10-17: a 196-character Russian string returned 200 audio/mpeg, and a 210-character string returned HTTP 400. Text must therefore be split into chunks of about 200 characters or less. The gTTS library uses 100-character chunks (GOOGLE_TTS_MAX_CHARS=100).",
+    "source_url": "https://raw.githubusercontent.com/pndurette/gTTS/main/gtts/tts.py",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Microsoft Edge read-aloud TTS (free, unofficial, fragile)",
+    "claim": "Connects by WebSocket to wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4 with a time-windowed Sec-MS-GEC token (5-minute windows, so the clock must be accurate). In October 2026 Microsoft made a 'Sec-MS-GEC v2' token mandatory, built from an obfuscated custom SHA-256/CS64 scheme. Old clients got 403 until edge-tts 7.3.0 (2026-10-13). edge-tts requests audio-24khz-48kbitrate-mono-mp3, custom SSML is blocked, and Russian voices include ru-RU-SvetlanaNeural and ru-RU-DmitryNeural. It is free but can break whenever Microsoft changes the token, and it is not an official API.",
+    "source_url": "https://github.com/rany2/edge-tts/pull/492",
+    "confidence": "high"
+   },
+   {
+    "topic": "Yandex SpeechKit (works in Russia)",
+    "claim": "Auth header: 'Authorization: Api-Key <key>' (service-account key, no folderId needed) or 'Bearer <IAM>'. API v1: POST https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize with URL-encoded fields text (max 5000 chars), lang, voice, speed, and format = lpcm, oggopus (default) or mp3. lpcm is raw PCM with sampleRateHertz 8000, 16000 or 48000, which is ideal for I2S. API v3 (REST https://tts.api.cloud.yandex.net/tts/v3/utteranceSynthesis) offers rawAudio LINEAR16_PCM (default 22050 Hz) or WAV/MP3/OGG_OPUS and returns streamed JSON with base64 audioChunk.data. Synthesis languages are only Russian (about 16+ voices), English, German, Hebrew, Kazakh and Uzbek, which is weak for the translator mode.",
+    "source_url": "https://aistudio.yandex.ru/docs/en/speechkit/tts/request",
+    "confidence": "high"
+   },
+   {
+    "topic": "Yandex SpeechKit pricing",
+    "claim": "Prices including VAT: API v1 synthesis 1,342 RUB per 1M characters (USD list $11.00/M). API v3 0.1626 RUB per request, billed per started 250-character unit, which is about 650 RUB/M if units are full; the livetts model costs 0.25 RUB per unit. Recognition costs 0.1626 RUB per 15 seconds. No free tier is listed.",
+    "source_url": "https://aistudio.yandex.ru/docs/ru/speechkit/pricing",
+    "confidence": "high"
+   },
+   {
+    "topic": "Sber SaluteSpeech (Russia alternative)",
+    "claim": "The free Freemium plan for individuals stopped being sold or renewed on 2026-07-15. Individuals can now buy a package of 1M synthesis characters for 1,000 RUB (valid 1 month) or 1,000 recognition minutes for 1,200 RUB. The REST endpoint is smartspeech.sber.ru/rest/v1/text:synthesize with formats wav16, pcm16 and opus, and the languages are ru, en, kz and ky. The format details come from a search summary of the official page.",
+    "source_url": "https://developers.sber.ru/docs/ru/salutespeech/tariffs/individual-tariffs",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Google Cloud Text-to-Speech",
+    "claim": "POST https://texttospeech.googleapis.com/v1/text:synthesize returns JSON with base64 audioContent, so the firmware must decode base64. Encodings: LINEAR16 (PCM with a WAV header), PCM (headerless 16-bit LE), MULAW, ALAW, MP3 at 32 kbps, OGG_OPUS, M4A. sampleRateHertz is resampled server-side. Pricing per 1M chars: Standard and WaveNet $4 (first 4M chars/month free), Neural2 and Polyglot $16 (1M free), Chirp 3 HD $30 (1M free), Studio $160. Streaming synthesis only works with Chirp 3 HD over gRPC bidirectional streaming, which is not practical on an ESP32.",
+    "source_url": "https://cloud.google.com/text-to-speech/pricing",
+    "confidence": "high"
+   },
+   {
+    "topic": "Google Cloud availability in Russia",
+    "claim": "Google stopped accepting new Google Cloud customers in Russia in March 2022.",
+    "source_url": "https://www.telecompaper.com/news/google-stops-accepting-cloud-customers-in-russia-starts-evacuating-staff--1418561",
+    "confidence": "high"
+   },
+   {
+    "topic": "ElevenLabs (direct)",
+    "claim": "POST https://api.elevenlabs.io/v1/text-to-speech/{voice_id}, plus a /stream variant that returns chunked audio. Auth header: xi-api-key. Supports language_code. output_format includes pcm_8000/16000/22050/24000/32000/44100/48000, wav_* at the same rates, ulaw_8000 and alaw_8000. The default is mp3_44100_128, and 44.1 kHz PCM/WAV needs the Pro tier. API pricing: Flash/Turbo $0.04 per 1K chars ($40/M) and Multilingual/v3 $0.08 per 1K ($80/M); the free plan includes 20k Flash characters per month. Through OpenRouter, Flash v2.5 is currently $20/M (promo). ElevenLabs reportedly blocks Russia and Belarus; its help-center page returned 403 to me, so I only have the search snippet.",
+    "source_url": "https://elevenlabs.io/pricing/api",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Grok Voice TTS (xAI)",
+    "claim": "Supported languages include ru, en, de, fr, es, it, pt, zh, ja, ko, hi, ar, tr, vi and others (20+ with auto-detection). Up to 15,000 characters per request and 5 voices. xAI natively offers MP3, WAV, PCM, mu-law and A-law, but OpenRouter only exposes mp3 and pcm. On OpenRouter it costs $15/M chars.",
+    "source_url": "https://developers.cloudflare.com/ai/models/xai/grok-tts/",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Fish Audio (cheap or free option on OpenRouter)",
+    "claim": "Fish Audio S2.1 Pro has a free API until 2026-11-30 under a fair-use policy, with about 90 ms to first audio. It covers 83 languages including Russian, which is a Tier-2 language in the S2 Pro family. On OpenRouter it appears as fish-audio/s2.1-pro-free:free. The free offer is temporary, so it should not be the permanent default.",
+    "source_url": "https://fish.audio/blog/s2-1-pro-free-api/",
+    "confidence": "medium"
+   },
+   {
+    "topic": "STT via OpenRouter (same key)",
+    "claim": "POST https://openrouter.ai/api/v1/audio/transcriptions with model, input_audio {data: base64, format} or a multipart upload (25 MB cap), plus optional language and json/verbose_json output. Input formats: WAV, MP3, FLAC, M4A, OGG, WebM, AAC. Upstream providers time out after about 60 seconds. Prices: openai/whisper-large-v3-turbo $0.00000333/s on DeepInfra (about $0.012/hour) or $0.0000111/s on Groq ($0.04/hour); openai/whisper-1 $0.0001/s; openai/gpt-4o-mini-transcribe is token-priced at $1.25 input / $5 output per M tokens.",
+    "source_url": "https://openrouter.ai/docs/guides/overview/multimodal/stt",
+    "confidence": "high"
+   },
+   {
+    "topic": "Groq Whisper STT (direct)",
+    "claim": "POST https://api.groq.com/openai/v1/audio/transcriptions (OpenAI-compatible) with whisper-large-v3 at $0.111/hour or whisper-large-v3-turbo at $0.04/hour. Every request is billed for at least 10 seconds. Accepts flac, mp3, mp4, m4a, ogg, wav and webm, up to 25 MB on the free tier. Optional ISO-639-1 language hint (e.g. 'ru').",
+    "source_url": "https://console.groq.com/docs/speech-to-text",
+    "confidence": "high"
+   },
+   {
+    "topic": "Self-hosted offline Russian TTS option",
+    "claim": "Piper has 4 Russian voices (ru_RU: denis, dmitri, irina, ruslan). A home PC or Raspberry Pi could run Piper behind an OpenAI-compatible /audio/speech wrapper, and the ESP32 would use it through the same driver at zero cost with no geo-blocking.",
+    "source_url": "https://huggingface.co/rhasspy/piper-voices",
+    "confidence": "medium"
+   }
+  ],
+  "recommendation": "ARCHITECTURE: Build the 'TTS provider' setting around one main driver, a generic OpenAI-compatible POST {base_url}/audio/speech with a Bearer key, plus 2-3 small special drivers. The device should always ask for raw PCM, stream the chunked HTTPS body into a PSRAM ring buffer, and write it straight to I2S, so no decoder is needed. 24 kHz 16-bit mono is 48 KB/s, so 8 MB of PSRAM holds about 2.5 minutes. Take the sample rate from the Content-Type parameters (default 24000). Split long LLM replies at sentence boundaries (about 150-400 chars) so the first audio arrives sooner and request limits are respected (Google about 200 chars, Yandex 5000, OpenAI 2000 tokens).\n\nDEFAULT (only an OpenRouter key needed): base_url https://openrouter.ai/api/v1, model microsoft/mai-voice-2.1-flash, response_format \"pcm\" (24 kHz mono), voice ru-RU-Masha:MAI-Voice-2.1-Flash (or Lev, Grant or Harper). It costs $15 per 1M chars, about 1.5 cents per 1000 chars. For the translator, keep a language-to-voice map, because MAI picks the language from the voice's locale; it covers 28 locales. For target languages MAI lacks (ja, uk, ar, ...), or as a cheaper and more expressive choice outside Russia, use google/gemini-3.8-flash-lite-tts with pcm and a voice such as 'Kore'. It covers 100+ languages and costs about $0.009 per minute of audio in 2026; the price doubles on 2027-01-01. Treat fish-audio/s2.1-pro-free:free as a free testing option only, since it ends 2026-11-30. Do not default to OpenAI TTS on OpenRouter; it is not listed right now. The same driver works with OpenAI direct (gpt-4o-mini-tts, pcm 24 kHz, $0.60 + $12 per M tokens; tts-1 $15/M chars) or a self-hosted Piper/Kokoro server by changing only base_url, key and model.\n\nFALLBACK STT (same OpenRouter key): POST /api/v1/audio/transcriptions with a 16 kHz mono 16-bit WAV, model openai/whisper-large-v3-turbo (about $0.012-0.04 per hour) and language='ru' or the translator's source language. openai/gpt-4o-mini-transcribe ($0.003/min) is the higher-accuracy choice. Groq direct (whisper-large-v3-turbo, $0.04/h, 10-second minimum billing) is the fastest alternative.\n\nRUSSIA CAVEAT (important for this user): since May-June 2026, Russian media report that OpenRouter refuses Russian payments, blocks OpenAI, Google and Anthropic models for Russian billing addresses, and returns 403 to Russian IP addresses. OpenAI, the Gemini API, Google Cloud and ElevenLabs are not officially available in Russia either. So also ship:\n(a) Yandex SpeechKit (Authorization: Api-Key) through API v1 with format=lpcm&sampleRateHertz=48000 (or 16000). It gives the best Russian, takes Russian payment, and costs 1,342 RUB per 1M chars on v1 (about 650 RUB per 1M on v3). It only speaks ru/en/de/he/kk/uz, so it is the Russian voice, not a full translator voice.\n(b) A zero-key free fallback using unofficial Google Translate TTS (MP3, about 200 chars per request, so it needs the MP3 decoder from ESP32-audioI2S/libhelix).\n(c) Optionally, an 'experimental' Edge read-aloud driver. It is free and has good Russian neural voices, but it is unofficial, uses WSS, and needs the Sec-MS-GEC v2 token that broke in Oct 2026. Do not make it the default.\nKeep base_url editable so the user can point the OpenAI-compatible driver at a Russia-friendly aggregator or a home server.",
+  "open_questions": [
+   "Does OpenRouter /api/v1/audio/speech stream PCM as it is generated (chunked, low time to first audio) for MAI and Gemini, or does it buffer the whole clip? It needs a time-to-first-byte measurement from the ESP32.",
+   "What exact PCM sample rate and channel count do non-Azure/non-Gemini OpenRouter TTS models (Fish, HeyGen, Grok, ElevenLabs) return in the Content-Type parameters? Not documented; needs a live test.",
+   "Why is openai/gpt-4o-mini-tts missing from OpenRouter's speech Models API when the docs still use it as an example? Temporarily delisted or gone for good?",
+   "Is the user physically in Russia, and how will they pay OpenRouter? Are Microsoft MAI-Voice (Azure) and the other non-OpenAI/Google/Anthropic models still reachable for Russian billing addresses and IPs after the reported 403 IP block? OpenRouter has made no official statement.",
+   "Does the Edge read-aloud endpoint accept raw-24khz-16bit-mono-pcm / riff output formats? Some third-party libraries list them, but I found no verification.",
+   "Is Groq API access allowed from Russia? Not verified. The ElevenLabs restricted-countries help page returned 403 to me, so the Russia/Belarus block is only confirmed by a search snippet.",
+   "How good is Russian speech from MAI-Voice-2.1-Flash vs Gemini 3.8 Flash-Lite TTS vs Yandex vs OpenAI vs Edge? There are no public objective benchmarks; it needs listening tests.",
+   "Is Google Translate TTS reliably reachable from Russia, and what rate limits or CAPTCHA blocks hit repeated device use?",
+   "Which languages does HeyGen Voice Turbo ($4/M, promo) support, and does it include Russian? Not documented on OpenRouter.",
+   "When do the OpenRouter promo discounts end (Fish Drama 3 80% off, HeyGen and ElevenLabs 50% off)? The prices may jump."
+  ]
+ },
+ "research:firmware-stack": {
+  "findings": [
+   {
+    "topic": "Board hardware (official)",
+    "claim": "ESP32-S3-Touch-LCD-1.85 uses an ST77916 LCD (360x360, QSPI: D0-D3 = GPIO46/45/42/41, CLK GPIO40, CS GPIO21, TE GPIO18, backlight GPIO5), CST816 touch (SDA GPIO1, SCL GPIO3, INT GPIO4), a PCM5101 DAC (DIN GPIO47, LRCK GPIO38, BCK GPIO48), an I2S mic (WS GPIO2, SCK GPIO15, SD GPIO39), and a TCA9554PWR IO expander. Touch reset is on EXIO1, LCD reset on EXIO2, TF-card CS on EXIO3. On V2.0/V2.1 the discontinued MSM261S4030H0R mic was replaced by an ICS-43434.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high"
+   },
+   {
+    "topic": "Waveshare official demos",
+    "claim": "Waveshare ships two demos: an ESP-IDF one (ESP32-S3-Touch-LCD-1.85-Test, needs ESP-IDF >=5.3.1) and an Arduino one (LVGL_Arduino: esp32 core >=3.0.2, LVGL 8.3.10, ESP32-audioI2S 2.0.0, Tools set to 16MB flash and OPI PSRAM). Both come only as a Google Drive zip. Waveshare has no GitHub repo for the plain 1.85; the waveshareteam repos on GitHub are for the 1.85B and 1.85C, which are different boards.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high"
+   },
+   {
+    "topic": "Waveshare demo init details (via community mirror)",
+    "claim": "A community repo that keeps the Waveshare demo's layout (main/LCD_Driver/ST77916.c, Touch_Driver/CST816.c, EXIO/TCA9554PWR.c, Audio_Driver/PCM5101.c, MIC_Driver/MIC_Speech.c, LVGL_Driver/LVGL_Driver.c) shows the init sequence. It pulses LCD reset on EXIO2 and opens QSPI on SPI2_HOST at 3 MHz to read register 0x04. If the ID is 00 02 7F 7F it uses a custom vendor init table, otherwise the driver default, and then reopens the bus at 80 MHz. TCA9554 (addr 0x20) is on I2C0 (SDA11/SCL10) and touch (addr 0x15) on I2C1 (SDA1/SCL3); both use the legacy driver/i2c.h. That repo is pinned to IDF 5.5.5 and LVGL 8.3.11, and its partition table is factory-only (no OTA).",
+    "source_url": "https://github.com/WU-AetherCore/WU-ESP32-S3-Touch-LCD-1.85",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Audio handling in demo",
+    "claim": "Mic: I2S_NUM_1 std Philips, 16 kHz, 32-bit, mono, RIGHT slot (BCLK15/WS2/DIN39), samples shifted >>14 to get 16-bit. Speaker: I2S_NUM_0 std TX (BCLK48/LRCK38/DOUT47, no MCLK), volume done in software by scaling samples. No codec control bus is needed.",
+    "source_url": "https://github.com/WU-AetherCore/WU-ESP32-S3-Touch-LCD-1.85",
+    "confidence": "medium"
+   },
+   {
+    "topic": "PCM5101",
+    "claim": "The PCM5101 is hardware-controlled (no I2C/SPI), generates its system clock from BCK with an internal PLL (so a 3-wire I2S link is enough, no MCLK), and has 2.1 Vrms line-level outputs meant to feed an amplifier. Plain driver/i2s_std.h TX is therefore enough; esp_codec_dev is optional.",
+    "source_url": "https://www.ti.com/product/PCM5101",
+    "confidence": "high"
+   },
+   {
+    "topic": "esp_codec_dev",
+    "claim": "esp_codec_dev 1.6.2 supports ES8311/ES8388/ES7210 and similar codecs. It also offers a dummy codec for designs with no codec chip and software volume (audio_codec_new_sw_vol), so it can wrap a PCM5101 + I2S mic if a unified API is wanted.",
+    "source_url": "https://components.espressif.com/components/espressif/esp_codec_dev",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Best reference implementation (same board, AI voice assistant)",
+    "claim": "xiaozhi-esp32 (MIT license, ~31k stars) has a board port at main/boards/waveshare/esp32-s3-touch-lcd-1.85. It uses i2c_master on port 0 with esp_io_expander_tca9554 (pulses expander pins 0|1, i.e. EXIO1/EXIO2, to reset touch and LCD), esp_lcd_st77916 with the same register-0x04 panel-ID detection (3 MHz probe, then 80 MHz), and NoAudioCodecSimplex (separate I2S std mic RIGHT slot at 16 kHz in, speaker at 24 kHz out). It drives GPIO7 (PWR_Control) high as a power latch and reads the power button on GPIO6.",
+    "source_url": "https://github.com/78/xiaozhi-esp32/tree/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85",
+    "confidence": "high"
+   },
+   {
+    "topic": "xiaozhi toolchain proof on IDF 6.1",
+    "claim": "xiaozhi now requires ESP-IDF >=6.0.1, recommends v6.1 and dropped IDF 5.x. Its CI builds in the espressif/idf:release-v6.1 container. Its deps include esp_lcd_st77916 ^2.0.2, esp_lcd_touch_cst816s ^1.1.2, esp_io_expander_tca9554 ~2.0.3, esp_lvgl_port ~2.9.0, lvgl ~9.5.0, esp_codec_dev ~1.6.2 and esp-sr 2.4.7. This shows the whole component set we need builds on IDF 6.1.",
+    "source_url": "https://github.com/78/xiaozhi-esp32",
+    "confidence": "high"
+   },
+   {
+    "topic": "xiaozhi 16MB OTA config",
+    "claim": "xiaozhi's sdkconfig.defaults set CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y, CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y and a custom 16 MB partition table: nvs 0x9000/0x4000, otadata 0xd000/0x2000, phy_init 0xf000/0x1000, ota_0 0x20000/0x3f0000, ota_1 /0x3f0000, assets spiffs 0x800000/8M. Its S3 defaults also set CONFIG_SPIRAM_MODE_OCT=y, SPIRAM_SPEED_80M and MBEDTLS_EXTERNAL_MEM_ALLOC=y.",
+    "source_url": "https://github.com/78/xiaozhi-esp32/blob/main/partitions/v2/16m.csv",
+    "confidence": "high"
+   },
+   {
+    "topic": "ESP-IDF current releases",
+    "claim": "As of Oct 2026 the current releases are v6.1 (27 Aug 2026), v6.0.3 (2 Sep 2026) and v5.5.6 (16 Oct 2026, bugfix). Releases get 12 months of service (recommended for new projects) plus 18 months of maintenance (critical fixes only). That puts v6.1 in its service period. I could not see v5.5's release year (2025 assumed), so it is probably, but not certainly, already in maintenance.",
+    "source_url": "https://github.com/espressif/esp-idf/releases",
+    "confidence": "high"
+   },
+   {
+    "topic": "IDF 6.0 breaking changes relevant here",
+    "claim": "IDF 6.0 removed the legacy I2S/ADC/RMT/timer drivers. The legacy I2C driver is EOL (removal planned in 7.0), and esp_lcd's I2C panel IO now only accepts driver/i2c_master.h. So the Waveshare demo's touch code (legacy i2c + port number) will not build on 6.x and must be rewritten with i2c_master, as xiaozhi does. IDF 6.0 also moved to MbedTLS 4 / PSA Crypto.",
+    "source_url": "https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/migration-guides/release-6.x/6.0/peripherals.html",
+    "confidence": "high"
+   },
+   {
+    "topic": "IDF 6.0 component moves",
+    "claim": "In IDF 6.0, cJSON and esp-mqtt left the core and are now managed components (espressif/cjson, latest 1.7.19~2, and espressif/mqtt). wifi_provisioning became espressif/network_provisioning. esp_http_client, esp_http_server and esp_https_ota remain in IDF; the v6.1 tree still has the advanced_https_ota and captive_portal examples.",
+    "source_url": "https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/migration-guides/release-6.x/6.0/protocols.html",
+    "confidence": "high"
+   },
+   {
+    "topic": "Windows install: EIM CLI",
+    "claim": "EIM is the default and recommended installer for IDF 6.x (the legacy install.ps1/export.ps1 method still exists). Install it with winget (Espressif.EIM, or Espressif.EIM-CLI, both 0.20.0 on winget) or the GitHub release eim-cli-windows-x64.exe (v0.20.1, 16 Oct 2026). Key flags: eim install -i <ver> -t esp32s3 -p <path> -n true -a true (-a installs prerequisites, Windows only). eim install --config eim_config.toml reproduces a saved install. eim run \"idf.py build\" and eim shell run commands with a version's environment. A desktop IDF_PowerShell shortcut and PowerShell activate/deactivate scripts are created under C:\\Espressif\\tools.",
+    "source_url": "https://github.com/espressif/idf-im-ui/blob/master/docs/src/cli_commands.md",
+    "confidence": "high"
+   },
+   {
+    "topic": "Python 3.14 compatibility",
+    "claim": "EIM docs say ESP-IDF supports Python 3.10-3.14 and that 3.14 is fully supported on Windows; IDF 6.x needs at least 3.10. An earlier failure with 3.14 (pydantic-core / PyO3 0.24 refusing 3.14) was fixed on all supported branches in Oct 2025. The installed 3.14 should therefore work, and EIM can install Python itself if needed.",
+    "source_url": "https://docs.espressif.com/projects/idf-im-ui/en/latest/prerequisites.html",
+    "confidence": "high"
+   },
+   {
+    "topic": "Windows path constraint (critical for this PC)",
+    "claim": "ESP-IDF docs: the build system does not support spaces in the path to ESP-IDF or to projects. The IDF/tools path must be at most 90 characters and should be ASCII-only unless Windows UTF-8 support is on. The user's working dir C:\\Users\\krupo\\OneDrive\\Рабочий стол has both a space and Cyrillic, so put IDF in e.g. C:\\esp and the project in e.g. C:\\dev\\round-assistant, outside OneDrive.",
+    "source_url": "https://docs.espressif.com/projects/esp-idf/en/v5.5.6/esp32s3/get-started/windows-setup.html",
+    "confidence": "high"
+   },
+   {
+    "topic": "PlatformIO / pioarduino",
+    "claim": "pioarduino stable 55.03.312(-1) (Sep 2026) bundles Arduino core 3.3.12 and framework-espidf v5.5.5; 61.04.00-RC1 is a pre-release. The CLI needs Python 3.10-3.14 and installs via get-platformio.py. Changing sdkconfig from Arduino needs custom_sdkconfig, which triggers 'Hybrid Compile'. That path had linker bugs fixed only in Sep 2026 (#533, #546). The official platformio/platform-espressif32 is stuck on IDF 5.5.0, and users there point to pioarduino.",
+    "source_url": "https://github.com/pioarduino/platform-espressif32",
+    "confidence": "high"
+   },
+   {
+    "topic": "Arduino core / arduino-cli",
+    "claim": "arduino-esp32 3.3.12 (18 Sep 2026) is built on IDF 5.5; 4.0.0-RC1 targets IDF 6.1. The core has a board entry 'Waveshare ESP32-S3-Touch-LCD-1.85' (16MB, OPI PSRAM, a 'custom' partition scheme, and partitions.csv in the sketch folder is picked up). The precompiled libs already set CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y, and initArduino() automatically marks a PENDING_VERIFY image valid unless verifyRollbackLater() is overridden. Other sdkconfig options are fixed. arduino-cli latest is v1.5.1 (Jun 2026).",
+    "source_url": "https://github.com/espressif/esp32-arduino-lib-builder/blob/master/configs/defconfig.common",
+    "confidence": "high"
+   },
+   {
+    "topic": "Arduino display library option",
+    "claim": "Espressif's ESP32_Display_Panel Arduino library supports the ST77916 LCD and CST816S touch and lists ESP32-S3-Touch-LCD-1.85 as a built-in board config. It is the realistic route if the Arduino stack were chosen.",
+    "source_url": "https://github.com/esp-arduino-libs/ESP32_Display_Panel",
+    "confidence": "medium"
+   },
+   {
+    "topic": "esp_lcd_st77916",
+    "claim": "espressif/esp_lcd_st77916 2.0.2 supports SPI, QSPI and MIPI-DSI and requires IDF >=5.4. It provides ST77916_PANEL_BUS_QSPI_CONFIG / ST77916_PANEL_IO_QSPI_CONFIG macros, vendor_config.flags.use_qspi_interface=1, and custom init_cmds through st77916_vendor_config_t. Install with: idf.py add-dependency \"espressif/esp_lcd_st77916^2.0.2\".",
+    "source_url": "https://components.espressif.com/components/espressif/esp_lcd_st77916",
+    "confidence": "high"
+   },
+   {
+    "topic": "esp_lcd_touch_cst816s",
+    "claim": "espressif/esp_lcd_touch_cst816s 1.1.2 requires IDF >=5.2 and esp_lcd_touch ^1.2.0; ESP_LCD_TOUCH_IO_I2C_CST816S_CONFIG sets .scl_speed_hz=100000, which the i2c_master path uses. The chip only answers I2C after a touch event and reports a single finger. CONFIG_ESP_LCD_TOUCH_CST816S_DISABLE_READ_ID is available for variants whose ID read fails at init.",
+    "source_url": "https://components.espressif.com/components/espressif/esp_lcd_touch_cst816s",
+    "confidence": "high"
+   },
+   {
+    "topic": "esp_lvgl_port + LVGL 9",
+    "claim": "esp_lvgl_port 2.9.0 (IDF >=5.2, lvgl >=8,<10, LVGL 9 by default) provides lvgl_port_add_disp() for SPI/QSPI panels with buff_spiram, double_buffer, sw_rotate and trans_size options, plus lvgl_port_add_touch(). LVGL's latest release is 9.6.0 (on the registry as 9.6.0~1).",
+    "source_url": "https://components.espressif.com/components/espressif/esp_lvgl_port",
+    "confidence": "high"
+   },
+   {
+    "topic": "TCA9554 component",
+    "claim": "espressif/esp_io_expander_tca9554 2.0.3 (IDF >=5.2) takes an i2c_master_bus_handle_t: esp_io_expander_new_i2c_tca9554(i2c_handle, ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_000, &io). Waveshare's EXIO1 and EXIO2 are bits 0 and 1 (its Set_EXIO shifts by Pin-1).",
+    "source_url": "https://github.com/espressif/esp-bsp/tree/master/components/io_expander/esp_io_expander_tca9554",
+    "confidence": "high"
+   },
+   {
+    "topic": "Cyrillic fonts",
+    "claim": "LVGL's built-in Montserrat fonts only include ASCII, a few symbols and the built-in icons, so Russian UI text needs a custom font made with the online converter or lv_font_conv (or built_in_font_gen.py) and stored in flash.",
+    "source_url": "https://lvgl.io/docs/open/main-modules/fonts/built_in_fonts",
+    "confidence": "high"
+   },
+   {
+    "topic": "OTA + rollback",
+    "claim": "CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE (off by default) boots a new OTA image in ESP_OTA_IMG_PENDING_VERIFY. The app then calls esp_ota_mark_app_valid_cancel_rollback() after its self-test, or esp_ota_mark_app_invalid_rollback_and_reboot() to go back. A reset or power loss before confirming also rolls back, so the self-test should be fast. Rollback needs an otadata partition plus ota_0 and ota_1. CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK is a separate option and should stay off during development.",
+    "source_url": "https://docs.espressif.com/projects/esp-idf/en/v5.5.6/esp32s3/api-reference/system/ota.html",
+    "confidence": "high"
+   },
+   {
+    "topic": "Partition table rules",
+    "claim": "App partitions must start on 0x10000 boundaries with sizes in 4 KB multiples. otadata must be exactly 0x2000. Data subtypes include nvs, phy, coredump, fat, spiffs and littlefs (0x83). Use CONFIG_PARTITION_TABLE_CUSTOM with CONFIG_PARTITION_TABLE_CUSTOM_FILENAME; the table sits at 0x8000 by default. A factory partition is optional with two OTA slots.",
+    "source_url": "https://docs.espressif.com/projects/esp-idf/en/v5.5.6/esp32s3/api-guides/partition-tables.html",
+    "confidence": "high"
+   },
+   {
+    "topic": "Dev-time rollback over USB",
+    "claim": "IDF's otatool.py (components/app_update/otatool.py) can write an image to one slot and switch the boot slot over serial: write_ota_partition --slot 1 --input build/app.bin, then switch_ota_partition --slot 1, and switch_ota_partition --slot 0 to go back; read_ota_partition and erase_otadata also exist. This allows A/B testing and instant rollback during development without OTA.",
+    "source_url": "https://github.com/espressif/esp-idf/tree/v6.1/examples/system/ota/otatool",
+    "confidence": "high"
+   },
+   {
+    "topic": "Stock firmware backup",
+    "claim": "esptool v5 uses hyphenated commands. Back up the whole factory flash with: esptool -p COMx -b 460800 read-flash 0 ALL backup_16MB.bin. Restore with write-flash 0x0 backup_16MB.bin.",
+    "source_url": "https://docs.espressif.com/projects/esptool/en/latest/esp32s3/esptool/basic-commands.html",
+    "confidence": "high"
+   },
+   {
+    "topic": "Reproducible dependencies",
+    "claim": "For projects that use only registry or git dependencies, Espressif recommends committing dependencies.lock so every build resolves the same component versions. The file must not be edited by hand. idf_component.yml version specs: '==' exact, '~1.2.3' patch updates only, '^1.2.3' minor updates allowed.",
+    "source_url": "https://docs.espressif.com/projects/idf-component-manager/en/latest/reference/dependencies_lock.html",
+    "confidence": "high"
+   },
+   {
+    "topic": "HTTPS client + cert bundle",
+    "claim": "Set esp_http_client_config_t.crt_bundle_attach = esp_crt_bundle_attach with CONFIG_MBEDTLS_CERTIFICATE_BUNDLE (full Mozilla bundle or a common ~42-cert subset; custom certs can be added). For streaming (e.g. SSE from OpenRouter, or chunked TTS audio) use esp_http_client_open(len) -> write -> fetch_headers -> read in a loop. Keep-alive connections are reused when the same handle is kept.",
+    "source_url": "https://docs.espressif.com/projects/esp-idf/en/v5.5.6/esp32s3/api-reference/protocols/esp_http_client.html",
+    "confidence": "high"
+   },
+   {
+    "topic": "NVS for settings",
+    "claim": "NVS keys are at most 15 characters and strings at most 4000 bytes (enough for API keys and model IDs), grouped into namespaces. nvs_commit() is needed to persist changes. nvs_flash_init() errors ESP_ERR_NVS_NO_FREE_PAGES / NEW_VERSION_FOUND mean erase and re-init. NVS encryption is optional.",
+    "source_url": "https://docs.espressif.com/projects/esp-idf/en/v5.5.6/esp32s3/api-reference/storage/nvs_flash.html",
+    "confidence": "high"
+   },
+   {
+    "topic": "SoftAP captive portal",
+    "claim": "IDF's examples/protocols/http_server/captive_portal (present in v6.1 with components/dns_server) runs a SoftAP plus a DNS server that answers every query with the AP IP and redirects HTTP to the portal page. It can also send the DHCP Option 114 captive-portal URL. HTTPS requests are not redirected. This is a good secondary path for pasting a long OpenRouter API key from a phone instead of typing it on the round keyboard.",
+    "source_url": "https://github.com/espressif/esp-idf/tree/v6.1/examples/protocols/http_server/captive_portal",
+    "confidence": "high"
+   }
+  ],
+  "open_questions": [
+   "Speaker path on rev 2.1: the PCM5101 has only line-level output, so which amplifier chip feeds the speaker header, and does it have an enable pin (GPIO or EXIO)? The schematic PDF (files.waveshare.com/.../ESP32-S3-Touch-LCD-1.85.pdf) failed to fetch over TLS here and needs a manual look.",
+   "Microphone slot on rev 2.1 (ICS-43434): both the Waveshare-derived demo and xiaozhi read the RIGHT slot of 32-bit frames. Confirm on the user's unit with a level-meter test, and also try LEFT/BOTH during bring-up.",
+   "Which ST77916 panel variant the user's unit has (register 0x04 = 00 7F 7F 7F means the default init; 00 02 7F 7F means the custom vendor table). Keep both paths, as Waveshare and xiaozhi do.",
+   "The official Waveshare ESP-IDF/Arduino demo source is only in a Google Drive zip that I did not download (downloading needs the user's OK). Its file names and init flow were checked through a community mirror (WU-AetherCore) and xiaozhi, not the zip itself. The Arduino demo's file names were not confirmed.",
+   "Whether the CST816 on this board needs CONFIG_ESP_LCD_TOUCH_CST816S_DISABLE_READ_ID. xiaozhi's 1.85 board file resets the touch chip but I did not see it creating a touch device, so touch on IDF 6.1 with esp_lcd_touch_cst816s 1.1.2 still needs a bring-up test.",
+   "LittleFS on IDF 6.1 (the joltwallet/littlefs registry component) was not checked. If in doubt, use the spiffs or fat subtype for the assets partition, as xiaozhi does with spiffs.",
+   "ESP-IDF v5.5 initial release year: the GitHub page showed only '21 Jul' (assumed 2025), so whether v5.5 is already out of its service period is inferred, not confirmed.",
+   "Whether esp-sr (AFE/VAD) is needed for translator-mode turn-taking. xiaozhi uses esp-sr 2.4.7 on IDF 6.x, but its memory cost next to LVGL and TLS on this board is unmeasured.",
+   "Whether esp_lcd_st77916 2.0.2 on IDF 6.1 needs draw areas rounded to even coordinates (some QSPI panels do). Not documented; check during bring-up and add an LVGL invalidate-area rounder if needed."
+  ],
+  "recommendation": "Use plain ESP-IDF v6.1 (C, CMake, idf.py), installed with the EIM CLI. Use xiaozhi-esp32's MIT-licensed Waveshare 1.85 board port as the bring-up reference rather than Waveshare's demo, which is built on legacy I2C, LVGL 8 and IDF 5.x. Fall back to v5.5.6 only if a needed component turns out not to support 6.x; all the display, touch and LVGL components below also work on IDF 5.4 or newer.\n\nWhy ESP-IDF v6.1:\n- It is in its service period.\n- The full component set (esp_lcd_st77916, esp_lcd_touch_cst816s, esp_io_expander_tca9554, esp_lvgl_port with LVGL 9, esp_codec_dev) is proven on IDF 6.1 for this exact board by xiaozhi's CI.\n- It gives full sdkconfig control: OPI PSRAM, rollback, cert bundle and the partition table.\n\nWhy not the other two:\n- pioarduino: Arduino 3.3.12 sits on IDF 5.5.5, and changing sdkconfig needs Hybrid Compile, which only got linker-bug fixes in Sep 2026.\n- arduino-cli: the precompiled libs are fixed. Rollback is enabled and auto-confirmed in them, but you cannot tune PSRAM, TLS or LVGL options.\n\nWindows setup (Python 3.14 is supported):\n1. `winget install Espressif.EIM-CLI` (or use the eim-cli-windows-x64.exe release).\n2. `eim install -i v6.1 -t esp32s3 -p C:\\esp -n true -a true`, then commit the saved eim_config.toml so `eim install --config eim_config.toml` rebuilds the same toolchain.\n3. Keep the project at C:\\dev\\round-assistant. The OneDrive Desktop path has a space and Cyrillic, which ESP-IDF does not support.\n4. Build and flash with `eim run \"idf.py set-target esp32s3\"`, `eim run \"idf.py build\"`, `eim run \"idf.py -p COMx flash monitor\"`.\n\nRollback safety in four layers:\n1. Before the first flash, back up the stock firmware: `esptool -p COMx read-flash 0 ALL stock_16MB.bin`.\n2. Use git with dependencies.lock committed and managed_components/ and build/ ignored.\n3. During development, use A/B slots over USB with otatool.py: `write_ota_partition --slot 1 --input build/app.bin`, then `switch_ota_partition --slot 1`, and `--slot 0` to go back.\n4. In the field, use CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y with esp_https_ota. The app calls esp_ota_mark_app_valid_cancel_rollback() only after a fast self-test (display up, touch answers, LVGL loop alive, Wi-Fi or NVS readable).\n\nMinimal skeleton:\n```\nround-assistant/\n  CMakeLists.txt\n  sdkconfig.defaults\n  partitions.csv\n  eim_config.toml\n  dependencies.lock (committed)\n  .gitignore (build/, managed_components/, sdkconfig.old)\n  components/dns_server/   (copied from the IDF captive_portal example)\n  main/\n    CMakeLists.txt\n    idf_component.yml\n    main.c   boot order: nvs_flash_init -> board_init -> settings_load -> ui_start\n             -> net_start -> ota_selftest_and_confirm\n    board/board_185.c\n      GPIO7 power latch high\n      I2C0 i2c_master on SDA11/SCL10 -> TCA9554, pulse EXIO1/EXIO2 resets\n      SPI2 QSPI ST77916: 3 MHz probe of reg 0x04 -> pick init table -> 80 MHz\n      LEDC backlight on GPIO5\n      I2C1 i2c_master on SDA1/SCL3 -> CST816S (addr 0x15, INT GPIO4)\n      I2S1 RX mic: BCLK15/WS2/DIN39, 16 kHz, 32-bit, right slot\n      I2S0 TX speaker: BCLK48/LRCK38/DOUT47, software volume\n    ui/  (LVGL 9: chat screen, translator screen, settings, round keyboard,\n          Cyrillic font from lv_font_conv)\n    net/ wifi_sta.c, softap_portal.c, ai_client.c (OpenRouter over HTTPS,\n         SSE parsed with cJSON), stt.c, tts.c\n    settings/settings_nvs.c  (namespace \"cfg\", keys of 15 chars or fewer)\n    ota/ota.c  (esp_https_ota + rollback)\n```\n\nmain/idf_component.yml dependencies:\n```\nidf: \">=6.1,<6.2\"\nespressif/esp_lcd_st77916: \"~2.0.2\"\nespressif/esp_lcd_touch_cst816s: \"~1.1.2\"\nespressif/esp_io_expander_tca9554: \"~2.0.3\"\nespressif/esp_lvgl_port: \"~2.9.0\"\nlvgl/lvgl: \"~9.6.0\"\nespressif/cjson: \"^1.7.19\"\n```\nOptional: espressif/esp_codec_dev \"~1.6.2\".\n\nsdkconfig.defaults:\n```\nCONFIG_IDF_TARGET=\"esp32s3\"\nCONFIG_ESPTOOLPY_FLASHSIZE_16MB=y\nCONFIG_ESPTOOLPY_FLASHMODE_QIO=y\nCONFIG_SPIRAM=y\nCONFIG_SPIRAM_MODE_OCT=y\nCONFIG_SPIRAM_SPEED_80M=y\nCONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y\nCONFIG_PARTITION_TABLE_CUSTOM=y\nCONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions.csv\"\nCONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y\nCONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y\nCONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y\n```\n\npartitions.csv (16 MB, adapted from xiaozhi):\n```\nnvs,      data, nvs,      0x9000,   0x6000\notadata,  data, ota,      0xF000,   0x2000\nphy_init, data, phy,      0x11000,  0x1000\nota_0,    app,  ota_0,    0x20000,  0x3F0000\nota_1,    app,  ota_1,    0x410000, 0x3F0000\nstorage,  data, spiffs,   0x800000, 0x7F0000   (fonts, UI sounds)\ncoredump, data, coredump, 0xFF0000, 0x10000\n```\n\nWi-Fi setup: on-device scan list plus the round keyboard is the main path. The SoftAP captive portal (IDF example, DNS redirect plus DHCP Option 114) is the convenient way to paste a long OpenRouter API key and model ID from a phone."
+ },
+ "research:round-ui": {
+  "findings": [
+   {
+    "topic": "Board: display/touch/memory",
+    "claim": "ESP32-S3-Touch-LCD-1.85: 1.85in 360x360 262K-colour round LCD driven by an ST77916 over QSPI, a CST816 capacitive touch chip on I2C, 512KB internal SRAM, 16MB flash and 8MB PSRAM, plus an onboard PCM5101 audio decoder, power amp and MIC.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high"
+   },
+   {
+    "topic": "Board: pinout relevant to UI",
+    "claim": "LCD QSPI pins: SDA0-3 = GPIO46/45/42/41, SCK = GPIO40, CS = GPIO21, TE = GPIO18, backlight = GPIO5, LCD_RST on TCA9554 EXIO2. Touch: SDA GPIO1, SCL GPIO3, INT GPIO4, RST EXIO1. A TE pin exists, so tear-free sync is possible. The FAQ says the mic changed from MSM261S4030H0R to ICS-43434, with circuit changes.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high"
+   },
+   {
+    "topic": "LVGL render modes",
+    "claim": "LVGL docs (latest stable v9.6.0) set buffers with lv_display_set_buffers(disp, buf1, buf2, size_bytes, mode). PARTIAL accepts buffers smaller than the screen (at least 1/10 recommended). DIRECT and FULL need display-sized buffers, and FULL redraws the whole screen on any change. Double buffers let rendering and DMA flushing run in parallel. lv_display_set_flush_wait_cb can wait on a semaphore instead of spinning.",
+    "source_url": "https://lvgl.io/docs/open/main-modules/display/setup",
+    "confidence": "high"
+   },
+   {
+    "topic": "LVGL buffer size & tearing (FAQ)",
+    "claim": "LVGL FAQ, partial mode: 1/10 screen is the minimum and 1/5 is recommended, with two buffers flushed by DMA in the background. For tear-free DIRECT mode with 2 framebuffers: only swap the buffer address in flush_cb and call lv_display_flush_ready() from the VSYNC interrupt. For 360x360 RGB565 that is 25.9KB (1/10) or 51.8KB (1/5) per buffer; a full frame is 259.2KB, which only fits in PSRAM.",
+    "source_url": "https://lvgl.io/docs/open/introduction/faq",
+    "confidence": "high"
+   },
+   {
+    "topic": "Tearing on QSPI panels with internal GRAM",
+    "claim": "Espressif's method for SPI/QSPI panels with GRAM: start writing each frame on the TE signal and keep write speed at least half the panel's read speed. Enable TE in the controller (TEON) and keep write/read scan directions the same, otherwise the method fails. Reference example: display/lcd/lcd_with_te. Estimate: one 259.2KB frame at 80MHz x4 lines (40MB/s) takes about 6.5ms of pure pixel time, so the bus can keep ahead of a ~60Hz panel scan.",
+    "source_url": "https://docs.espressif.com/projects/esp-iot-solution/en/latest/display/lcd/lcd_screen_tearing.html",
+    "confidence": "high"
+   },
+   {
+    "topic": "ESP32 LVGL performance settings",
+    "claim": "Espressif esp_lvgl_port performance guide: draw buffer size matters most. Below 10% of the screen hurts badly, above 25% adds nothing, and internal-SRAM buffers beat PSRAM. Recommended: CPU 240MHz, flash QIO/120MHz, COMPILER_OPTIMIZATION_PERF, LV_ATTRIBUTE_FAST_MEM_USE_IRAM, LV_DEF_REFR_PERIOD=10 (LVGL9), main task on CPU1. Their benchmark (800x480, internal DMA buffers) went from 17 to 41 avg FPS through these steps; PSRAM variants scored 7-31 FPS.",
+    "source_url": "https://github.com/espressif/esp-bsp/blob/master/components/esp_lvgl_port/docs/performance.md",
+    "confidence": "high"
+   },
+   {
+    "topic": "Round-display FPS case study",
+    "claim": "Seeed's XIAO ESP32-S3 round-display LVGL 9 workshop went from about 9 to about 30 FPS. Steps: 240MHz CPU, 80MHz SPI (described as the S3 SPI limit), -O3/LTO, then PARTIAL mode with 2 large partial buffers in internal SRAM (240x120). That beat full-frame PSRAM buffers (~25 FPS) because writing 115KB to PSRAM costs more than an extra render pass. Plain double-buffering with small tiles initially made it slower.",
+    "source_url": "https://wiki.seeedstudio.com/round_display_animation_workshop/",
+    "confidence": "medium"
+   },
+   {
+    "topic": "ESP32-S3 SIMD in esp_lvgl_port",
+    "claim": "esp_lvgl_port's CMakeLists compiles its ESP32-S3 SIMD assembly blend routines (lv_color_blend_to_rgb565_esp etc.) only when 9.1.0 <= LVGL < 9.2.0. With LVGL 9.5/9.6 (what xiaozhi uses) that acceleration is off, so don't count on it. Issue #621, asking for 9.3 support, was closed without an adaptation.",
+    "source_url": "https://github.com/espressif/esp-bsp/blob/master/components/esp_lvgl_port/CMakeLists.txt",
+    "confidence": "high"
+   },
+   {
+    "topic": "esp_lvgl_port options",
+    "claim": "esp_lvgl_port supports LVGL 8 and 9. Display config has buffer_size, double_buffer, buff_dma (RGB565 only), buff_spiram, plus a 'PSRAM canvas' mode: full-size buffer in PSRAM with a small DMA-capable trans_size buffer in SRAM. sw_rotate cannot be combined with direct_mode or full_refresh. The LVGL task can sleep until there is an invalidate, an animation or a touch interrupt (LVGL9). Perf monitor needs LV_USE_OBSERVER, LV_USE_SYSMON and LV_USE_PERF_MONITOR.",
+    "source_url": "https://github.com/espressif/esp-bsp/blob/master/components/esp_lvgl_port/README.md",
+    "confidence": "high"
+   },
+   {
+    "topic": "xiaozhi LVGL port config (baseline)",
+    "claim": "xiaozhi's SpiLcdDisplay uses buffer_size = width*20 lines (360x20 = 14.4KB, about 5.5% of the screen), double_buffer=false, buff_dma=1, buff_spiram=0, swap_bytes=1, LVGL task priority 1 pinned to core 1. That suits a mostly static chat UI but sits below LVGL's 1/10 minimum, so smooth 30fps animation needs bigger, double buffers.",
+    "source_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/display/lcd_display.cc",
+    "confidence": "high"
+   },
+   {
+    "topic": "Expensive vs cheap effects (layers)",
+    "claim": "transform_scale, transform_rotate and skew make LVGL allocate one buffer for the whole transformed area (no chunking). opa_layered, blend_mode and bitmap masks use 'simple layers' rendered in LV_DRAW_LAYER_SIMPLE_BUF_SIZE chunks, and LV_DRAW_LAYER_MAX_MEMORY caps the total. So pulse or scale a large orb by animating its width/height, arc angles or plain opa, not transform_scale.",
+    "source_url": "https://lvgl.io/docs/open/main-modules/draw/draw_layers",
+    "confidence": "high"
+   },
+   {
+    "topic": "Shadows / gradients cost",
+    "claim": "The LVGL docs warn that large box shadows can be slow or memory-hungry. Linear, radial and conical gradients (lv_grad_radial_init, lv_grad_conical_init) only work with LV_USE_DRAW_SW_COMPLEX_GRADIENTS=1. Use them on small objects only, such as an orb glow.",
+    "source_url": "https://lvgl.io/docs/open/examples/grad",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Lottie on ESP32-S3",
+    "claim": "lv_lottie needs ThorVG (LV_USE_THORVG_INTERNAL, C++), LV_USE_VECTOR_GRAPHIC and an ARGB8888 buffer of w*h*4 bytes (a 200x200 animation is 160KB, so PSRAM). Playback defaults to infinite 60fps and is controlled via lv_lottie_get_anim(). Good for small accent icons; a full-screen Lottie on the S3 software renderer is risky.",
+    "source_url": "https://lvgl.io/docs/open/widgets/lottie",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Animation APIs",
+    "claim": "lv_anim_t: set_var, set_exec_cb, set_values, set_duration, set_delay, set_path_cb (linear, ease_in, ease_out, ease_in_out, overshoot, bounce, step, or custom), set_reverse_duration (replaces playback), set_repeat_count (LV_ANIM_REPEAT_INFINITE), start/completed/deleted callbacks. lv_anim_timeline_create/add/start/set_progress (0-65535)/set_reverse runs coordinated multi-object state transitions.",
+    "source_url": "https://lvgl.io/docs/open/main-modules/animation",
+    "confidence": "high"
+   },
+   {
+    "topic": "Screen transitions",
+    "claim": "lv_screen_load_anim(scr, type, time, delay, auto_del) types: NONE, OVER_*, OUT_*, MOVE_*, FADE_IN, FADE_OUT. All input is disabled during the transition, and auto_del deletes the old screen. Full-screen MOVE animations push a whole frame every step over QSPI, so keep them short (~250ms), or use FADE/OVER, or animate only in-screen elements.",
+    "source_url": "https://lvgl.io/docs/open/9.5/common-widget-features/screens",
+    "confidence": "high"
+   },
+   {
+    "topic": "Round widgets: lv_arc",
+    "claim": "lv_arc has MAIN (track), INDICATOR and KNOB parts, NORMAL/REVERSE/SYMMETRICAL modes, set_bg_angles, set_rotation, set_range/value and set_change_rate. For a display-only ring (mic level, progress) remove the knob style and clear LV_OBJ_FLAG_CLICKABLE. lv_arc_align_obj_to_angle and lv_arc_rotate_obj_to_angle place or rotate widgets along the arc.",
+    "source_url": "https://lvgl.io/docs/open/widgets/arc",
+    "confidence": "high"
+   },
+   {
+    "topic": "Round widgets: lv_scale, lv_arclabel, lv_roller",
+    "claim": "lv_scale has ROUND_INNER/ROUND_OUTER modes (default 270-degree range, adjustable rotation), coloured sections, and line or image needles that can bind to subjects. lv_arclabel draws text along an arc (set_angle_start/size, set_radius, set_dir, recolor), which suits rim status text and hints. lv_roller supports LV_ROLLER_MODE_INFINITE wrap-around with an anim_duration snap, good for picking language, model or Wi-Fi.",
+    "source_url": "https://lvgl.io/docs/open/widgets/arclabel",
+    "confidence": "high"
+   },
+   {
+    "topic": "Circular (curved) list pattern",
+    "claim": "LVGL example lv_example_scroll_translate: a circular container with clip_corner and scroll_snap_y=center. Its LV_EVENT_SCROLL callback projects each child's offset from centre onto a circle with lv_sqrt, writes translate_x and fades distant items, producing a watch-style curved menu for chat history or settings lists.",
+    "source_url": "https://lvgl.io/docs/open/examples/scroll",
+    "confidence": "high"
+   },
+   {
+    "topic": "Mic-level ring template",
+    "claim": "LVGL's music demo draws a radial spectrum of 20 bars around a circle. It uses lv_draw_triangle inside an LV_EVENT_DRAW_MAIN_BEGIN handler (with LV_EVENT_REFR_EXT_DRAW_SIZE and COVER_CHECK) and is driven by an lv_anim exec_cb that just calls lv_obj_invalidate. The same pattern fits a mic RMS ring or a TTS 'speaking' ring with 24-32 bars.",
+    "source_url": "https://raw.githubusercontent.com/lvgl/lvgl/master/demos/music/lv_demo_music_main.c",
+    "confidence": "high"
+   },
+   {
+    "topic": "State binding",
+    "claim": "LVGL Observer: lv_subject_init_int plus bindings such as lv_obj_bind_flag_if_eq let one integer 'assistant state' subject (idle/listening/thinking/speaking/error) drive visibility and styles of UI parts without manual updates. Subjects must be static, global or heap-allocated.",
+    "source_url": "https://lvgl.io/docs/open/main-modules/observer/observer",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Round safe area (Wear OS guidance)",
+    "claim": "Google: most Wear OS devices are round, and round screens have 22% less UI space than square ones (pi/4 is about 78.5%). Define top, bottom and side margins in percentages to avoid clipping. BoxInsetLayout places content in the square inscribed in the circle. WearableRecyclerView gives curved lists.",
+    "source_url": "https://developer.android.com/design/ui/wear/guides/m2-5/foundations/getting-started",
+    "confidence": "high"
+   },
+   {
+    "topic": "Touch target size",
+    "claim": "Wear OS recommends 48x48dp touch targets (40x40dp allowed in tight cases); the touch area may extend past the visible element. 1dp is 1/160in, so 48dp is about 7.6mm. If 1.85in is the active diameter (about 194.6px/in, 7.66px/mm), 48dp is about 58px and 40dp about 49px on this panel.",
+    "source_url": "https://developer.android.com/training/wearables/accessibility",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Round geometry for 360px (derived)",
+    "claim": "Inscribed square = 360/sqrt(2) = 254.6px, so 52.7px (14.6%) margins for fully boxed text. Usable chord width at vertical offset d from centre is 2*sqrt(180^2 - d^2): d=0 gives 360, 40 gives 351, 60 gives 339, 80 gives 322, 100 gives 299, 120 gives 268, 140 gives 226, 160 gives 165px. Layout rows (keyboard, chat bubbles, buttons) should be sized per row from this, plus about 8-12px rim padding for the bezel.",
+    "source_url": "https://developer.android.com/training/wearables/views/layouts",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Built-in fonts lack Cyrillic",
+    "claim": "LVGL's built-in Montserrat fonts (12-48px, 4bpp) contain only ASCII, the degree sign (U+00B0), the bullet (U+2022) and FontAwesome symbols. No Cyrillic, so Russian needs custom-generated fonts. Special built-ins cover only Hebrew/Arabic/Persian and about 1000 CJK glyphs.",
+    "source_url": "https://lvgl.io/docs/open/main-modules/fonts/built_in_fonts",
+    "confidence": "high"
+   },
+   {
+    "topic": "Generating Cyrillic fonts",
+    "claim": "lv_font_conv (CLI) and the online converter (lvgl.io/tools/fontconverter) take --font (repeatable, to merge fonts), --size, --bpp 1-8, -r ranges, --symbols, --format lvgl|bin, --no-compress, --lv-font-name. --stride needs LVGL 9.3+. Russian range: 0x20-0x7F,0xB0,0x2022,0x401,0x410-0x44F,0x451 (А-я = U+0410-044F, Ё = U+0401, ё = U+0451; the whole Cyrillic block is U+0400-04FF). To keep icons, merge FontAwesome symbols as the built-ins do.",
+    "source_url": "https://github.com/lvgl/lv_font_conv",
+    "confidence": "high"
+   },
+   {
+    "topic": "Font size budget (measured/estimated)",
+    "claim": "Measured from LVGL v9.4 built-in Montserrat C files (158 glyphs = ASCII plus about 60 icons, 4bpp, uncompressed): glyph bitmaps are 6.6KB at 16px (~42B/glyph), 13.8KB at 24px (~88B), 22.7KB at 32px (~144B), 49.5KB at 48px (~313B), plus about 8B/glyph descriptors and about 3K kerning values. Adding 66 Russian letters costs roughly +3KB at 16px, +6KB at 24px, +10KB at 32px and +21KB at 48px. A 4-size RU+EN set comes to well under 200KB, negligible against 16MB flash.",
+    "source_url": "https://raw.githubusercontent.com/lvgl/lvgl/release/v9.4/src/font/lv_font_montserrat_16.c",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Runtime TTF alternative",
+    "claim": "LVGL Tiny TTF (stb_truetype) builds fonts at runtime at any size from an embedded TTF or a file (lv_tiny_ttf_create_data/_ex), caches 256 glyphs by default and supports lv_tiny_ttf_set_size. FreeType is the heavier option. This lets one Cyrillic TTF serve every size, at a CPU and RAM cost.",
+    "source_url": "https://lvgl.io/docs/open/libs/font_support/tiny_ttf",
+    "confidence": "medium"
+   },
+   {
+    "topic": "lv_keyboard customisation",
+    "claim": "lv_keyboard modes: TEXT_LOWER, TEXT_UPPER, SPECIAL, NUMBER, USER_1-USER_4. lv_keyboard_set_map(kb, mode, map, ctrl_map) replaces a layout using buttonmatrix syntax (\"\\n\" ends a row, \"\" ends the map). Popovers via lv_keyboard_set_popovers(kb,true) plus the LV_BUTTONMATRIX_CTRL_POPOVER flag; the textarea is linked with lv_keyboard_set_textarea.",
+    "source_url": "https://lvgl.io/docs/open/widgets/keyboard",
+    "confidence": "high"
+   },
+   {
+    "topic": "lv_keyboard internals (RU/EN switching)",
+    "claim": "In LVGL 9.4 source, the constructor attaches the public lv_keyboard_def_event_cb on VALUE_CHANGED. It handles only the strings \"abc\", \"ABC\", \"1#\", close/keyboard, OK, backspace, arrows and newline; any other key text goes into the textarea via lv_textarea_add_text, so UTF-8 Cyrillic labels work (LVGL ships an Arabic map). An RU/EN toggle therefore means USER_1/USER_2 maps for RU lower/upper plus your own handler: remove def_event_cb, or catch \"РУС\"/\"EN\"/shift first and forward the rest.",
+    "source_url": "https://raw.githubusercontent.com/lvgl/lvgl/release/v9.4/src/widgets/keyboard/lv_keyboard.c",
+    "confidence": "high"
+   },
+   {
+    "topic": "Buttonmatrix for round keyboards",
+    "claim": "In lv_buttonmatrix each button gets a relative width of 1-15 in the ctrl map, and rows can hold different button counts. Flags: HIDDEN, NO_REPEAT, DISABLED, CHECKABLE, CHECKED, CLICK_TRIG, POPOVER, RECOLOR, CUSTOM_1/2. Buttons are drawn on the fly at about 8 bytes each, versus 100-150B per button widget. HIDDEN spacer keys can taper rows to the circle's chord width.",
+    "source_url": "https://lvgl.io/docs/open/widgets/buttonmatrix",
+    "confidence": "high"
+   },
+   {
+    "topic": "Smartwatch keyboard precedent",
+    "claim": "Samsung Galaxy Watch (round) offers voice input, handwriting and an on-screen keyboard with a choice of QWERTY or 3x4 (phone-keypad) layouts, with two input languages for quick switching. On round watches, voice-first input with a compact keyboard as fallback is the established pattern.",
+    "source_url": "https://www.samsung.com/ae/support/mobile-devices/how-to-input-text-on-your-samsung-watch/",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Circular keyboard research",
+    "claim": "Research designs for round watches put keys on the rim. C-QWERTY arranges QWERTY keys along the circular edge with tap and swipe-word modes. COMPASS is a rotational ring keyboard with dynamically placed cursors that reported about 10 WPM at first and 12.5 WPM after 90 minutes of practice. WrisText uses arc-shaped key groups. I could only read search abstracts; the full papers were blocked (403) or unreadable.",
+    "source_url": "https://pi.cs.tsinghua.edu.cn/lab/papers/COMPASS_Xin%20Yi_CHI2017.pdf",
+    "confidence": "low"
+   },
+   {
+    "topic": "Avoid typing long secrets on-device",
+    "claim": "78/esp-wifi-connect (MIT; the Wi-Fi component xiaozhi uses) starts a SoftAP captive portal at http://192.168.4.1 with DNS hijack and stores up to 10 SSIDs/passwords in NVS. The same approach lets the user type the Wi-Fi password and OpenRouter API key on a phone instead of the round screen.",
+    "source_url": "https://github.com/78/esp-wifi-connect",
+    "confidence": "high"
+   },
+   {
+    "topic": "xiaozhi-esp32 license",
+    "claim": "xiaozhi-esp32 is MIT licensed (Copyright 2025 Shenzhen Xinzhi Future Technology Co., Ltd. and Project Contributors). Code can be reused and modified, including commercially, as long as the copyright and licence notice are kept.",
+    "source_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/LICENSE",
+    "confidence": "high"
+   },
+   {
+    "topic": "xiaozhi supports this board",
+    "claim": "xiaozhi has board folders main/boards/waveshare/esp32-s3-touch-lcd-1.85 (plus -1.85b and -1.85c). Waveshare's AI tutorial lists ESP32-S3-Touch-LCD-1.85 as supported (firmware v2.4.0) and says the touch and non-touch 1.85 boards share one firmware.",
+    "source_url": "https://docs.waveshare.com/ESP32-AI-Tutorials",
+    "confidence": "high"
+   },
+   {
+    "topic": "xiaozhi 1.85 board implementation details",
+    "claim": "The board file brings up the ST77916 on QSPI at 3MHz first and reads register 0x04. If it returns 00 02 7F 7F it uses an alternate 'vendor_specific_init_new' sequence (different panel revisions need different init), then runs at 80MHz. It resets the LCD and touch via TCA9554 and toggles chat with the BOOT button. It never initialises the CST816 touch, so the stock xiaozhi UI on this board is button-driven, not touch.",
+    "source_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/esp32-s3-touch-lcd-1.85.cc",
+    "confidence": "high"
+   },
+   {
+    "topic": "xiaozhi audio on this board",
+    "claim": "Audio uses NoAudioCodecSimplex, i.e. raw I2S with no codec chip control. Speaker: BCLK GPIO48, LRCK GPIO38, DOUT GPIO47 (PCM5101, both slots). Mic: SCK GPIO15, WS GPIO2, DIN GPIO39, read from the RIGHT slot. Input is 16kHz and output 24kHz.",
+    "source_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/config.h",
+    "confidence": "high"
+   },
+   {
+    "topic": "xiaozhi audio/protocol architecture",
+    "claim": "The device sends Opus audio (hello: 16kHz, mono, 60ms frames; the server may answer with 24kHz) over WebSocket or MQTT+UDP. The server does ASR, LLM and TTS and returns stt/llm (with an 'emotion' field)/tts (start, stop, sentence_start) messages plus Opus frames. Listen modes are auto, manual and realtime. The default server is xiaozhi.me; self-hosted community servers exist. So xiaozhi does not call OpenRouter directly; that needs a self-hosted bridge or a replaced pipeline.",
+    "source_url": "https://github.com/78/xiaozhi-esp32/blob/main/docs/websocket.md",
+    "confidence": "high"
+   },
+   {
+    "topic": "xiaozhi toolchain & deps",
+    "claim": "Current xiaozhi requires ESP-IDF v6.0.1 or later (v6.1 recommended; 5.x no longer supported) and pins lvgl ~9.5.0, esp_lvgl_port ~2.9.0, esp_lcd_st77916 ^2.0.2, esp_codec_dev ~1.6.2 and esp-sr 2.4.7. It offers ESP-SR wake word, AEC full duplex only on capable hardware, and 39 UI languages including ru-RU.",
+    "source_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/idf_component.yml",
+    "confidence": "high"
+   },
+   {
+    "topic": "xiaozhi UI suitability",
+    "claim": "xiaozhi's LCD UI is a rectangular flex-column stack: top status bar, status text, scrollable WeChat-style chat (user bubbles right/green, assistant left/gray, max width 85% of the screen, 20-40 messages kept) and a centred emoji box. It isn't designed for a circle, so reuse its plumbing rather than its layout on a round panel.",
+    "source_url": "https://github.com/78/xiaozhi-esp32/blob/main/main/display/lcd_display.cc",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Open-source round LVGL references",
+    "claim": "fbiego/esp32-c3-mini: MIT, LVGL 9, PlatformIO, native SDL build for UI testing, app framework (watchfaces, notifications, settings, music, games). It targets many round boards, including Viewe Echo Ear 1.85 360x360 and Waveshare S3 1.28/1.43/1.75. The same author contributed the LVGL smartwatch demo (PR #7429, merged Jan 2025, with circular lists, tileview navigation and scroll hints), now in lvgl/lv_demos src/smartwatch.",
+    "source_url": "https://github.com/fbiego/esp32-c3-mini",
+    "confidence": "high"
+   },
+   {
+    "topic": "Other round projects",
+    "claim": "ZSWatch (Zephyr, 240x240 round, LVGL) is GPL-3.0, so use it only as an architecture reference unless you accept copyleft. andygeiss/esp32-watch (MIT, LVGL 9.4) shares one ui.c between a desktop simulator and ESP-IDF firmware and morphs the clock digits into blinking 'assistant eyes' (400ms morph, 140ms blink): a good model for state animations.",
+    "source_url": "https://github.com/ZSWatch/ZSWatch",
+    "confidence": "medium"
+   },
+   {
+    "topic": "PC simulator for UI work",
+    "claim": "lvgl/lv_port_pc_visual_studio (MIT) is a Windows simulator that keeps the exact LVGL resolution, so a 360x360 round UI with a circular mask can be built and animated on the user's Windows PC before flashing. Use its release/ branches for stable LVGL.",
+    "source_url": "https://github.com/lvgl/lv_port_pc_visual_studio",
+    "confidence": "high"
+   }
+  ],
+  "recommendation": "Build the UI with LVGL 9.5.x through esp_lvgl_port 2.9 and esp_lcd_st77916 2.x, the same versions xiaozhi pins. That lets us copy, with its MIT notice, xiaozhi's ST77916 bring-up for this board: read register 0x04 at 3MHz, choose the init table, then run QSPI at 80MHz with swap_bytes. We add the CST816 touch driver ourselves, because xiaozhi's 1.85 board file never starts touch. Don't adopt xiaozhi's protocol, server or rectangular UI: it needs a xiaozhi or self-hosted server, while we want OpenRouter. Its audio approach (raw I2S simplex: mic on the right slot at 16kHz, PCM5101 at 24kHz) and the esp-wifi-connect captive portal are worth reusing.\n\nRendering settings:\n- PARTIAL mode with two internal-SRAM DMA buffers. Start at 360x40 (about 28.8KB each) and grow toward 1/5 of the screen (360x72, 51.8KB each) if RAM allows next to Wi-Fi, TLS and audio. Put the LVGL heap and image cache in PSRAM.\n- CPU 240MHz, COMPILER_OPTIMIZATION_PERF, LV_ATTRIBUTE_FAST_MEM_USE_IRAM, LV_DEF_REFR_PERIOD 16 (or 10).\n- Pin the LVGL task to core 1 and keep Wi-Fi and audio on core 0. Turn on SYSMON/PERF_MONITOR while developing.\n- Don't count on ESP32-S3 SIMD with LVGL 9.2 or newer.\n- Leave direct/full mode alone unless tearing shows during full-screen transitions. If it does, use TE on GPIO18 with FULL mode, or simply avoid full-screen MOVE animations.\n\nRound layout:\n- Root screen with radius LV_RADIUS_CIRCLE and clip_corner. Keep everything within about 168px of the centre (12px rim padding).\n- Fit text blocks inside the 254px inscribed square, or size each row from the chord width.\n- Touch targets of at least 50-58px.\n- Navigation: a tileview (swipe) between Assistant, Translator and Settings.\n- Settings: curved lists using the scroll_translate pattern, lv_roller in INFINITE mode for languages and models, lv_arc for volume and brightness, lv_arclabel for rim status text.\n\nAnimated orb:\n- One 'orb' component driven by a single lv_subject: idle, listening, thinking, speaking, error.\n- Listening: a ring of 24-32 radial bars drawn in DRAW_MAIN_BEGIN, the same pattern as LVGL's music demo, fed with mic RMS at 20-30Hz.\n- Thinking: 2-3 rotating lv_arcs on ease_in_out loops, plus a breathing size animation.\n- Speaking: the same bar ring fed by the TTS output level.\n- State changes run as lv_anim_timeline transitions of 150-300ms with ease_out or overshoot. Screen changes use FADE or OVER at about 250ms.\n- Avoid transform_scale on big objects, large shadows and full-screen Lottie. Keep gradients small, with COMPLEX_GRADIENTS enabled.\n\nFonts:\n- Generate 4bpp fonts with lv_font_conv from an OFL font with Cyrillic (Montserrat, Inter or Noto Sans). Range: 0x20-0x7F, 0xA0-0xFF, 0x401, 0x410-0x44F, 0x451, plus punctuation. Merge in the FontAwesome symbols LVGL uses.\n- About 4 sizes (16/20/28/40px), roughly 100-200KB in total.\n- Optionally Tiny TTF for one large display size.\n- Add extra scripts only for translator target languages that need them.\n\nKeyboard:\n- Customise lv_keyboard, which is a buttonmatrix, so we keep popovers and textarea linking.\n- Maps: USER_1/USER_2 for RU lower/upper, the stock modes for EN, NUMBER/SPECIAL for symbols. Use our own VALUE_CHANGED handler for the RU/EN/shift keys and forward everything else to lv_keyboard_def_event_cb.\n- Fit 4 rows in roughly y=125-330, with HIDDEN spacer keys and width ratios tapering each row to the chord: about 6-7 keys of 46-52px per row, popovers on.\n- Russian's 33 letters go on two pages or a 3x11 compressed layout with long-press for ё/ъ.\n- The text field sits in the upper band.\n- An optional rim 'rotary picker' mode (drag around the ring, release to commit), inspired by C-QWERTY and COMPASS, for one-handed entry.\n- Make the phone captive portal the main way to enter the Wi-Fi password and OpenRouter API key, and voice dictation the main way to enter chat text.\n\nProcess:\n- Build and iterate the UI in the LVGL Windows simulator at 360x360 with a circular mask.\n- Keep UI code hardware-independent, with git tags per milestone. Together with dual OTA partitions on the device, this covers the user's rollback requirement.",
+  "open_questions": [
+   "Physical active-area diameter of the panel is not stated on Waveshare's product page; px/mm and dp conversions assume 1.85in is the visible diameter (about 7.66 px/mm).",
+   "Which ST77916 init path a rev 2.1 board takes in xiaozhi's register-0x04 check (default vs 'vendor_specific_init_new') must be checked on the actual hardware.",
+   "Whether the ST77916 on this board needs partial-flush areas aligned to even coordinates (a rounder via LV_EVENT_INVALIDATE_AREA) is unconfirmed; watch for artefacts during partial refresh.",
+   "Whether TE (GPIO18) is actually routed and active with esp_lcd_st77916's default init (TEON) is unverified; no ST77916+TE+LVGL example for this board was found.",
+   "Exact CST816 variant (CST816S/T/D), its gesture support and single-touch limits on rev 2.1 were not verified; the xiaozhi board file never initialises touch.",
+   "Real achievable FPS at 360x360 in PARTIAL mode with 2 internal buffers on this board is unmeasured; run lv_demo_benchmark with SYSMON early.",
+   "How much internal SRAM is left for LVGL draw buffers once Wi-Fi, TLS (HTTPS to OpenRouter), I2S DMA and Opus/MP3 decoding run; mbedTLS in PSRAM may be needed.",
+   "Whether the flash on this ESP32-S3R8 module supports QIO at 120MHz (one of Espressif's performance steps) is unverified.",
+   "Full texts of C-QWERTY, COMPASS and WrisText were not accessible (403 or unreadable PDF); their WPM/error figures come from search abstracts only.",
+   "Which translator target languages beyond RU/EN must render on screen (CJK, Arabic, etc.) drives the font budget and needs to be decided.",
+   "Whether xiaozhi's RIGHT-slot mic setting still matches the replacement ICS-43434 mic on rev 2.1 needs a hardware check."
+  ]
+ },
+ "verify:openrouter-ai": {
+  "checked": [
+   {
+    "claim": "(1) Audio input: POST /api/v1/chat/completions with a content part {type:'input_audio', input_audio:{data:<base64>, format}}. URLs are not supported. Formats: wav, mp3, aiff, aac, ogg, flac, m4a, pcm16, pcm24. Support varies by model.",
+    "status": "verified",
+    "evidence_url": "https://openrouter.ai/docs/guides/overview/multimodal/audio"
+   },
+   {
+    "claim": "(1) No OpenRouter byte limit is published, only HTTP 413. Gemini allows 20 MB total per request, counts 32 tokens/s, downsamples to 16 kbps and mixes to mono.",
+    "status": "verified",
+    "evidence_url": "https://ai.google.dev/gemini-api/docs/audio"
+   },
+   {
+    "claim": "(1) esp_audio_codec v2.6.2 supports ESP32-S3. It encodes AAC/OPUS/ADPCM/G711, can write ADTS, and decodes MP3/AAC/OPUS/FLAC.",
+    "status": "verified",
+    "corrected_claim": "Verified. It ships as prebuilt libraries under the 'Espressif Modified MIT' license, which is fine for an ESP32-S3. The ADTS header is optional. Raw OPUS would still need an OGG muxer before it could be sent as 'ogg'.",
+    "evidence_url": "https://components.espressif.com/components/espressif/esp_audio_codec"
+   },
+   {
+    "claim": "(2) Live /models?input_modalities=audio returns 48 entries with the stated prices for gemini-3.1-flash-lite, 3.5-flash-lite, 2.5-flash-lite (expires 2026-10-20), voxtral, qwen3.8-omni-flash (Alibaba only), mimo-v2.6-flash, gpt-audio-mini and nemotron :free.",
+    "status": "verified",
+    "corrected_claim": "Every listed price, flag and expiry matches my own fetch of the live API. The finding left out three things: two more free audio-input models (thinkingmachines/inkling:free and inkling-small:free), xiaomi/mimo-v2.5 also expiring (2026-10-21), and a duplicate google/gemini-3.1-flash-lite-preview entry.",
+    "evidence_url": "https://openrouter.ai/api/v1/models?input_modalities=audio"
+   },
+   {
+    "claim": "(2) Google pricing: 3.1 Flash-Lite $0.25 in, $0.50 audio, $1.50 out. 3.5 Flash-Lite $0.30 (including audio), $2.50 out. About $0.00096/min of audio on 3.1. A typical turn costs about $0.0005.",
+    "status": "verified",
+    "evidence_url": "https://ai.google.dev/gemini-api/docs/pricing"
+   },
+   {
+    "claim": "(2) 3.1 Flash-Lite endpoints: AI Studio and Vertex global $0.25/$1.50 (audio $0.50), flex $0.125/$0.75, priority $0.45/$2.70, Vertex eu/us $0.275/$1.65.",
+    "status": "verified",
+    "corrected_claim": "The prices are correct. The google-vertex/global/flex endpoint showed only 70% uptime_last_30m when I checked, so flex is a poor choice for interactive use.",
+    "evidence_url": "https://openrouter.ai/api/v1/models/google/gemini-3.1-flash-lite/endpoints"
+   },
+   {
+    "claim": "(2) The Gemini 3.1 Flash-Lite model card lists audio input, MMMLU 88.9%, 363 tok/s and translation as a use case, with no Russian ASR benchmark.",
+    "status": "verified",
+    "evidence_url": "https://deepmind.google/models/model-cards/gemini-3-1-flash-lite/"
+   },
+   {
+    "claim": "(2) Voxtral Small lists en/es/fr/pt/hi/de/nl/it and not Russian. Context is 32k (about 30 min of transcription).",
+    "status": "verified",
+    "evidence_url": "https://huggingface.co/mistralai/Voxtral-Small-24B-2507"
+   },
+   {
+    "claim": "(3) /api/v1/audio/transcriptions (announced 2026-05-01) accepts JSON input_audio or multipart, formats wav/mp3/flac/m4a/ogg/webm/aac, multipart up to 25 MB, a 60 s cap, returns text plus usage, and does not stream.",
+    "status": "verified",
+    "corrected_claim": "Verified, with three clarifications. The 60 s figure is an upstream provider timeout, not a hard OpenRouter cap. The language is auto-detected when omitted. response_format 'verbose_json' adds language and segments.",
+    "evidence_url": "https://openrouter.ai/docs/guides/overview/multimodal/stt"
+   },
+   {
+    "claim": "(3) STT prices: whisper-large-v3-turbo $0.00000333/s on DeepInfra and $0.0000111/s on Groq, whisper-large-v3 $0.0000075/s, whisper-1 $0.0001/s, gpt-4o-mini-transcribe $1.25/$5 per 1M, qwen3-asr-0.6b $0.00000333/s. 26 models listed.",
+    "status": "verified",
+    "evidence_url": "https://openrouter.ai/api/v1/models/openai/whisper-large-v3-turbo/endpoints"
+   },
+   {
+    "claim": "(3) /api/v1/audio/speech takes JSON {model, input, voice, response_format mp3|pcm (default pcm), speed, instructions, provider} and returns raw bytes as audio/mpeg or audio/pcm (16-bit LE) with an X-Generation-Id header.",
+    "status": "verified",
+    "corrected_claim": "Verified. The tutorial says the rate and channels parameters on audio/pcm are optional, so the firmware should assume 24000 Hz mono when they are missing.",
+    "evidence_url": "https://openrouter.ai/docs/guides/overview/multimodal/tts"
+   },
+   {
+    "claim": "(3) TTS models that fit Russian: gemini-3.8-flash-lite-tts ($0.50/$6 per 1M, 30 voices), mai-voice-2.1-flash ($15/M chars, ru-RU Lev/Masha/Grant/Harper), fish-audio/s2.1-pro with a ':free variant'. Kokoro has no Russian. Voxtral Mini TTS is MP3-only.",
+    "status": "corrected",
+    "corrected_claim": "The prices and the 35-model count are correct. Corrections: the MAI voice ids are 'ru-RU-Masha:MAI-Voice-2.1-Flash' and so on, with the model suffix included. The free Fish model is a separate id, 'fish-audio/s2.1-pro-free:free', not 's2.1-pro:free'. Russian support for Fish Audio is unverified. Voxtral Mini TTS is confirmed MP3-only (a PCM request returns 400).",
+    "evidence_url": "https://openrouter.ai/api/v1/models?output_modalities=speech"
+   },
+   {
+    "claim": "(3) Gemini 3.8 Flash-Lite TTS covers 100+ languages including Russian, outputs 24 kHz mono 16-bit PCM, bills 25 tokens/s (about $0.009/min), and doubles to $12/M on 2027-01-01 (per the speech-generation page).",
+    "status": "corrected",
+    "corrected_claim": "Russian, 100+ languages and 24 kHz mono 16-bit PCM are confirmed on the speech-generation page. The 25 tokens/s figure and the price change are on the pricing page, not the speech-generation page. The change doubles both input ($0.50 to $1.00) and output ($6 to $12) from 2027-01-01. A user on Google's forum observed 32 tokens/s in usageMetadata, and Google staff replied that billing is 25 tokens/s.",
+    "evidence_url": "https://ai.google.dev/gemini-api/docs/pricing"
+   },
+   {
+    "claim": "(3) Chat audio output needs modalities [text, audio], an audio {voice, format} object and stream:true, and arrives in delta.audio.data/transcript. Only gpt-audio and gpt-audio-mini (plus Lyria) support it.",
+    "status": "verified",
+    "evidence_url": "https://openrouter.ai/api/v1/models?output_modalities=audio"
+   },
+   {
+    "claim": "(3) The docs' example model openai/gpt-4o-mini-tts-2025-12-15 returns 404.",
+    "status": "verified",
+    "corrected_claim": "Verified: it returns 404 'Model not found'. The audio guide's example model google/gemini-2.5-flash is also stale, because it expires 2026-10-20.",
+    "evidence_url": "https://openrouter.ai/api/v1/model/openai/gpt-4o-mini-tts-2025-12-15"
+   },
+   {
+    "claim": "(4) Structured outputs via response_format json_schema {name, strict, schema}, with provider.require_parameters:true. 3.1 and 3.5 Flash-Lite list response_format and structured_outputs.",
+    "status": "verified",
+    "corrected_claim": "Verified. The docs also say structured outputs work with streaming (partial JSON), and that exact compliance is not guaranteed on every endpoint.",
+    "evidence_url": "https://openrouter.ai/docs/guides/features/structured-outputs"
+   },
+   {
+    "claim": "(4) reasoning {effort:'none'} or {enabled:false} turns thinking off, and is rejected on mandatory-reasoning models. Cold edge caches and low balance add latency.",
+    "status": "corrected",
+    "corrected_claim": "OpenRouter documents effort 'none' as 'Disables reasoning entirely' and says a mandatory-reasoning model 'rejects it'. 'enabled:false' is not documented. Google states that reasoning cannot be turned off for Gemini 3 models, and its 3.1 Flash-Lite mapping only goes down to 'minimal'. So 'none' on gemini-3.1-flash-lite probably behaves like 'minimal' upstream. Unsupported effort values are mapped to the nearest supported level. The cold-cache (1-2 min) and low-balance (single-digit dollars) latency notes are confirmed.",
+    "evidence_url": "https://ai.google.dev/gemini-api/docs/openai"
+   },
+   {
+    "claim": "(4) The provider object supports order/sort/allow_fallbacks/require_parameters/data_collection/zdr/only/ignore/preferred_max_latency/preferred_min_throughput. The 'models' array gives failover. ':nitro' uses priority endpoints and ':floor' uses flex.",
+    "status": "corrected",
+    "corrected_claim": "The fields are confirmed, plus quantizations and max_price. ':nitro' sorts by throughput and makes priority endpoints eligible; ':floor' sorts by price and makes flex endpoints eligible. 'models' is a priority-ordered failover list that triggers on context-length errors, moderation, rate limits and downtime, and the request is billed at the model actually used.",
+    "evidence_url": "https://openrouter.ai/docs/guides/routing/provider-selection"
+   },
+   {
+    "claim": "(5) GET /api/v1/models filters on input/output_modalities, supported_parameters, sort, q, offset/limit. output_modalities defaults to text. Responses include total_count and links.next. The docs say auth is required but unauthenticated calls work.",
+    "status": "verified",
+    "corrected_claim": "Verified. The default limit is 500 (maximum 1000). Pagination works: limit=12 returned total_count 48 and links.next. The spec declares bearer auth, yet unauthenticated calls returned 200.",
+    "evidence_url": "https://openrouter.ai/docs/api-reference/models/get-models"
+   },
+   {
+    "claim": "(5) Picker should drop ':batch' variants (Batch API, 24 h), the openrouter/auto routers (-1 pricing), '~' aliases and anything with an expiration_date.",
+    "status": "corrected",
+    "corrected_claim": "The ':batch' facts are confirmed: POST /api/v1/batches, 24h window, roughly 50% price. The filter list misses three things. There is another -1-priced router, 'typesafe/jev-router', that does not start with 'openrouter/' (a negative-price filter still catches it). There is a '-preview' duplicate (gemini-3.1-flash-lite-preview). And the free audio models (nemotron :free, inkling :free) do not list response_format, so with require_parameters:true they would find no endpoint. Filter on supported_parameters=response_format,structured_outputs.",
+    "evidence_url": "https://openrouter.ai/docs/batch-quickstart"
+   },
+   {
+    "claim": "(6) Headers: Authorization Bearer plus Content-Type. Optional: HTTP-Referer (needed for rankings), X-OpenRouter-Title (legacy X-Title), X-OpenRouter-Categories, X-OpenRouter-App-Visibility: hidden.",
+    "status": "verified",
+    "evidence_url": "https://openrouter.ai/docs/app-attribution"
+   },
+   {
+    "claim": "(6) TLS: Cloudflare edge, TLS 1.3, ECDSA P-256 leaf valid 2026-10-17 to 2027-01-15, chain WE1 <- GTS Root R4 (cross-signed by GlobalSign Root CA). Embed both GTS Root R4 and GlobalSign Root CA.",
+    "status": "corrected",
+    "corrected_claim": "The chain and dates match my openssl check. GTS Root R4 alone is enough as a trust anchor. GlobalSign Root CA (R1) is no longer in the ESP-IDF v6.0/v6.1 bundles (it is still in v5.5), and the cross-certificate expires 2028-01-28. Embedding it is harmless but unnecessary.",
+    "evidence_url": "https://raw.githubusercontent.com/espressif/esp-idf/release/v6.1/components/mbedtls/esp_crt_bundle/cmn_crt_authorities.csv"
+   },
+   {
+    "claim": "(6) The ESP-IDF crt bundle uses Mozilla NSS roots: full (130+) or common (about 38, 99% market share), attached via crt_bundle_attach, and updatable by OTA.",
+    "status": "verified",
+    "corrected_claim": "Verified. It also answers one of the open questions: GTS Root R4 is in the common (CMN) list on v5.5, v6.0 and v6.1, so the smaller CMN bundle works for openrouter.ai.",
+    "evidence_url": "https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/protocols/esp_crt_bundle.html"
+   },
+   {
+    "claim": "Free models: 20 req/min, and 50/day (or 1000/day after buying 10 credits). GET /api/v1/key returns limit_remaining, usage, is_free_tier and free_model_daily_requests, which can drive a balance screen.",
+    "status": "corrected",
+    "corrected_claim": "The limits are confirmed. However, limit_remaining is the per-key credit cap and is null when the key has no limit; it is not the account balance. The account balance (GET /api/v1/credits) requires a management key, which should never be stored on the device. Set a per-key spending limit so that /key shows a meaningful remaining amount.",
+    "evidence_url": "https://openrouter.ai/docs/api/reference/limits"
+   },
+   {
+    "claim": "Google limits 2.5 models to existing users, steers new projects to 3.5 Flash-Lite or 3.8 Flash, and lists 3.5 and 3.1 Flash-Lite as stable.",
+    "status": "verified",
+    "corrected_claim": "Verified. Google also says the 2.5 models 'are not deprecated' and will be served until further notice, but OpenRouter independently lists an expiration date of 2026-10-20.",
+    "evidence_url": "https://ai.google.dev/gemini-api/docs/models"
+   },
+   {
+    "claim": "Recommendation: send reasoning {effort:'none'} together with models:[3.1-flash-lite, 3.5-flash-lite] for automatic failover.",
+    "status": "refuted",
+    "corrected_claim": "3.5 Flash-Lite has reasoning.mandatory=true and supported_efforts without 'none', and OpenRouter says such a model rejects 'none'. If the request falls back to it, it errors. Use effort 'minimal', which both models support.",
+    "evidence_url": "https://openrouter.ai/docs/guides/best-practices/reasoning-tokens"
+   },
+   {
+    "claim": "Recommendation: OpenRouter lists gpt-audio-mini audio at $0.60/$2.40, which looks anomalous.",
+    "status": "corrected",
+    "corrected_claim": "OpenAI's official gpt-audio-mini prices are $0.60/$2.40 for text and $10/$20 per 1M for audio. The OpenRouter listing ($0.60/$2.40 for audio) disagrees with that, and the amount OpenRouter actually bills is unknown.",
+    "evidence_url": "https://developers.openai.com/api/docs/pricing"
+   },
+   {
+    "claim": "Recommendation: feed TTS PCM bytes into I2S as they arrive (progressive streaming).",
+    "status": "unverified",
+    "evidence_url": "https://openrouter.ai/blog/tutorials/text-to-speech/"
+   },
+   {
+    "claim": "Voxtral Small 'audio' price of 0.0001 per unit (unit unclear).",
+    "status": "unverified",
+    "evidence_url": "https://openrouter.ai/api/v1/models/mistralai/voxtral-small-24b-2507/endpoints"
+   }
+  ],
+  "recommendation_critique": "The overall design holds up: one chat-completions call with audio input and a JSON schema, then a separate /audio/speech call. gemini-3.1-flash-lite is a reasonable default, since it is about $0.00046 per typical turn against about $0.00056 for 3.5-flash-lite. The live data supports both choices. Five things need fixing, and four smaller points are worth adding.\n\nFixes:\n\n1. The fallback setup is broken. Sending reasoning effort 'none' with models:[3.1, 3.5] means any failover to 3.5-flash-lite (mandatory reasoning) is rejected. Google also says Gemini 3 models cannot turn reasoning off; its 3.1 Flash-Lite mapping only goes down to 'minimal'. So 'none' brings no real latency gain. Send effort 'minimal'. Base the 3.1-vs-3.5 choice on cost per turn, not on 'none'.\n\n2. The pipeline runs everything in series: upload, then wait for the full JSON, then the TTS request, then the first audio. Structured outputs also work with stream:true. Streaming would let the device show text sooner and send TTS sentence by sentence while the reply is still arriving. The SSE parser must:\n   - ignore ': OPENROUTER PROCESSING' comment lines;\n   - treat a 200 stream containing finish_reason 'error' as a failure.\n\n3. The balance screen is wrong. /api/v1/key returns a per-key cap, which is null when the key has no limit. /api/v1/credits needs a management key, which must not be stored on the device. Set a per-key limit instead. Also warn the user: when the balance is in single-digit dollars, OpenRouter adds extra billing checks and latency goes up.\n\n4. TLS. GlobalSign Root CA is not needed and is no longer in the ESP-IDF v6.x bundles. GTS Root R4 is in the common bundle, so the smaller common (CMN) bundle works.\n\n5. The model picker filter needs three more rules:\n   - require supported_parameters to include response_format and structured_outputs. Otherwise the free nemotron and inkling models get no endpoint once require_parameters is set;\n   - drop '-preview' duplicates;\n   - catch non-'openrouter/' routers such as typesafe/jev-router by their negative price.\n   Also check the hardcoded default model ids against /models at boot. Expiry dates are announced only about 3 days ahead: 2.5-flash-lite expires 2026-10-20 and the docs' own example models are already stale.\n\nSmaller points:\n\n- TTS costs more than the LLM. A 10-second Russian reply is about $0.0015 on gemini-3.8-flash-lite-tts. That is roughly three times the LLM call, and it doubles on 2027-01-01 (input and output) on Google's pricing; whether OpenRouter passes the increase on is unknown. Keep the TTS model a setting, with MAI-Voice-2.1-Flash as an alternative. Its voice ids carry the ':MAI-Voice-2.1-Flash' suffix.\n- PCM rate parsing: the rate and channels parameters are optional, so default to 24 kHz mono.\n- Translator mode: one prompt-based call is fine. The user also wants to choose a provider, though. A configurable OpenAI-compatible base URL would cover both OpenRouter and Gemini direct, since Gemini's compatibility layer accepts input_audio but has no TTS. Google's dedicated gemini-3.5-live-translate-preview (WebSocket Live API, about $0.037/min) is not available on OpenRouter.\n- Do not route interactive requests through ':floor' or flex endpoints; the Vertex flex endpoint showed 70% uptime.",
+  "missing": [
+   "The Gemini 3.1 and 3.5 Flash-Lite thinking floor is 'minimal'. Google says reasoning cannot be turned off for Gemini 3 models, so effort 'none' brings no real gain (https://ai.google.dev/gemini-api/docs/openai).",
+   "Account balance (GET /api/v1/credits) requires a management key. GET /api/v1/key returns only per-key limits, null when the key is unlimited.",
+   "Low balance (single-digit dollars) or a key near its credit limit makes OpenRouter add billing checks, which increases latency. This matters for a device with a small prepaid balance.",
+   "SSE handling: OpenRouter sends ': OPENROUTER PROCESSING' keep-alive comments, mid-stream errors arrive with finish_reason 'error', and a usage frame comes before [DONE]. Structured outputs can stream partial JSON.",
+   "Free audio-input models (nemotron :free, inkling :free, inkling-small :free) do not list response_format or structured_outputs, so they fail when require_parameters:true is set with a JSON schema.",
+   "Extra picker entries to filter: typesafe/jev-router (-1 pricing), ~google/gemini-pro-latest, google/gemini-3.1-flash-lite-preview, and xiaomi/mimo-v2.5 (expires 2026-10-21).",
+   "The ESP-IDF common (CMN) certificate bundle includes GTS Root R4 on v5.5, v6.0 and v6.1, so the smaller bundle works. GlobalSign Root CA was removed in v6.x.",
+   "MAI-Voice-2.1-Flash voice ids include the model suffix (e.g. 'ru-RU-Masha:MAI-Voice-2.1-Flash'). Whether the short form is accepted is unverified.",
+   "Gemini TTS token rate: Google bills 25 tokens/s, but users have observed 32 tokens/s in usageMetadata. Whether OpenRouter passes on the 2027-01-01 doubling (input $0.50 to $1.00, output $6 to $12) is unknown.",
+   "Whether /api/v1/audio/speech with google/gemini-3.8-flash-lite-tts accepts response_format 'pcm' and returns the audio progressively is unverified; it needs a test with a real key.",
+   "No realtime or WebSocket speech-to-speech models exist on OpenRouter. Google's gemini-3.5-live-translate-preview (Live API, 70+ languages, $0.0053/min in and $0.0315/min out) is an option only through Google directly.",
+   "Gemini's OpenAI-compatible endpoint (generativelanguage.googleapis.com/v1beta/openai/) accepts input_audio but has no TTS. This is relevant for the 'choose AI provider' setting.",
+   "OpenAI's official gpt-audio-mini audio prices are $10 in and $20 out per 1M, versus $0.60/$2.40 on OpenRouter's listing.",
+   "The google-vertex/global/flex endpoint for 3.1 Flash-Lite showed 70% uptime_last_30m; avoid ':floor' for interactive voice.",
+   "The unit of Voxtral Small's audio price (0.0001) is still unverified.",
+   "Upload sizing: AAC at about 32 kbps is about 4 KB/s, versus about 43 KB/s for base64 WAV. Real ESP32-S3 TLS upload throughput is unmeasured and may be the main source of latency."
+  ]
+ },
+ "verify:tts-stt": {
+  "checked": [
+   {
+    "claim": "OpenRouter TTS is POST https://openrouter.ai/api/v1/audio/speech with Authorization: Bearer. Body: model, input, voice, instructions, speed, response_format (plus input_references and provider). response_format is only mp3 or pcm, default pcm. The response is raw audio bytes: audio/pcm (16-bit LE) or audio/mpeg, with an X-Generation-Id header. Errors are JSON. The endpoint was announced 2026-05-01.",
+    "status": "verified",
+    "evidence_url": "https://openrouter.ai/docs/api/api-reference/tts/create-speech",
+    "corrected_claim": "All verified. The API reference also lists error codes 403, 404, 413, 524 and 529. The launch blog is dated May 1, 2026 (updated July 7). I probed the endpoint from this machine with no key: it returned HTTP 401 with a JSON body {\"error\":{\"message\":...,\"code\":401}}, and the response exposes X-Generation-Id and X-Provider-Name headers. The routing preferences order, only and ignore are NOT applied to speech requests, so the firmware cannot pin a cheaper provider."
+   },
+   {
+    "claim": "The PCM rate depends on the provider. MAI and Gemini are 24 kHz mono. Gemini accepts only pcm (mp3 gives 400). Voxtral is MP3-only. audio/pcm carries optional rate and channels parameters. Fall back to 24000 Hz.",
+    "status": "corrected",
+    "evidence_url": "https://openrouter.ai/docs/cookbook/audio/two-voice-podcast.md",
+    "corrected_claim": "Confirmed: the Gemini error is 400 'Gemini TTS only supports response_format=\"pcm\"', and the cookbook shows the header 'Content-Type: audio/pcm;rate=24000;channels=1'. Confirmed: MAI pcm is 24 kHz mono (TTS guide, Azure section). Confirmed: the tutorial says Voxtral is MP3-only and PCM returns 400, although the API-reference example uses voxtral with response_format pcm, so the two docs disagree. Wrong: a blind 24000 Hz fallback is unsafe. OpenRouter's HeyGen Voice/Voice Turbo pages say they 'stream 44.1 kHz mono PCM'. The ElevenLabs-on-OpenRouter blog says ElevenLabs defaults to 24 kHz. Use a per-model rate table and the Content-Type rate parameter, and reconfigure I2S for each response."
+   },
+   {
+    "claim": "Speech catalogue prices: kokoro $0.62/M; fish drama-3 $2/M UTF-8 bytes (80% promo); heygen-voice-1-turbo $4/M (50% promo); MAI-2.1-flash $15/M; grok-voice-tts $15/M; voxtral $16/M; eleven flash/turbo v2.5 $20/M (50% promo); MAI-2.1 $22/M; eleven multilingual-v2/v3/v4 $40/M; deepgram aura-2 $30/M; Gemini 3.8 flash-lite TTS $0.50 + $6/M, flash $0.50 + $9/M, 3.1 preview $1 + $20/M; fish s2.1-pro-free:free is $0.",
+    "status": "corrected",
+    "evidence_url": "https://openrouter.ai/api/v1/models?output_modalities=speech",
+    "corrected_claim": "I pulled the Models API live on 2026-10-17 and every listed number matches. Corrections: (1) The 50% ElevenLabs promo covers EVERY ElevenLabs model, not just Flash/Turbo, and it ends Oct 19, 2026, 8am PT. After that, list prices on OpenRouter are about $40/M for Flash/Turbo/v4-turbo/v3-conversational and $80/M for v4/v3/multilingual-v2. (2) Kokoro has two providers: DeepInfra at $0.62/M and Together at $4/M, and speech requests can't be pinned to a provider. (3) The drama-3 discount field is 0.8, so the list price is about $10/M bytes, roughly $20/M Russian chars once the promo ends. (4) The findings left out heygen-voice-1 ($15/M, 50% promo), fish s1/s2-pro/s2.1-pro ($15/M), qwen-audio-3.0-tts-flash ($15/M), canopylabs orpheus and sesame csm-1b ($7/M, English only), minimax speech-2.8 ($60-100/M), deepgram flux-tts ($45/M, English) and bytedance seed-audio-1-0 (per second)."
+   },
+   {
+    "claim": "No OpenAI TTS model is listed on OpenRouter. The endpoints for gpt-4o-mini-tts and tts-1 return 404, although the docs still use openai/gpt-4o-mini-tts-2025-12-15 in their examples.",
+    "status": "verified",
+    "evidence_url": "https://openrouter.ai/blog/tutorials/text-to-speech/",
+    "corrected_claim": "Verified. /models/openai/gpt-4o-mini-tts/endpoints, /openai/tts-1/endpoints and /openai/gpt-4o-mini-tts-2025-12-15/endpoints all return 404. The tutorial says outright: 'No OpenAI speech model is in the live catalog as of September 2026'."
+   },
+   {
+    "claim": "MAI-Voice-2.1-Flash is on Azure at $15/M chars and is low-latency. Russian voices: ru-RU-Grant, Harper, Lev, Masha with the :MAI-Voice-2.1-Flash suffix. The locale sets the language. 28 locales, with no ja, uk or ar. Output is mp3 or 24 kHz mono pcm.",
+    "status": "verified",
+    "evidence_url": "https://openrouter.ai/microsoft/mai-voice-2.1-flash",
+    "corrected_claim": "Verified from supported_voices: 97 voices across 28 locales. The description says '23 languages' because en and es have several locales. There are no uk, ja, ar, he, el or kk voices. It is served only by Azure, discount 0, released 2026-10-01."
+   },
+   {
+    "claim": "Gemini 3.8 Flash TTS covers 130+ languages and Flash-Lite 100+, including Russian, with 30 prebuilt voices. Direct API is POST /v1beta/interactions. A normal request returns 24 kHz mono 16-bit WAV; streaming returns raw L16. Flash-Lite output is $6/M audio tokens until 2026-12-31, then $12 (Flash $9, then $18). 25 tokens per second. Free tier.",
+    "status": "verified",
+    "evidence_url": "https://ai.google.dev/gemini-api/docs/pricing",
+    "corrected_claim": "Verified (pricing page and https://ai.google.dev/gemini-api/docs/speech-generation). One addition: text INPUT also doubles from $0.50 to $1.00/M on 2027-01-01. $6/M × 25 tokens/s works out to about $0.009 per minute."
+   },
+   {
+    "claim": "Russia and Belarus are not available regions for the Gemini API or AI Studio.",
+    "status": "verified",
+    "evidence_url": "https://ai.google.dev/gemini-api/docs/available-regions"
+   },
+   {
+    "claim": "OpenAI direct TTS: POST /v1/audio/speech. Models gpt-4o-mini-tts, tts-1, tts-1-hd. 13 voices. Formats mp3 (default), opus, aac, flac, wav, pcm. pcm is 24 kHz 16-bit LE with no header. Supports chunked streaming. Voices are optimized for English. gpt-4o-mini-tts takes at most 2000 input tokens.",
+    "status": "verified",
+    "evidence_url": "https://developers.openai.com/api/docs/guides/text-to-speech",
+    "corrected_claim": "Verified. Additional facts from the API reference: input is limited to 4096 characters, speed ranges 0.25-4.0, stream_format is sse or audio, and gpt-4o-mini-tts-2025-12-15 is the default snapshot. The 2000-token limit is on https://developers.openai.com/api/docs/models/gpt-4o-mini-tts."
+   },
+   {
+    "claim": "OpenAI prices: tts-1 $15/M chars, tts-1-hd $30/M, gpt-4o-mini-tts $0.60 + $12/M tokens. STT: whisper $0.006/min, gpt-4o-transcribe $0.006, gpt-transcribe $0.0045, gpt-4o-mini-transcribe $0.003. Russia and Belarus are unsupported and accounts there may be blocked.",
+    "status": "verified",
+    "evidence_url": "https://developers.openai.com/api/docs/pricing",
+    "corrected_claim": "Verified. The supported-countries page says access from outside the list 'may result in your account being blocked or suspended' (https://developers.openai.com/api/docs/supported-countries). On the pricing page, gpt-4o-mini-tts, tts-1 and tts-1-hd now sit in a collapsed 'hidden models' group."
+   },
+   {
+    "claim": "OpenRouter and Russia: payments stopped on 2026-05-11 and credits kept working; Russian billing addresses later lost OpenAI, Anthropic and Google models ('All other models remain available'); from about 2026-06-27 there are 403 'Not available in your region' errors for Russian IPs. Source cited: Habr.",
+    "status": "corrected",
+    "evidence_url": "https://doka-ai.ru/articles/openrouter-zablokirovali",
+    "corrected_claim": "The cited Habr article (May 12, 2026) only covers the May 11 payment stop: credits still worked and a refund window opened. The model-block message 'Your billing address is in a region that does not have access to models from OpenAI, Anthropic, and Google. All other models remain available' comes from ainsider.ru (May 15, 2026). doka-ai.ru (July 19, 2026) reports that from June 27, 2026 ALL OpenRouter access was turned off for accounts in the Russia/Belarus region, account-based and regardless of balance or VPN. botman.one reports IP-based 403 'Not available in your region'. Sources disagree on IP-based versus account-based. OpenRouter has made no official statement. A Russian-region account should be assumed unusable for any OpenRouter model, including MAI. Data point: my unauthenticated probe from this machine reached OpenRouter (Cloudflare WAW PoP) and got 401, not a geo-403."
+   },
+   {
+    "claim": "ESP32-audioI2S decodes wav/mp3/aac/flac/opus/vorbis on the S3. openai_speech() posts stream:true to a hard-coded api.openai.com. connecttospeech() fetches Google Translate TTS MP3 over plain HTTP port 80 from translate.google.com.vn.",
+    "status": "verified",
+    "evidence_url": "https://github.com/schreibfaul1/ESP32-audioI2S",
+    "corrected_claim": "Verified in src/Audio.cpp (current library.properties version 4.0.0). Missing facts: (1) the library is GPL-3.0. (2) openai_speech() only maps mp3, opus, aac and flac to a codec. With response_format 'pcm' m_expectedCodec stays CODEC_NONE, so it cannot play the PCM-first design without patches. (3) Its I2S output always runs at 48 kHz (it resamples). (4) The Waveshare wiki pins ESP32-audioI2S v2.0.0, LVGL v8.3.10 and arduino-esp32 3.0.2+, while current v4.0.0 has a different API, so versions must be pinned so a rollback is possible."
+   },
+   {
+    "claim": "Google Translate TTS (GET translate_tts?client=tw-ob): no auth, returns MP3. In a test a 196-character Russian string worked and 210 characters returned 400. gTTS uses a 100-character limit.",
+    "status": "corrected",
+    "evidence_url": "https://raw.githubusercontent.com/pndurette/gTTS/main/gtts/tts.py",
+    "corrected_claim": "I re-tested on 2026-10-17 with Russian text: 100, 196 and 200 characters returned 200 audio/mpeg, and 201 and 210 characters returned HTTP 400. The hard limit is 200 characters. The MP3 is MPEG-2 Layer III, 24 kHz mono (about 64 kbps). gTTS defines GOOGLE_TTS_MAX_CHARS = 100, but it actually calls the batchexecute endpoint, not translate_tts."
+   },
+   {
+    "claim": "Edge read-aloud TTS: WSS with TrustedClientToken 6A5AA1D4..., Sec-MS-GEC tokens in 5-minute windows, v2 token mandatory from Oct 2026 (403 until edge-tts 7.3.0 on 2026-10-13), mp3 at 24 kHz/48 kbps, custom SSML blocked, Russian voices Svetlana and Dmitry.",
+    "status": "verified",
+    "evidence_url": "https://github.com/rany2/edge-tts/pull/492",
+    "corrected_claim": "Verified: PR #492 was merged on 2026-10-13. PyPI shows 7.3.0 at 2026-10-13T15:33 and 7.3.1 later the same day. drm.py rounds ticks to 300 s and corrects clock skew from the server Date header. constants.py has SEC_MS_GEC_VERSION '2-143.0.3650.75'. The output format is audio-24khz-48kbitrate-mono-mp3, and the README says custom SSML was removed. Not checked here: the ru-RU voice names. The library is LGPLv3."
+   },
+   {
+    "claim": "Yandex SpeechKit v1: POST tts.api.cloud.yandex.net/speech/v1/tts:synthesize, 'Authorization: Api-Key' (no folderId for service accounts), text up to 5000 chars, formats lpcm/oggopus(default)/mp3, lpcm rates 48000/16000/8000. v3 REST utteranceSynthesis defaults to 22050 Hz WAV and returns base64 audioChunk. Languages: ru, en, de, he, kk, uz.",
+    "status": "verified",
+    "evidence_url": "https://aistudio.yandex.ru/docs/en/speechkit/tts/request",
+    "corrected_claim": "Verified. The auth formats are on https://aistudio.yandex.ru/docs/en/speechkit/concepts/auth. Nuance from the voices page: many of the best Russian voices (dasha, julia, lera, masha, alexander, kirill, anton) are v3-only. v1 has only filipp, ermil, jane, omazh, zahar, marina and madi_ru. Hebrew (naomi) is v3-only. The v3 default output is a WAV container (22050 Hz), not headerless, unless rawAudio is requested."
+   },
+   {
+    "claim": "Yandex pricing (incl. VAT): v1 is 1,342 RUB/M chars (USD $11.00); v3 is 0.1626 RUB per started 250-char unit; livetts is 0.25 RUB; recognition is 0.1626 RUB per 15 s; no free tier.",
+    "status": "verified",
+    "evidence_url": "https://aistudio.yandex.ru/docs/ru/speechkit/pricing",
+    "corrected_claim": "Verified. The USD figure is 10.99999824 excluding VAT. Recognition segments shorter than 15 s are rounded up to a full 15-second unit, so very short push-to-talk clips cost a full unit."
+   },
+   {
+    "claim": "SaluteSpeech: Freemium for individuals stopped being sold or renewed on 2026-07-15. Packages are 1M synthesis chars for 1,000 RUB (1 month) and 1,000 recognition minutes for 1,200 RUB. REST endpoint smartspeech.sber.ru/rest/v1/text:synthesize with wav16/pcm16/opus. Languages ru, en, kz, ky.",
+    "status": "verified",
+    "evidence_url": "https://developers.sber.ru/docs/ru/salutespeech/tariffs/individual-tariffs",
+    "corrected_claim": "Verified. Languages are confirmed at https://developers.sber.ru/docs/ru/salutespeech/synthesis/synthesis-http. The format list comes from search summaries of official pages (wav16 is the default; pcm16 is headerless with a sample rate set by the voice). Missing for ESP32: auth is a two-step OAuth exchange for a Bearer access token, and Sber's TLS chains to the 'Russian Trusted Root CA' (НУЦ Минцифры). That root is not in the Mozilla-based esp_crt_bundle, so it must be embedded (https://developers.sber.ru/docs/ru/salutespeech/quick-start/certificates)."
+   },
+   {
+    "claim": "Google Cloud TTS: text:synthesize returns base64 JSON. Encodings LINEAR16 (WAV header), PCM (headerless), MULAW, ALAW, MP3 32 kbps, OGG_OPUS, M4A. Price per M chars: Standard/WaveNet $4 (4M free), Neural2/Polyglot $16 (1M free), Chirp 3 HD $30 (1M free), Studio $160.",
+    "status": "verified",
+    "evidence_url": "https://cloud.google.com/text-to-speech/pricing",
+    "corrected_claim": "Prices verified. Studio also has 1M chars free, and an Instant custom voice tier costs $60/M. The REST v1 AudioEncoding page lists only LINEAR16 (with a WAV header), MP3 (32 kbps), OGG_OPUS, MULAW and ALAW. PCM (headerless) and M4A appear only in the RPC v1 reference. I did not verify that streaming is limited to Chirp 3 HD."
+   },
+   {
+    "claim": "Google stopped accepting new Google Cloud customers in Russia in March 2022.",
+    "status": "verified",
+    "evidence_url": "https://www.telecompaper.com/news/google-stops-accepting-cloud-customers-in-russia-starts-evacuating-staff--1418561",
+    "corrected_claim": "Verified (March 23, 2022). This is a news report, not a Google primary source."
+   },
+   {
+    "claim": "ElevenLabs direct: POST /v1/text-to-speech/{voice_id} with xi-api-key. PCM/WAV at 8-48 kHz, ulaw and alaw. Default mp3_44100_128. 44.1 kHz PCM/WAV needs Pro. $0.04/1K chars for Flash/Turbo and $0.08/1K for Multilingual/v3. Free plan has 20k Flash chars. Russia and Belarus are blocked.",
+    "status": "verified",
+    "evidence_url": "https://elevenlabs.io/docs/api-reference/text-to-speech/convert",
+    "corrected_claim": "Endpoint, auth header, default format and the Pro-tier rule for 44.1 kHz PCM/WAV are verified. Prices and the free plan (20,000 Flash/Turbo chars, 10,000 Multilingual/v3 chars) are verified at https://elevenlabs.io/pricing/api. The Russia/Belarus block is still confirmed only by a search snippet; the help-center page returned 403 to me as well. A third-party repo says Russian IPs get a 302 redirect rather than a 403. The OpenRouter ElevenLabs $20/M promo ends 2026-10-19 08:00 PT (https://openrouter.ai/blog/announcements/elevenlabs-on-openrouter/)."
+   },
+   {
+    "claim": "Grok Voice TTS supports 20+ languages including ru, takes up to 15,000 chars per request, has 5 voices, and offers MP3/WAV/PCM/mu-law/A-law natively (only mp3/pcm via OpenRouter, $15/M).",
+    "status": "corrected",
+    "evidence_url": "https://docs.x.ai/developers/model-capabilities/audio/text-to-speech",
+    "corrected_claim": "xAI's own docs give a 60,000-character limit per request; 15,000 is Cloudflare's wrapper. The docs list the codecs MP3, WAV, PCM, mulaw and alaw at 8000-48000 Hz (default 24000), plus a WebSocket streaming endpoint wss://api.x.ai/v1/tts. 'ru' is supported and 'uk' is not listed. Through OpenRouter: x-ai/grok-voice-tts-1.0 at $15/M chars, voices eve/ara/rex/sal/leo, with auto language detection. That makes it a language-agnostic option for the translator."
+   },
+   {
+    "claim": "Fish Audio S2.1 Pro API is free until 2026-11-30 under fair use, about 90 ms TTFA, 83 languages, Russian is Tier 2. On OpenRouter it is fish-audio/s2.1-pro-free:free.",
+    "status": "verified",
+    "evidence_url": "https://fish.audio/blog/s2-1-pro-free-api/",
+    "corrected_claim": "Verified. Russian is Tier 2 per https://fish.audio/s2/, and the OpenRouter id appears in the Models API at $0. The open S2 Pro weights are under the Fish Audio Research License, non-commercial only."
+   },
+   {
+    "claim": "OpenRouter STT: POST /api/v1/audio/transcriptions with input_audio {data base64, format} or multipart (25 MB), optional language, json/verbose_json. Formats wav, mp3, flac, m4a, ogg, webm, aac. 60 s upstream timeout. Prices: whisper-large-v3-turbo $0.00000333/s on DeepInfra and $0.0000111/s on Groq; whisper-1 $0.0001/s; gpt-4o-mini-transcribe $1.25/$5 per M tokens.",
+    "status": "verified",
+    "evidence_url": "https://openrouter.ai/docs/guides/overview/multimodal/stt",
+    "corrected_claim": "Verified from the guide and from the live endpoints API. Caveat: provider routing preferences are not applied to transcription requests, so you cannot force DeepInfra's $0.012/h over Groq's $0.04/h. Cheap multilingual alternatives the findings did not list: nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b and qwen/qwen3-asr-0.6b, both $0.00000333/s, and elevenlabs/scribe-v2 at about $0.11/h."
+   },
+   {
+    "claim": "Groq STT: https://api.groq.com/openai/v1/audio/transcriptions. whisper-large-v3 costs $0.111/h and turbo $0.04/h. 10 s minimum billing. Formats flac, mp3, mp4, m4a, ogg, wav, webm. 25 MB on the free tier. ISO-639-1 language hint.",
+    "status": "verified",
+    "evidence_url": "https://console.groq.com/docs/speech-to-text",
+    "corrected_claim": "Verified. The dev tier allows 100 MB. I found no evidence either way on whether Groq is available in Russia."
+   },
+   {
+    "claim": "Piper has 4 Russian voices: denis, dmitri, irina, ruslan.",
+    "status": "verified",
+    "evidence_url": "https://huggingface.co/rhasspy/piper-voices",
+    "corrected_claim": "Verified via the HF tree API (ru/ru_RU: denis, dmitri, irina, ruslan). Note that github.com/rhasspy/piper was archived on 2025-10-06 and development moved to OHF-Voice/piper1-gpl, which is GPL."
+   },
+   {
+    "claim": "8 MB PSRAM holds about 2.5 minutes of 24 kHz 16-bit mono PCM (48 KB/s).",
+    "status": "verified",
+    "evidence_url": "https://openrouter.ai/docs/cookbook/audio/two-voice-podcast.md",
+    "corrected_claim": "The arithmetic gives 8,388,608 / 48,000 ≈ 175 s, about 2.9 minutes in theory, so 2.5 minutes is a fair usable figure. A ring buffer of 1-3 s is enough for streaming. HeyGen's 44.1 kHz PCM is 88.2 KB/s."
+   }
+  ],
+  "recommendation_critique": "The core design holds up: one OpenAI-compatible /audio/speech driver, PCM only, streaming into a PSRAM ring buffer. MAI-Voice-2.1-Flash with ru-RU-* voices at $15/M chars is a defensible OpenRouter default. Problems found:\n\n(1) The fixed 24000 Hz fallback is unsafe. On OpenRouter, HeyGen streams 44.1 kHz PCM. The firmware should parse 'audio/pcm;rate=…;channels=…', keep a per-model rate table, and re-init I2S each time. The board's PCM5101 DAC accepts any of these rates.\n\n(2) The Russia section understates the risk. The later reports (doka-ai, July 2026) say that from 2026-06-27 Russia/Belarus-region accounts lost ALL OpenRouter access, not just payments or OpenAI/Google/Anthropic models. So 'only an OpenRouter key needed' may simply not work for this user. This network did reach OpenRouter: an unauthenticated probe got 401, not a geo-403. The user asked for OpenRouter as the base, so keep it, but a non-OpenRouter path has to be a working first-class setting, not an afterthought. Ask the user where the account is registered and how they pay.\n\n(3) Prices are about to move. The ElevenLabs 50% promo ends 2026-10-19, which doubles every ElevenLabs model. Fish drama-3 is 80% off and HeyGen 50% off, with no end date shown. Gemini TTS input and output prices double on 2027-01-01. Don't hard-code costs.\n\n(4) OpenRouter does not apply provider routing to speech or transcription requests. Kokoro may bill at Together's $4/M rather than DeepInfra's $0.62/M, and whisper-turbo at Groq's $0.04/h rather than $0.012/h.\n\n(5) STT advice: gpt-4o-mini-transcribe is an OpenAI model, so it is blocked for Russian billing even when OpenRouter otherwise works. Also consider the cheap multilingual nemotron-3.5-asr and qwen3-asr models.\n\n(6) ESP32-audioI2S is GPL-3.0. Its openai_speech() doesn't handle pcm and hard-codes api.openai.com, so a custom HTTPS-chunked-to-I2S client is needed anyway; use the library only for the MP3 fallback. Pin library versions: Waveshare documents audioI2S 2.0.0, LVGL 8.3.10 and arduino-esp32 3.0.x, while current audioI2S is 4.0.0 with a different API. Pinning matters for the user's rollback requirement.\n\n(7) Yandex v1 lpcm is easy to use, but the best Russian voices are v3-only. v3 needs JSON-lines plus base64 decoding and defaults to a WAV container. Recognition bills in 15 s units.\n\n(8) SaluteSpeech (1,000 RUB per 1M chars, cheaper than Yandex v1) was left out of the shipped fallbacks. It needs OAuth token exchange and the Russian Trusted Root CA embedded in the ESP32 trust store.\n\n(9) The translator needs a language-agnostic voice option, not only MAI's locale map. MAI lacks uk, ja and ar. Grok TTS ($15/M, auto-detect, 5 voices for all languages, has ja/ar but not uk) and Gemini (100+ languages, Google, blocked for RU billing) fill the gaps. For Ukrainian the realistic options are Gemini, ElevenLabs or Edge.\n\n(10) Latency: OpenRouter's own push-to-talk cookbook (STT → LLM → TTS, non-streamed) reports about 10 s from button release to the first spoken word, with TTS the slowest stage. Stream the LLM reply over SSE and pipeline TTS one sentence at a time, or the UX will feel sluggish.\n\n(11) Google Translate TTS: the hard limit is exactly 200 characters (201 returns 400), and the MP3 is 24 kHz mono. The library's connecttospeech uses plain HTTP to translate.google.com.vn.",
+  "missing": [
+   "The exact hardware variant decides the whole audio path. The non-C ESP32-S3-Touch-LCD-1.85 uses a PCM5101 I2S DAC (no I2C setup; Speak_DIN GPIO47, LRCK GPIO38, BCK GPIO48) and an I2S MEMS mic (MSM261S4030H0R, later ICS-43434; MIC_WS GPIO2, SCK GPIO15, SD GPIO39). The 1.85C V2 instead uses an ES8311 codec plus an ES7210 ADC with dual mics and echo cancellation, which needs I2C init and MCLK on GPIO2. Confirm what 'rev 2.1' refers to (silkscreen or startup screen).",
+   "Whether the user's OpenRouter account is Russia/Belarus-registered. Reports say all access ended on 2026-06-27 for those accounts, which would make the OpenRouter-only default non-functional.",
+   "Whether OpenRouter /audio/speech actually streams PCM progressively, and the time to first byte for MAI, Gemini, Grok and HeyGen. Undocumented; needs measuring on the device.",
+   "Whether xAI (Grok), Microsoft (MAI), Fish and HeyGen models on OpenRouter stay usable for Russian-billing accounts, if the account is not fully blocked.",
+   "Which of HeyGen Voice's 39 languages it supports (Russian?), and its exact PCM format on OpenRouter beyond 44.1 kHz mono.",
+   "End dates for the Fish drama-3 (80%) and HeyGen (50%) promos.",
+   "Edge read-aloud from Russia: whether it is reachable and whether it accepts raw PCM output formats.",
+   "Rate limits for OpenRouter :free speech models such as fish-audio/s2.1-pro-free:free (requests per day/minute).",
+   "TLS on ESP32: which CA chains the OpenRouter, Yandex and Sber hosts use. Sber needs Russian Trusted Root CA embedded. Plan for bundle updates in an OTA/rollback scheme.",
+   "A listening comparison of Russian quality (MAI vs Grok vs Gemini vs Yandex vs Sber vs Edge). There are no public benchmarks.",
+   "Licenses: ESP32-audioI2S is GPL-3.0, edge-tts LGPLv3, piper1-gpl GPL, Fish S2 open weights non-commercial. Matters if the firmware is ever distributed."
+  ]
+ },
+ "verify:firmware-stack": {
+  "checked": [
+   {
+    "claim": "Board hardware: ST77916 360x360 QSPI (D0-D3 GPIO46/45/42/41, CLK40, CS21, TE18, BL5), CST816 touch (SDA1/SCL3/INT4), PCM5101 DAC (DIN47/LRCK38/BCK48), I2S mic (WS2/SCK15/SD39), TCA9554PWR expander, TP_RST=EXIO1, LCD_RST=EXIO2, SD CS=EXIO3; on V2.0/V2.1 the MSM261S4030H0R mic was replaced by an ICS-43434.",
+    "status": "corrected",
+    "corrected_claim": "All the pins and chips match the wiki. Two corrections. First, the wiki says only that the 'old version' used the MSM261S4030H0R and that it was replaced by an ICS-43434 with changed circuitry; it never labels this as V2.0 or V2.1. Second, Waveshare's resources page lists the touch datasheet as CST816T, not CST816S. The wiki also lists things the finding left out. There is an unnamed 'Power amplifier chip', a 'Speaker volume button' and a 'Battery power supply control button'. RTC (PCF85063) and IMU (QMI8658) share I2C on GPIO10/11 with RTC_INT on GPIO9. IMU INT2/INT1 are on EXIO4/EXIO5, and the SD card is on GPIO14/16/17.",
+    "evidence_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85"
+   },
+   {
+    "claim": "Waveshare ships an ESP-IDF demo (ESP32-S3-Touch-LCD-1.85-Test, IDF >=5.3.1) and an Arduino demo (LVGL_Arduino: core >=3.0.2, LVGL 8.3.10, ESP32-audioI2S 2.0.0), only as a Google Drive zip; waveshareteam GitHub has repos only for 1.85B/1.85C.",
+    "status": "verified",
+    "corrected_claim": "",
+    "evidence_url": "https://github.com/orgs/waveshareteam/repositories?q=1.85"
+   },
+   {
+    "claim": "The WU-AetherCore mirror keeps the Waveshare layout under main/; it pulses EXIO2, probes reg 0x04 at 3 MHz, uses a vendor table for 00 02 7F 7F, then reopens at 80 MHz; touch uses legacy driver/i2c.h; it uses IDF 5.5.5 and LVGL 8.3.11 with a factory-only partition table.",
+    "status": "corrected",
+    "corrected_claim": "The sources are under firmware/main/ (not main/). The init flow checks out: EXIO2 reset, 3 MHz probe of 0x04, vendor_specific_init_new only for 00 02 7F 7F, and legacy driver/i2c.h in CST816.c. The final clock is ESP_PANEL_LCD_SPI_CLK_HZ; I did not see its value. The partition table is factory-only: nvs 0x9000/0x6000, factory 0x10000/3M, flash_test fat 528K, model spiffs 5900K. The finding missed that the repo's own code is licensed PolyForm Noncommercial 1.0.0, so it must not be copied into the project. Use it only as a reference.",
+    "evidence_url": "https://github.com/WU-AetherCore/WU-ESP32-S3-Touch-LCD-1.85"
+   },
+   {
+    "claim": "Mic: I2S_NUM_1, 16 kHz, 32-bit, mono RIGHT slot, >>14. Speaker: I2S_NUM_0 std TX (BCLK48/LRCK38/DOUT47, no MCLK), software volume.",
+    "status": "corrected",
+    "corrected_claim": "The mic part checks out: I2S_NUM_1, 16 kHz, 32-bit, I2S_SLOT_MODE_MONO + I2S_STD_SLOT_RIGHT, samples >>14. The speaker code in that repo is different from the claim. It uses CONFIG_BSP_I2S_NUM (port not shown as I2S_NUM_0), and pins come from a BSP_I2S_GPIO_CFG macro I could not see. It runs 16-bit stereo Philips at a default 48 kHz that follows the decoded file. Software volume is a sample multiply.",
+    "evidence_url": "https://raw.githubusercontent.com/WU-AetherCore/WU-ESP32-S3-Touch-LCD-1.85/main/firmware/main/Audio_Driver/PCM5101.c"
+   },
+   {
+    "claim": "PCM5101 is hardware-controlled, has a BCK-referenced PLL (no MCLK needed), and outputs 2.1 Vrms line level that needs an amplifier; plain i2s_std TX is enough.",
+    "status": "verified",
+    "corrected_claim": "",
+    "evidence_url": "https://www.ti.com/product/PCM5101"
+   },
+   {
+    "claim": "esp_codec_dev 1.6.2 supports ES8311/ES8388/ES7210 etc., has a dummy codec for codec-less designs and audio_codec_new_sw_vol.",
+    "status": "verified",
+    "corrected_claim": "The registry wording is 'dummy codec for PA-only speaker designs'.",
+    "evidence_url": "https://components.espressif.com/components/espressif/esp_codec_dev"
+   },
+   {
+    "claim": "xiaozhi's 1.85 board port uses i2c_master port 0 + esp_io_expander_tca9554 (pulses pins 0|1), esp_lcd_st77916 with 0x04 ID detection (3 MHz then 80 MHz), NoAudioCodecSimplex (mic RIGHT 16 kHz, speaker 24 kHz), GPIO7 power latch and GPIO6 power button.",
+    "status": "corrected",
+    "corrected_claim": "Everything listed checks out: i2c_new_master_bus on port 0, SDA11/SCL10, TCA9554 ADDRESS_000, pins 0|1 pulsed 1-0-1 (the code comment says this resets LCD and TouchPad), the 3 MHz probe, ID 00 02 7F 7F selecting vendor_specific_init_new, and 80 MHz. NoAudioCodecSimplex runs the speaker on I2S_STD_SLOT_BOTH at 24 kHz and the mic on I2S_STD_SLOT_RIGHT at 16 kHz. GPIO7 is driven high and a long press on GPIO6 (active low) toggles it. What the finding leaves out is important: this board file never creates a touch device. TP_PORT I2C_NUM_1 and SDA1/SCL3/INT4 are defined in config.h but unused, so xiaozhi offers no working CST816 reference for this board.",
+    "evidence_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/esp32-s3-touch-lcd-1.85.cc"
+   },
+   {
+    "claim": "xiaozhi requires IDF >=6.0.1, recommends 6.1, dropped 5.x; CI uses espressif/idf:release-v6.1; deps esp_lcd_st77916 ^2.0.2, cst816s ^1.1.2, tca9554 ~2.0.3, esp_lvgl_port ~2.9.0, lvgl ~9.5.0, esp_codec_dev ~1.6.2, esp-sr 2.4.7; this proves the whole component set builds on IDF 6.1.",
+    "status": "corrected",
+    "corrected_claim": "The README text, the CI image (espressif/idf:release-v6.1, a release branch rather than the v6.1 tag) and the dependency specs all check out (esp-sr is pinned ==2.4.7). The conclusion goes too far, for three reasons. Push and PR CI builds only the variants touched by changed files; the full matrix runs only on workflow_dispatch. This board never runs the cst816s driver. And xiaozhi pins lvgl ~9.5.0, while the recommendation picks ~9.6.0, a combination xiaozhi has not tested. So the set builds on 6.1, but it has not been shown to work on this board, for touch especially.",
+    "evidence_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/.github/workflows/build.yml"
+   },
+   {
+    "claim": "xiaozhi sets CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y, FLASHSIZE_16MB, and a custom 16 MB table (nvs 0x9000/0x4000, otadata 0xd000/0x2000, phy 0xf000, ota_0 0x20000/0x3f0000, ota_1 auto/0x3f0000, assets spiffs 0x800000/8M); S3 defaults set SPIRAM_MODE_OCT, SPEED_80M, MBEDTLS_EXTERNAL_MEM_ALLOC.",
+    "status": "verified",
+    "corrected_claim": "The defaults also set CONFIG_MBEDTLS_DYNAMIC_BUFFER=y, SPIRAM_MALLOC_RESERVE_INTERNAL=102400, smaller Wi-Fi RX buffers and CONFIG_LV_USE_KEYBOARD=n. The recommendation omits the first three and needs the keyboard, so it must not copy that last line.",
+    "evidence_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/sdkconfig.defaults.esp32s3"
+   },
+   {
+    "claim": "Current IDF releases: v6.1 (27 Aug 2026), v6.0.3 (2 Sep 2026), v5.5.6 (16 Oct 2026); 12 months service + 18 months maintenance; v5.5 probably already in maintenance (release year unknown).",
+    "status": "verified",
+    "corrected_claim": "Tag timestamps: v6.1 2026-08-27, v6.0.3 2026-09-02, v5.5.6 2026-10-16. v5.5 was released 2025-07-21, so its 12-month service period ended around July 2026 and it is now in maintenance. This settles that open question.",
+    "evidence_url": "https://github.com/espressif/esp-idf/releases/tag/v5.5"
+   },
+   {
+    "claim": "IDF 6.0 removed legacy I2S/ADC/RMT/timer drivers; legacy I2C is EOL (removal in 7.0); esp_lcd I2C IO only accepts i2c_master; so Waveshare's legacy-I2C touch code will not build on 6.x; IDF 6.0 moved to MbedTLS 4/PSA.",
+    "status": "corrected",
+    "corrected_claim": "The removals and the esp_lcd change check out. The conclusion is wrong, though: the legacy driver/i2c.h still compiles in 6.x. It is EOL with deprecation warnings that CONFIG_I2C_SUPPRESS_DEPRECATE_WARN can silence. Waveshare's raw legacy-I2C CST816 code would still build. The real blocker is mixing it with i2c_master, which the TCA9554 component needs. That trips the legacy/new conflict check at startup (bypassed only by CONFIG_I2C_SKIP_LEGACY_CONFLICT_CHECK). Rewriting it with i2c_master is still right. The 'MbedTLS 4' version number was not confirmed; the protocols guide mentions only PSA Crypto key handling.",
+    "evidence_url": "https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/migration-guides/release-6.x/6.0/peripherals.html"
+   },
+   {
+    "claim": "In IDF 6.0 cJSON (espressif/cjson 1.7.19~2) and esp-mqtt (espressif/mqtt) became managed components, wifi_provisioning became espressif/network_provisioning; http client/server/https_ota remain; v6.1 has the captive_portal example.",
+    "status": "verified",
+    "corrected_claim": "For network_provisioning the guide says to use ^1.1.0 and to set(EXCLUDE_COMPONENTS wifi_provisioning).",
+    "evidence_url": "https://docs.espressif.com/projects/esp-idf/en/stable/esp32/migration-guides/release-6.x/6.0/provisioning.html"
+   },
+   {
+    "claim": "EIM is the default and recommended installer for IDF 6.x; winget Espressif.EIM / Espressif.EIM-CLI (0.20.0); GitHub eim-cli-windows-x64.exe v0.20.1 (16 Oct 2026); flags -i -t -p -n -a; --config; eim run / eim shell; eim_config.toml saved; desktop shortcut and activate scripts under C:\\Espressif\\tools.",
+    "status": "verified",
+    "corrected_claim": "I confirmed the doc wording ('default and recommended way to install ESP-IDF v6.0 and newer'), the winget IDs, winget showing 0.20.0, the v0.20.1 asset eim-cli-windows-x64.exe, the CLI flags, eim run / eim shell, and that eim_config.toml is saved in the install directory. I did not confirm the exact shortcut name (IDF_PowerShell) or the script location under C:\\Espressif\\tools.",
+    "evidence_url": "https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/get-started/windows-setup.html"
+   },
+   {
+    "claim": "ESP-IDF/EIM supports Python 3.10-3.14 (3.14 fully on Windows); the pydantic-core/PyO3 3.14 failure was fixed on all supported branches in Oct 2025.",
+    "status": "verified",
+    "corrected_claim": "Issue #17731 was closed 2025-10-15 as 'fixed for all supported ESP-IDF branches'. EIM's FAQ adds that the offline installer needs Python 3.11-3.14.",
+    "evidence_url": "https://github.com/espressif/esp-idf/issues/17731"
+   },
+   {
+    "claim": "The IDF build system does not support spaces in IDF or project paths; the IDF/tools path must be at most 90 characters; non-ASCII only with Windows UTF-8 enabled; so move the project outside the OneDrive Desktop.",
+    "status": "verified",
+    "corrected_claim": "The v6.1 stable start-project page says 'does not support spaces in the paths to either ESP-IDF or to projects'. The 90-character and non-ASCII rules come from the v5.5.6 Windows setup page; the v6.1 EIM page does not repeat them. The VS Code extension docs suggest spaces work on IDF 5.0+, but the stricter core-docs rule should win.",
+    "evidence_url": "https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/get-started/windows-start-project.html"
+   },
+   {
+    "claim": "pioarduino stable 55.03.312(-1) = Arduino 3.3.12 on IDF 5.5.5, 61.04.00-RC1 pre-release; Hybrid Compile linker bugs fixed Sep 2026 (#533, #546); the official platformio/platform-espressif32 is stuck on IDF 5.5.0.",
+    "status": "corrected",
+    "corrected_claim": "The pioarduino versions check out (55.03.312-1 only patched the verbose-compile issue #531 via PR #543). I did not confirm the #533/#546 linker fixes. The claim about the official platform is wrong. platformio/platform-espressif32 v7.1.0 added ESP-IDF v6.1, and v7.1.3 is the latest. Only its Arduino framework is stuck, at 2.0.17 (IDF 4.4.7). PlatformIO with framework=espidf on 6.1 is therefore an option too, though plain idf.py is still simpler.",
+    "evidence_url": "https://github.com/platformio/platform-espressif32/releases"
+   },
+   {
+    "claim": "arduino-esp32 3.3.12 (18 Sep 2026) on IDF 5.5; 4.0.0-RC1 on IDF 6.1; core has a 'Waveshare ESP32-S3-Touch-LCD-1.85' entry (16MB, OPI PSRAM, custom partitions); precompiled libs enable rollback and initArduino() auto-marks valid unless verifyRollbackLater() is overridden; arduino-cli latest v1.5.1.",
+    "status": "verified",
+    "corrected_claim": "3.3.12 is built on IDF v5.5.5. The board entry uses VID 0x303a and native USB (usb_mode=1), with a PSRAM menu opi option and PartitionScheme.custom. defconfig.common has CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y. verifyRollbackLater() is weak and returns false, and the core then calls esp_ota_mark_app_valid_cancel_rollback() if verifyOta() passes.",
+    "evidence_url": "https://github.com/espressif/arduino-esp32/blob/master/cores/esp32/esp32-hal-misc.c"
+   },
+   {
+    "claim": "ESP32_Display_Panel supports ST77916 and CST816S and lists ESP32-S3-Touch-LCD-1.85 as a built-in board.",
+    "status": "verified",
+    "corrected_claim": "",
+    "evidence_url": "https://github.com/esp-arduino-libs/ESP32_Display_Panel"
+   },
+   {
+    "claim": "esp_lcd_st77916 2.0.2: SPI/QSPI/MIPI-DSI, IDF >=5.4, QSPI config macros, use_qspi_interface, custom init_cmds; add-dependency command.",
+    "status": "verified",
+    "corrected_claim": "MIPI-DSI is ESP32-P4 only. The component is Apache-2.0 and also depends on cmake_utilities 0.x.",
+    "evidence_url": "https://raw.githubusercontent.com/espressif/esp-iot-solution/master/components/display/lcd/esp_lcd_st77916/idf_component.yml"
+   },
+   {
+    "claim": "esp_lcd_touch_cst816s 1.1.2: IDF >=5.2, esp_lcd_touch ^1.2.0, macro sets scl_speed_hz=100000, responds only after touch, single finger, CONFIG_ESP_LCD_TOUCH_CST816S_DISABLE_READ_ID.",
+    "status": "verified",
+    "corrected_claim": "The address is 0x15. The latest esp_lcd_touch is 1.2.1, so there is no version conflict. Waveshare documents the part as CST816T, so use on this board still needs a bring-up test.",
+    "evidence_url": "https://raw.githubusercontent.com/espressif/esp-bsp/master/components/lcd_touch/esp_lcd_touch_cst816s/include/esp_lcd_touch_cst816s.h"
+   },
+   {
+    "claim": "esp_lvgl_port 2.9.0 (IDF >=5.2, lvgl >=8,<10, LVGL 9 default) with buff_spiram/double_buffer/sw_rotate/trans_size and lvgl_port_add_touch; LVGL latest 9.6.0 (registry 9.6.0~1).",
+    "status": "verified",
+    "corrected_claim": "",
+    "evidence_url": "https://raw.githubusercontent.com/espressif/esp-bsp/master/components/esp_lvgl_port/idf_component.yml"
+   },
+   {
+    "claim": "esp_io_expander_tca9554 2.0.3 takes an i2c_master_bus_handle_t; EXIO1/EXIO2 are bits 0/1.",
+    "status": "verified",
+    "corrected_claim": "I did not see the IDF >=5.2 requirement on the page. The bit mapping matches the wiki (EXIO1=TP_RST, EXIO2=LCD_RST) and xiaozhi's PIN_NUM_0|PIN_NUM_1 reset of LCD and touch.",
+    "evidence_url": "https://components.espressif.com/components/espressif/esp_io_expander_tca9554"
+   },
+   {
+    "claim": "LVGL built-in Montserrat fonts are ASCII + a few symbols only; Russian needs a custom font from the online converter, lv_font_conv or built_in_font_gen.py.",
+    "status": "verified",
+    "corrected_claim": "",
+    "evidence_url": "https://lvgl.io/docs/open/main-modules/fonts/built_in_fonts"
+   },
+   {
+    "claim": "CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE: PENDING_VERIFY, mark_valid / mark_invalid_rollback_and_reboot, reset before confirming rolls back, needs otadata + ota_0/ota_1, anti-rollback is separate.",
+    "status": "verified",
+    "corrected_claim": "A reset while in PENDING_VERIFY marks the image ESP_OTA_IMG_ABORTED. A factory app is never rolled back.",
+    "evidence_url": "https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/system/ota.html"
+   },
+   {
+    "claim": "Partition rules: app offsets on 0x10000, sizes in 4 KB multiples, otadata 0x2000, subtypes incl. littlefs 0x83, custom table at 0x8000.",
+    "status": "verified",
+    "corrected_claim": "Comments must be whole lines that start with '#'.",
+    "evidence_url": "https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/partition-tables.html"
+   },
+   {
+    "claim": "otatool.py (components/app_update/otatool.py) supports write_ota_partition --slot/--input, switch_ota_partition --slot, read_ota_partition, erase_otadata.",
+    "status": "verified",
+    "corrected_claim": "It also has erase_ota_partition, read_otadata, --name and -p/--port.",
+    "evidence_url": "https://raw.githubusercontent.com/espressif/esp-idf/v6.1/examples/system/ota/otatool/otatool_example.sh"
+   },
+   {
+    "claim": "esptool v5 hyphenated commands; esptool -p COMx -b 460800 read-flash 0 ALL backup.bin; restore with write-flash 0x0.",
+    "status": "verified",
+    "corrected_claim": "",
+    "evidence_url": "https://docs.espressif.com/projects/esptool/en/latest/esp32s3/esptool/basic-commands.html"
+   },
+   {
+    "claim": "Commit dependencies.lock for registry/git-only projects; do not hand-edit; '==' exact, '~1.2.3' patch only, '^1.2.3' minor allowed.",
+    "status": "verified",
+    "corrected_claim": "The lock file should not be committed if the project uses Kconfig-option dependencies, because it may then contain local paths. Ranges: '~1.2.3' means >=1.2.3,==1.2.*; '^1.2.3' means >=1.2.3,==1.*.",
+    "evidence_url": "https://docs.espressif.com/projects/idf-component-manager/en/latest/reference/dependencies_lock.html"
+   },
+   {
+    "claim": "crt_bundle_attach = esp_crt_bundle_attach with full Mozilla bundle or a common ~42-cert subset; streaming via open/write/fetch_headers/read; keep-alive reuse.",
+    "status": "corrected",
+    "corrected_claim": "The common subset is about 38 certificates (around 93% usage coverage); the full bundle has more than 130. The streaming API, chunked read support and connection reuse check out.",
+    "evidence_url": "https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/protocols/esp_crt_bundle.html"
+   },
+   {
+    "claim": "NVS keys max 15 chars, strings max 4000 bytes, namespaces, nvs_commit required, erase on NO_FREE_PAGES/NEW_VERSION_FOUND.",
+    "status": "verified",
+    "corrected_claim": "The 4000 bytes include the null terminator. Namespace names are also limited to 15 characters.",
+    "evidence_url": "https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/storage/nvs_flash.html"
+   },
+   {
+    "claim": "IDF v6.1 captive_portal example with components/dns_server: SoftAP + DNS redirect, DHCP Option 114, HTTPS not redirected.",
+    "status": "verified",
+    "corrected_claim": "",
+    "evidence_url": "https://github.com/espressif/esp-idf/tree/v6.1/examples/protocols/http_server/captive_portal"
+   }
+  ],
+  "recommendation_critique": "The core choice holds up: plain ESP-IDF v6.1 installed through EIM, with the project at C:\\dev, git, a stock flash backup, A/B slots plus bootloader rollback, and xiaozhi as the display/expander/audio reference. Several parts are overstated or wrong.\n\n1. The 'proven on this exact board by xiaozhi CI' argument is weaker than presented. xiaozhi's 1.85 board file never creates a touch device. CI on push/PR builds only changed variants. xiaozhi pins lvgl ~9.5.0, while the recommendation uses ~9.6.0. Touch (CST816T per Waveshare) on IDF 6.1 is therefore unproven and should be the first bring-up milestone. Either pin lvgl ~9.5.0 to match xiaozhi, or accept that 9.6 is untested.\n\n2. The reason given for rewriting Waveshare's I2C code is wrong. Legacy I2C still compiles on 6.x. The real problem is the runtime legacy/new conflict check when it is mixed with i2c_master, which the TCA9554 component needs. The conclusion (use i2c_master everywhere) stands.\n\n3. partitions.csv: the storage line ends with '(fonts, UI sounds)', which is not valid CSV. Comments must be separate lines starting with '#'. The coredump partition does nothing unless CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH is set, and sdkconfig.defaults omits it. The offsets themselves are valid and add up to exactly 16 MB.\n\n4. sdkconfig.defaults leaves out memory settings xiaozhi relies on for TLS + Wi-Fi + LVGL on this board: CONFIG_MBEDTLS_DYNAMIC_BUFFER=y, SPIRAM_MALLOC_RESERVE_INTERNAL=102400 and the reduced Wi-Fi RX buffers. If xiaozhi's LVGL defaults are copied, CONFIG_LV_USE_KEYBOARD=n must be reversed, because the user needs a keyboard.\n\n5. Power: GPIO7 must be driven high first thing in app_main. On battery the board otherwise powers itself off before the rollback self-test can run. Waveshare's wiki confirms only a 'Battery power supply control button' and PWR_Loop(); the GPIO6/GPIO7 numbers come from xiaozhi alone.\n\n6. The speaker path (amplifier part and enable pin) is still unknown. The user said a speaker is not yet connected. The hardware 'speaker volume button' on the board suggests the gain is analog. Keep a text-only mode that works with no audio out.\n\n7. The WU-AetherCore code is PolyForm Noncommercial. Do not copy it; xiaozhi (MIT) is the right reference.\n\n8. The official PlatformIO espressif32 platform does support ESP-IDF 6.1 (v7.1.x). That does not change the choice, but the comparison of alternatives was inaccurate.\n\n9. The skeleton has stt.c and tts.c but no audio decoder or resampler. Whether you need MP3/Opus/WAV decoding (for example espressif/esp_audio_codec) and 16/24/48 kHz conversion depends on the chosen TTS API format. That is a firmware-stack decision left open.\n\n10. Recovery: the board uses native USB-Serial-JTAG (VID 0x303a). If an app breaks USB or boot-loops, the user must enter download mode by hand (hold BOOT, tap RESET). That belongs in the rollback runbook next to the esptool backup.\n\nDisclosure: while checking the winget version I ran `winget show` with --accept-source-agreements, which accepts the winget source terms on this PC. It was read-only otherwise. The amplifier search and the schematic fetch failed (TLS error), and I did not retry the download.",
+  "missing": [
+   "Speaker amplifier part number and its enable/shutdown pin (GPIO or EXIO) on the user's revision. The schematic PDF at files.waveshare.com would not load (TLS error). A third-party search snippet says NS8002 on V1 and NS4150B on V2; I could not confirm this from a primary source.",
+   "There is no working CST816 reference on IDF 6.x for this board: xiaozhi's 1.85 port defines the touch pins (I2C_NUM_1, SDA1/SCL3, INT4) but never initializes touch. Waveshare names the chip CST816T, not CST816S.",
+   "GPIO7 power latch / GPIO6 power key: only xiaozhi confirms them. The Waveshare wiki mentions just a 'Battery power supply control button' and PWR_Loop(). Driving GPIO7 high early matters on battery power.",
+   "USB/flash recovery: native USB-Serial-JTAG (the Arduino board entry uses VID 0x303a / usb_mode=1). The manual download-mode procedure (hold BOOT, press and release RESET, release BOOT) should be part of the rollback plan.",
+   "Shared I2C0 bus (GPIO10/11) carries TCA9554, PCF85063 RTC and QMI8658 IMU, with RTC_INT on GPIO9. The SD card (GPIO14/16/17, CS on EXIO3) could hold fonts, sounds and a TTS cache instead of the spiffs partition.",
+   "Internal RAM budget: TLS + Wi-Fi + LVGL 360x360 RGB565 buffers (one full frame is 259,200 bytes) + I2S DMA. Which LVGL buffers must be DMA-capable internal RAM versus PSRAM for 80 MHz QSPI is not settled. xiaozhi's MBEDTLS_DYNAMIC_BUFFER and SPIRAM_MALLOC_RESERVE_INTERNAL settings are missing from the recommendation.",
+   "Audio decode and resample stack for TTS output (MP3/Opus/PCM, 24 vs 48 kHz) and mic upload encoding (WAV/PCM 16 kHz) for STT. The component choice depends on the AI/TTS API formats, which were not part of this firmware-stack check.",
+   "A custom Cyrillic layout for lv_keyboard on the round 360x360 screen (custom key maps via lv_keyboard_set_map), plus the glyph range for the custom font. Neither was checked.",
+   "Even-coordinate draw-area alignment for ST77916 via esp_lvgl_port (is a rounder callback needed?), and RGB565 byte-swap settings under LVGL 9. Neither is documented in the component pages.",
+   "How otatool switch_ota_partition interacts with CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE (which image state is written after a manual switch). Not verified.",
+   "The pioarduino Hybrid Compile linker fixes (#533, #546) were not verified.",
+   "LittleFS on IDF 6.1 (joltwallet/littlefs) compatibility was not checked; spiffs or fat stay the safe choice."
+  ]
+ },
+ "verify:round-ui": {
+  "checked": [
+   {
+    "claim": "ESP32-S3-Touch-LCD-1.85: 1.85in 360x360 262K-colour LCD, ST77916 over QSPI, CST816 touch on I2C, 512KB SRAM, 16MB flash, 8MB PSRAM, PCM5101 decoder, amp and mic.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85"
+   },
+   {
+    "claim": "Pinout: QSPI SDA0-3 = GPIO46/45/42/41, SCK GPIO40, CS GPIO21, TE GPIO18, BL GPIO5, LCD_RST EXIO2. Touch SDA GPIO1, SCL GPIO3, INT GPIO4, RST EXIO1. The mic changed from MSM261S4030H0R to ICS-43434.",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85"
+   },
+   {
+    "claim": "LVGL v9.6.0 is the latest stable. lv_display_set_buffers(disp, buf1, buf2, size_bytes, mode). PARTIAL accepts smaller buffers (at least 1/10 recommended). DIRECT/FULL need display-sized buffers. Double buffering renders and flushes in parallel. lv_display_set_flush_wait_cb exists.",
+    "status": "verified",
+    "evidence_url": "https://lvgl.io/docs/open/main-modules/display/setup"
+   },
+   {
+    "claim": "LVGL FAQ: 1/10 screen minimum and 1/5 recommended. For tear-free DIRECT mode, swap only the buffer address in flush_cb and call flush_ready from VSYNC. A full 360x360 RGB565 frame is 259.2KB.",
+    "status": "corrected",
+    "corrected_claim": "The FAQ text and the byte figures are correct. But the trick of swapping a framebuffer address and calling flush_ready on VSYNC only works on panels that scan out of MCU RAM (RGB or DSI). The ST77916 is a QSPI panel with its own GRAM, so every frame still has to be pushed over the bus and the trick does not apply here.",
+    "evidence_url": "https://lvgl.io/docs/open/introduction/faq"
+   },
+   {
+    "claim": "Espressif TE method: start writes on TE, keep write speed at least half the read speed, enable TE and keep scan directions the same. Reference example: display/lcd/lcd_with_te.",
+    "status": "corrected",
+    "corrected_claim": "The method is stated correctly. However, the lcd_with_te example targets an Intel 8080 parallel LCD, not QSPI. Neither esp_lcd_st77916's vendor_specific_init_default nor xiaozhi's vendor_specific_init_new sends TEON (0x35) as a command, so TE output must be enabled by hand. Espressif's esp_lvgl_adapter docs say SPI/QSPI panels support only tearing mode NONE (no TE coordination). TE sync on this board would be fully custom work.",
+    "evidence_url": "https://raw.githubusercontent.com/espressif/esp-iot-solution/master/examples/display/lcd/lcd_with_te/README.md"
+   },
+   {
+    "claim": "esp_lvgl_port performance guide: buffers under 10% hurt and over 25% add nothing, SRAM beats PSRAM, and the recommended settings are listed. The benchmark (800x480, internal DMA) went from 17 to 41 avg FPS; PSRAM variants scored 7-31 FPS.",
+    "status": "corrected",
+    "corrected_claim": "The guidance and sdkconfig options are correct. The 17-to-41 average FPS run was LVGL8 on a 7in 800x480 i80 panel with 800x50 double buffers, and the largest single jump (28 to 41) came from REFR_PERIOD=10. The PSRAM run had no DMA and an LCD clock of only 2-10MHz. The only LVGL 9.2 data is an RGB 800x480 board that moved from 9 to 11 FPS. None of these figures transfers to a 360x360 QSPI panel.",
+    "evidence_url": "https://github.com/espressif/esp-bsp/blob/master/components/esp_lvgl_port/docs/performance.md"
+   },
+   {
+    "claim": "Seeed XIAO S3 round-display workshop went from about 9 to about 30 FPS: 240MHz, 80MHz SPI, -O3/LTO, then two 240x120 internal-SRAM partial buffers beat full-frame PSRAM (~25 FPS). Small-tile double buffering was slower.",
+    "status": "corrected",
+    "corrected_claim": "The FPS steps (9, 15, 9, 25, 30) and the 240x120 SRAM buffers are confirmed. The Phase 3 slowdown happened because small tiles made ThorVG (vector graphics) re-run its calculation loop 12 times per frame. The lesson is specific to vector content and is not a general case against double buffering.",
+    "evidence_url": "https://wiki.seeedstudio.com/round_display_animation_workshop/"
+   },
+   {
+    "claim": "esp_lvgl_port builds ESP32-S3 SIMD blend assembly only for 9.1.0 <= LVGL < 9.2.0. Issue #621 (9.3 support) was closed without an adaptation.",
+    "status": "verified",
+    "evidence_url": "https://github.com/espressif/esp-bsp/blob/master/components/esp_lvgl_port/CMakeLists.txt"
+   },
+   {
+    "claim": "esp_lvgl_port supports LVGL 8/9, buffer_size, double_buffer, buff_dma (RGB565 only), buff_spiram, a PSRAM canvas with trans_size, and sw_rotate (not with direct/full). The task sleeps until an event. The perf monitor needs OBSERVER, SYSMON and PERF_MONITOR.",
+    "status": "verified",
+    "evidence_url": "https://github.com/espressif/esp-bsp/blob/master/components/esp_lvgl_port/README.md"
+   },
+   {
+    "claim": "xiaozhi SpiLcdDisplay: buffer_size = width*20 (14.4KB), double_buffer=false, buff_dma=1, buff_spiram=0, swap_bytes=1, task priority 1 on core 1.",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/display/lcd_display.cc"
+   },
+   {
+    "claim": "transform_scale, rotate and skew create one full transformed-area layer. opa_layered, blend_mode and bitmap masks create simple layers chunked by LV_DRAW_LAYER_SIMPLE_BUF_SIZE. LV_DRAW_LAYER_MAX_MEMORY caps the total.",
+    "status": "verified",
+    "evidence_url": "https://lvgl.io/docs/open/main-modules/draw/draw_layers"
+   },
+   {
+    "claim": "Large shadows are slow or memory-hungry. Linear, radial and conical gradients need LV_USE_DRAW_SW_COMPLEX_GRADIENTS=1.",
+    "status": "verified",
+    "evidence_url": "https://lvgl.io/docs/open/main-modules/draw/draw_descriptors"
+   },
+   {
+    "claim": "lv_lottie needs ThorVG (C++), LV_USE_VECTOR_GRAPHIC and an ARGB8888 w*h*4 buffer, and plays infinitely at 60fps by default, controlled via lv_lottie_get_anim.",
+    "status": "verified",
+    "evidence_url": "https://lvgl.io/docs/open/widgets/lottie"
+   },
+   {
+    "claim": "The lv_anim API (set_reverse_duration, path callbacks, REPEAT_INFINITE) and the timeline API (set_progress 0-65535, set_reverse) exist as described.",
+    "status": "verified",
+    "evidence_url": "https://lvgl.io/docs/open/main-modules/animation"
+   },
+   {
+    "claim": "lv_screen_load_anim types are NONE, OVER_*, OUT_*, MOVE_*, FADE_IN and FADE_OUT. Input is disabled during the transition, and auto_del deletes the old screen.",
+    "status": "verified",
+    "evidence_url": "https://lvgl.io/docs/open/9.5/common-widget-features/screens"
+   },
+   {
+    "claim": "lv_arc has MAIN, INDICATOR and KNOB parts, NORMAL/REVERSE/SYMMETRICAL modes, bg_angles, rotation, change_rate and align/rotate_obj_to_angle. For display-only use, remove the knob and clickable flag.",
+    "status": "verified",
+    "evidence_url": "https://lvgl.io/docs/open/widgets/arc"
+   },
+   {
+    "claim": "lv_scale has ROUND_INNER/OUTER modes (default 270 degrees), sections and needles with binding. lv_arclabel draws text along an arc. lv_roller has an INFINITE mode.",
+    "status": "verified",
+    "evidence_url": "https://lvgl.io/docs/open/widgets/arclabel",
+    "corrected_claim": "Confirmed. Two additions: lv_arclabel only exists from LVGL 9.4 (src/widgets/arclabel returns 404 on release/v9.3 and 200 on v9.4/v9.5, with LV_USE_ARCLABEL=1). lv_roller INFINITE mode copies the option list across several pages (inf_page_cnt in lv_roller.c), so it suits short lists, not long model catalogues."
+   },
+   {
+    "claim": "LVGL example lv_example_scroll_translate: a circular container with clip_corner and snap-centre whose SCROLL callback projects children onto a circle with lv_sqrt, sets translate_x and fades distant items.",
+    "status": "corrected",
+    "corrected_claim": "The example is lv_example_scroll_6 ('Translate the object as they scroll'), not 'scroll_translate'. Its mechanics are as described: a 200x200 container with radius CIRCLE, clip_corner, snap centre, lv_sqrt, translate_x and opa fade. Note that clip_corner is expensive in LVGL 9.5: lv_refr.c renders children into ARGB8888 layers for the rounded top and bottom bands, then applies lv_draw_mask_rect.",
+    "evidence_url": "https://raw.githubusercontent.com/lvgl/lvgl/release/v9.5/examples/scroll/lv_example_scroll_6.c"
+   },
+   {
+    "claim": "The music demo draws a 20-bar radial spectrum with lv_draw_triangle in DRAW_MAIN_BEGIN, handles REFR_EXT_DRAW_SIZE and COVER_CHECK, and is driven by an anim exec_cb that calls lv_obj_invalidate.",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/lvgl/lvgl/master/demos/music/lv_demo_music_main.c"
+   },
+   {
+    "claim": "Observer: lv_subject_init_int plus lv_obj_bind_flag_if_eq can drive UI state, and subjects must be static, global or heap-allocated.",
+    "status": "corrected",
+    "corrected_claim": "Correct for LVGL 9.5: lv_subject_init_int and lv_obj_bind_flag_if_eq/state_if_eq are in src/core/lv_observer.h. LVGL 9.6 replaces lv_subject_init_*()/deinit with lv_subject_create()/lv_subject_delete(), so this code breaks on upgrade. Subjects must also only be changed while holding lvgl_port_lock when the change comes from audio or network tasks.",
+    "evidence_url": "https://lvgl.io/docs/open/changelog/migration-v9-6"
+   },
+   {
+    "claim": "Wear OS: most devices are round, round screens have 22% less UI space, and BoxInsetLayout and curved lists exist.",
+    "status": "verified",
+    "evidence_url": "https://developer.android.com/design/ui/wear/guides/m2-5/foundations/getting-started"
+   },
+   {
+    "claim": "Wear OS touch targets are 48x48dp, with 40x40dp allowed in tight cases, and the touch area can extend past the visible element.",
+    "status": "verified",
+    "evidence_url": "https://developer.android.com/training/wearables/accessibility"
+   },
+   {
+    "claim": "Round geometry: the inscribed square is 254.6px with 52.7px margins. Chord widths are 360/351/339/322/299/268/226/165px at d = 0/40/60/80/100/120/140/160.",
+    "status": "verified",
+    "evidence_url": "https://developer.android.com/training/wearables/views/layouts"
+   },
+   {
+    "claim": "The built-in Montserrat fonts (12-48px, 4bpp) have ASCII, U+00B0, U+2022 and FontAwesome only: no Cyrillic.",
+    "status": "verified",
+    "evidence_url": "https://lvgl.io/docs/open/main-modules/fonts/built_in_fonts"
+   },
+   {
+    "claim": "lv_font_conv options (--font repeatable, -r, --symbols, --format lvgl|bin, --no-compress, --lv-font-name, --stride needs 9.3+). The Russian range is 0x401, 0x410-0x44F, 0x451.",
+    "status": "verified",
+    "evidence_url": "https://github.com/lvgl/lv_font_conv",
+    "corrected_claim": "Confirmed. The README's own example uses -r 0x20-0x7F -r 0x401,0x410-0x44F,0x451. It also has --lv-fallback, which chains fallback fonts."
+   },
+   {
+    "claim": "LVGL 9.4 Montserrat glyph bitmaps measure 6.6KB at 16px, 13.8KB at 24px, 22.7KB at 32px and 49.5KB at 48px (158 glyphs, 4bpp, uncompressed).",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/lvgl/lvgl/release/v9.4/src/font/lv_font_montserrat_16.c",
+    "corrected_claim": "Re-measured: 6635, 13847, 22726 and 49523 bitmap bytes, 158 glyph descriptors, Bpp 4, --no-compress."
+   },
+   {
+    "claim": "Tiny TTF (stb_truetype): lv_tiny_ttf_create_data/_ex, a 256-glyph default cache, and lv_tiny_ttf_set_size.",
+    "status": "verified",
+    "evidence_url": "https://lvgl.io/docs/open/libs/font_support/tiny_ttf"
+   },
+   {
+    "claim": "lv_keyboard has TEXT_LOWER/UPPER, SPECIAL, NUMBER and USER_1-4 modes, plus set_map with a ctrl map, popovers with the POPOVER flag, and set_textarea.",
+    "status": "verified",
+    "evidence_url": "https://lvgl.io/docs/open/widgets/keyboard"
+   },
+   {
+    "claim": "In LVGL 9.4, lv_keyboard_def_event_cb handles only abc/ABC/1#/close/OK/backspace/arrows/newline and passes any other text to lv_textarea_add_text, so Cyrillic UTF-8 labels work. An RU/EN toggle needs USER maps plus a custom handler.",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/lvgl/lvgl/release/v9.4/src/widgets/keyboard/lv_keyboard.c",
+    "corrected_claim": "Confirmed. It also handles 'Enter' and '+/-'. From 9.5 the mode-key labels are #ifndef macros (LV_KEYBOARD_CTRL_BUTTON_MODE_TEXT_LOWER etc.) that can be overridden at compile time."
+   },
+   {
+    "claim": "In lv_buttonmatrix: relative widths 1-15, uneven rows, flags (HIDDEN, POPOVER, etc.), about 8 bytes per button versus 100-150B per widget.",
+    "status": "verified",
+    "evidence_url": "https://lvgl.io/docs/open/widgets/buttonmatrix"
+   },
+   {
+    "claim": "Samsung Galaxy Watch offers voice, handwriting and a QWERTY or 3x4 keyboard, with two input languages for quick switching.",
+    "status": "verified",
+    "evidence_url": "https://www.samsung.com/ae/support/mobile-devices/how-to-input-text-on-your-samsung-watch/"
+   },
+   {
+    "claim": "COMPASS is a rotational ring keyboard (about 10 WPM, 12.5 WPM after 90 minutes). C-QWERTY and WrisText put keys on the rim.",
+    "status": "corrected",
+    "corrected_claim": "The paper title is 'COMPASS: Rotational Keyboard on Non-Touch Smartwatches'. It was built on a Samsung Gear S2 using the physical rotating bezel, and the text says the touchscreen was not used. Its WPM figures do not carry over to a touch-drag rim picker on this bezel-less board. C-QWERTY and WrisText were not checked (unverified).",
+    "evidence_url": "https://pi.cs.tsinghua.edu.cn/lab/papers/COMPASS_Xin%20Yi_CHI2017.pdf"
+   },
+   {
+    "claim": "78/esp-wifi-connect (MIT) runs a SoftAP captive portal at 192.168.4.1 with DNS hijack and stores up to 10 SSIDs. The same approach covers entering the OpenRouter API key on a phone.",
+    "status": "corrected",
+    "corrected_claim": "MIT, 192.168.4.1, dns_server.cc, and 10 SSID/password/channel slots in NVS namespace 'wifi' are confirmed, plus SmartConfig (ESPTouch v2). The portal has no generic extra fields, only Wi-Fi plus optional OTA-URL and sleep options in Advanced. Collecting an API key or model id needs a modified embedded HTML and handler, or a separate esp_http_server page.",
+    "evidence_url": "https://github.com/78/esp-wifi-connect"
+   },
+   {
+    "claim": "xiaozhi-esp32 is MIT licensed (Copyright 2025 Shenzhen Xinzhi Future Technology Co., Ltd. and Project Contributors).",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/LICENSE"
+   },
+   {
+    "claim": "xiaozhi has board folders esp32-s3-touch-lcd-1.85, 1.85b and 1.85c. Waveshare lists the 1.85 at firmware v2.4.0, and the touch and non-touch versions share one firmware.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-AI-Tutorials"
+   },
+   {
+    "claim": "The xiaozhi 1.85 board file reads register 0x04 at 3MHz, uses vendor_specific_init_new when it returns 00 02 7F 7F, then runs at 80MHz. It resets via TCA9554, toggles chat with BOOT, and never initialises the CST816.",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/esp32-s3-touch-lcd-1.85.cc",
+    "corrected_claim": "Confirmed. Three details: (a) 00 7F 7F 7F falls back to the component's default init; (b) the 3MHz IO handle is never deleted (panel_io_spi_del is commented out) before the 80MHz one is created; (c) a PWR button (GPIO6) long press switches PWR_Control GPIO7, which the code drives high at boot."
+   },
+   {
+    "claim": "xiaozhi audio is NoAudioCodecSimplex: speaker BCLK 48, LRCK 38, DOUT 47 on both slots; mic SCK 15, WS 2, DIN 39 on the RIGHT slot; 16kHz in, 24kHz out.",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/config.h"
+   },
+   {
+    "claim": "The xiaozhi protocol sends Opus 16kHz/60ms over WebSocket or MQTT+UDP. The server does ASR+LLM+TTS and returns stt/llm (emotion)/tts start/stop/sentence_start messages. Listen modes are auto, manual and realtime. The default server is xiaozhi.me.",
+    "status": "verified",
+    "evidence_url": "https://github.com/78/xiaozhi-esp32/blob/main/docs/websocket.md"
+   },
+   {
+    "claim": "xiaozhi requires ESP-IDF >= 6.0.1 (6.1 recommended, 5.x unsupported) and pins lvgl ~9.5.0, esp_lvgl_port ~2.9.0, esp_lcd_st77916 ^2.0.2, esp_codec_dev ~1.6.2 and esp-sr ==2.4.7. It has 39 UI languages including ru-RU.",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/idf_component.yml",
+    "corrected_claim": "Confirmed. The manifest also pins espressif/esp_lcd_touch_cst816s ^1.1.2 and 78/esp-wifi-connect ~3.3.1, and main/assets/locales/ru-RU/language.json exists."
+   },
+   {
+    "claim": "xiaozhi's LCD UI is a rectangular flex-column with a status bar, chat bubbles (max 85% width) and 20-40 messages kept. It is not designed for a circle.",
+    "status": "verified",
+    "evidence_url": "https://github.com/78/xiaozhi-esp32/blob/main/main/display/lcd_display.cc",
+    "corrected_claim": "Confirmed. MAX_MESSAGES is 20 on the S3 (40 only on the P4), and the bubble max width is LV_HOR_RES*85/100 - 16."
+   },
+   {
+    "claim": "fbiego/esp32-c3-mini: MIT, LVGL 9, PlatformIO with an SDL native build. It targets Viewe Echo Ear 1.85 360x360 and Waveshare S3 1.28/1.43/1.75. Its smartwatch demo (PR #7429, merged Jan 2025) is now in lv_demos src/smartwatch.",
+    "status": "corrected",
+    "corrected_claim": "MIT, LVGL 9, PlatformIO and SDL are confirmed. The supported-board list includes Viewe Echo Ear 1.85 360x360 and Waveshare S3 1.28, 1.69 (240x280), 1.75 and 2.06, but not 1.43. PR #7429 by fbiego was merged on 2025-01-21, and the demo is present at lvgl/lv_demos master src/smartwatch.",
+    "evidence_url": "https://github.com/fbiego/esp32-c3-mini"
+   },
+   {
+    "claim": "ZSWatch is GPL-3.0 (Zephyr, 240x240 round, LVGL). andygeiss/esp32-watch is MIT on LVGL 9.4 with a shared ui.c and a 400ms morph / 140ms blink.",
+    "status": "verified",
+    "evidence_url": "https://github.com/ZSWatch/ZSWatch",
+    "corrected_claim": "Confirmed. The esp32-watch simulator runs on macOS at a rectangular 410x502, so it is an architecture reference only, not a round-UI one."
+   },
+   {
+    "claim": "lvgl/lv_port_pc_visual_studio (MIT) keeps the exact LVGL resolution; use its release/ branches for stable LVGL.",
+    "status": "verified",
+    "evidence_url": "https://github.com/lvgl/lv_port_pc_visual_studio"
+   }
+  ],
+  "recommendation_critique": "The overall direction is sound and backed by the sources. Reuse xiaozhi's MIT ST77916 bring-up and audio pins, render in PARTIAL mode with internal DMA double buffers, avoid transforms, Lottie and large shadows, and design the UI in a simulator. Several specific prescriptions are wrong or risky:\n\n1. Root screen clip_corner is a performance anti-pattern. In LVGL 9.5 lv_refr.c, clip_corner with radius 180 on a 360px screen renders every child into ARGB8888 layers for the top and bottom rounded bands, which together cover the whole screen, and then applies a mask on every redraw. Those layers are allocated from the LVGL heap, which the plan puts in PSRAM. The bezel already hides the corners physically, so keep content inside the circle through layout and drop clip_corner at the root. The scroll_6 curved-list pattern also uses clip_corner, so use it only on small containers or replace it with a plain fade.\n\n2. The keyboard geometry does not fit as written. With the plan's own 12px rim padding (r = 168), usable widths are:\n- y = 330 (d = 150): about 151px, so about 3 keys of 46px\n- row 3 (lower edge d ≈ 98): about 273px, so about 5 keys\n- rows 1-2: about 6 keys each\nThat is about 20 keys per page, not 4 rows of 6-7. The 46-52px keys are also below the plan's own touch minimum (40dp ≈ 49px, 48dp ≈ 58px). LVGL docs warn that popovers extend past the widget, so they will be clipped near the rim. A 3x4/T9 layout (Samsung precedent) or a two-step group-then-letter picker fits 33 Russian letters better. The 'rotary rim picker inspired by COMPASS' rests on a study of non-touch, physical-bezel watches.\n\n3. The TE fallback ('TE on GPIO18 with FULL mode') is not a drop-in:\n- Neither init table sends TEON.\n- Espressif's TE example is i80.\n- esp_lvgl_adapter documents QSPI as tearing mode NONE only.\n- FULL mode needs 259KB PSRAM buffers, PSRAM DMA bandwidth is 'very limited', and PSRAM is inaccessible whenever flash cache is disabled (NVS or OTA writes).\nTreat it as a research spike.\n\n4. FADE is not cheaper than MOVE. A screen fade invalidates the whole 360x360 every frame and adds opacity blending. Tileview swipes are also full-screen scrolls, and they conflict with the scrolling chat, curved lists and hold-to-talk gestures. Prefer short or instant page switches and animate small in-screen elements. Also consider the physical BOOT (GPIO0) and PWR (GPIO6) buttons for push-to-talk and mode changes.\n\n5. LVGL version. Pinning 9.5 is fine: 9.6 only cut render time about 4% on an ESP32-S3 board. But 9.6 deprecates lv_menu and lv_list and replaces the lv_subject_init_* API, so avoid those widgets and wrap subject creation so an upgrade is cheap.\n\n6. Thread safety is missing. Every LVGL call or subject change from the audio, Wi-Fi or HTTP tasks must hold lvgl_port_lock. Feed the 20-30Hz mic-RMS ring through an atomic value read by an LVGL timer.\n\n7. Captive portal. esp-wifi-connect cannot take an API key or model id without modifying its embedded page.\n\n8. Roller INFINITE mode duplicates the option text across pages, and OpenRouter lists hundreds of models. Use a curated short list, with custom model ids entered through the portal.\n\n9. Font range. LLM replies routinely contain em dashes, curly quotes, ellipsis, № and markdown or emoji. Add U+2010-2027 and U+2116, sanitise the markdown, and chain a fallback font (lv_font_conv --lv-fallback) so missing glyphs don't render as boxes.\n\n10. Rollback. OTA rollback only protects images installed through esp_ota with CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE and an esp_ota_mark_app_valid_cancel_rollback call. During USB development the real rollback is git tags plus an archived .bin per tag (the BOOT button always gives download mode), plus versioned NVS settings so older firmware can still read them.",
+  "missing": [
+   "clip_corner cost: lv_refr.c (v9.5) renders children into ARGB8888 layers plus lv_draw_mask_rect for the rounded bands on every redraw; with a 360px circle that covers the whole screen. https://raw.githubusercontent.com/lvgl/lvgl/release/v9.5/src/core/lv_refr.c",
+   "Neither esp_lcd_st77916's default init nor xiaozhi's alternate init sends TEON (0x35), and the component's QSPI IO macro defaults to 40MHz (xiaozhi overrides it to 80MHz). https://raw.githubusercontent.com/espressif/esp-iot-solution/master/components/display/lcd/esp_lcd_st77916/esp_lcd_st77916_spi.c",
+   "esp_lvgl_adapter (Espressif's alternative to esp_lvgl_port) documents SPI/QSPI as tearing mode NONE only. https://docs.espressif.com/projects/esp-iot-solution/en/latest/display/tools/esp_lvgl_adapter.html",
+   "Every LVGL call from other tasks must be wrapped in lvgl_port_lock()/lvgl_port_unlock(). esp_lvgl_port 2.7.1+ also offers rounder_cb if the ST77916 shows odd-alignment artefacts; xiaozhi runs this panel without a rounder. https://github.com/espressif/esp-bsp/blob/master/components/esp_lvgl_port/README.md",
+   "LVGL 9.6 (released 2026-09-16, the last v9 release): the ESP32-S3-Korvo-1 shows only -4% render time; lv_list, lv_win and lv_menu are deprecated; public headers move to include/lvgl; LV_COLOR_DEPTH becomes LV_COLOR_FORMAT_DEFAULT; subject init becomes lv_subject_create/delete. https://lvgl.io/blog/release-v9-6",
+   "ESP32-S3 PSRAM is inaccessible while the flash cache is disabled (NVS or OTA writes), DMA bandwidth to PSRAM is very limited, and task stacks are internal by default. All of this affects putting the LVGL heap, layers and full-frame buffers in PSRAM. https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/external-ram.html",
+   "OTA rollback needs two OTA slots, otadata, CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE and an explicit esp_ota_mark_app_valid_cancel_rollback(); it does not protect USB-flashed builds. https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/system/ota.html",
+   "The board has two I2C buses: the main one on GPIO10/11 (TCA9554 at address 000, PCF85063 RTC, QMI8658 IMU) and the touch bus on GPIO1/3 as I2C_NUM_1. It has physical BOOT (GPIO0) and PWR (GPIO6) buttons, and a PWR_Control latch on GPIO7 that firmware drives high at boot. https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/config.h",
+   "The ESP32-S3-Touch-LCD-1.85C is a different board, with ES8311/ES7210 codecs and its own xiaozhi folder, so the user's exact model should be confirmed before copying pins. https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85c/config.h",
+   "LVGL docs say keyboard popovers extend past the widget bounds, so on a round panel the top-row and edge popovers will be clipped. https://lvgl.io/docs/open/widgets/keyboard",
+   "lv_roller INFINITE mode multiplies the option list across inf_page_cnt pages, which does not suit long OpenRouter model lists. https://raw.githubusercontent.com/lvgl/lvgl/release/v9.5/src/widgets/roller/lv_roller.c",
+   "Montserrat, Inter and Noto Sans all ship Cyrillic and Cyrillic-ext subsets on Google Fonts, and Montserrat is SIL OFL 1.1. LLM output also needs General Punctuation (U+2010-2027) and № (U+2116), or a fallback font. https://raw.githubusercontent.com/JulietaUla/Montserrat/master/OFL.txt",
+   "esp-wifi-connect also supports SmartConfig (ESPTouch v2) as a no-typing alternative for Wi-Fi provisioning. https://github.com/78/esp-wifi-connect",
+   "Unverified: C-QWERTY and WrisText details, the CST816 variant and gesture support on rev 2.1, real FPS on this board, and whether the ST77916 panel's TE line is actually driven once TEON is sent."
+  ]
+ }
+}

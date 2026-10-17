@@ -1,0 +1,1394 @@
+{
+ "research:hardware": {
+  "findings": [
+   {
+    "topic": "SoC variant",
+    "claim": "Waveshare lists the MCU as ESP32-S3R8: dual-core Xtensa LX7 at up to 240 MHz, 512KB SRAM, 384KB ROM, 2.4 GHz Wi-Fi 802.11 b/g/n and Bluetooth 5 (LE). It is item #1 in the 'onboard resources' list.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "SoC variant (Espressif definition)",
+    "claim": "Espressif datasheet v2.2, Table 1-1: ESP32-S3R8 has no in-package flash and 8 MB in-package Octal SPI PSRAM, VDD_SPI 3.3 V, chip revision v0.1/v0.2, ambient -40 to 65 C (85 C with PSRAM ECC on, which costs 1/16 of the PSRAM). Table 2-14: Octal PSRAM also uses GPIO33-GPIO37 (DQ4-DQ7, DQS), so those pins must not be used for anything else.",
+    "source_url": "https://documentation.espressif.com/esp32-s3_datasheet_en.pdf",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "esptool readout vs spec",
+    "claim": "The esptool readout matches the official spec. 'Embedded PSRAM 8MB (AP_3v3)' and chip revision v0.2 fit the ESP32-S3R8 (8 MB Octal PSRAM, 3.3 V, rev v0.1/v0.2). 'Detected flash 16MB quad' fits Waveshare's 16MB flash, which has to be an external chip because the S3R8 has no in-package flash. Firmware should use Octal (OPI) PSRAM mode and a 16MB flash setting. Note: the 'v0.2 matches' point is drawn from these sources, not stated in them.",
+    "source_url": "https://documentation.espressif.com/esp32-s3_datasheet_en.pdf",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "Flash/PSRAM size (Waveshare)",
+    "claim": "Waveshare docs feature list: 'Built-in 512KB SRAM and 384KB ROM, 16MB Flash, and 8MB PSRAM'.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "Flash chip vendor (JEDEC 0x20 / 0x4018)",
+    "claim": "Waveshare does not name the flash part. In an ESP-IDF issue about bricked modules, users tie esptool 'Manufacturer: 20' to XMC flash, and 'Device: 4016' to XM25QH32C (4MB). By the same pattern, 0x4018 is the 128 Mbit (16MB) part, which agrees with esptool's 16MB detection. The exact part number on this board is not confirmed.",
+    "source_url": "https://github.com/espressif/esp-idf/issues/7994",
+    "source_kind": "github",
+    "confidence": "low"
+   },
+   {
+    "topic": "Display",
+    "claim": "1.85 inch round LCD, 360x360, 262K colors, QSPI interface. The product page title is 'ESP32-S3 1.85inch Round Display Development Board' and it says IPS panel. The wiki spec table gives LCD type 'TFT', LCD controller ST77916, display interface 'I2C QSPI' (QSPI for the display, I2C for touch).",
+    "source_url": "https://www.waveshare.com/esp32-s3-touch-lcd-1.85.htm",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "Display driver IC and pins",
+    "claim": "Driver IC is ST77916 (wiki spec table). LCD pin map from the docs: SDA0=GPIO46, SDA1=GPIO45, SDA2=GPIO42, SDA3=GPIO41, SCK=GPIO40, CS=GPIO21, TE=GPIO18, RST=EXIO2 (on the TCA9554 IO expander), BL=GPIO5.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "Display panel variants (secondary)",
+    "claim": "The community xiaozhi-esp32 board support for this exact board drives the ST77916 over QSPI on SPI2_HOST, 16 bpp. It reads LCD register 0x04 and picks an init sequence by the result: ID 00 7F 7F 7F uses the default init, ID 00 02 7F 7F uses 'vendor_specific_init_new'. So at least two panel batches/revisions exist, and old init code may not work on newer boards.",
+    "source_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/esp32-s3-touch-lcd-1.85.cc",
+    "source_kind": "github",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Touch controller",
+    "claim": "Capacitive touch, controller CST816 (wiki spec table), over I2C with interrupt: TP_SDA=GPIO1, TP_SCL=GPIO3, TP_INT=GPIO4, TP_RST=EXIO1. This is a separate I2C bus from GPIO10/11. Waveshare's resources page labels the datasheet 'CST816T', but the linked file is CST816S_Datasheet_EN.pdf. Waveshare's matching 1.85inch Touch LCD Module page says CST816S. The FAQ lists I2C addresses 0x15, 0x20, 0x51.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Resources-And-Documents",
+    "source_kind": "official",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Touch IC suffix (module page)",
+    "claim": "Waveshare's 1.85inch Touch LCD Module (same ST77916, 360x360 panel family) says: built-in ST77916 display driver and CST816S touch chip, QSPI + I2C, display area 45.68 x 45.68 mm.",
+    "source_url": "https://www.waveshare.com/1.85inch-touch-lcd-module.htm",
+    "source_kind": "official",
+    "confidence": "medium"
+   },
+   {
+    "topic": "IMU",
+    "claim": "QMI8658 6-axis IMU (3-axis gyro + 3-axis accelerometer). The product page calls it 'QMI8658C' and the linked datasheet is QMI8658A.pdf. Pins: IMU_SCL=GPIO10, IMU_SDA=GPIO11, INT1=EXIO5, INT2=EXIO4.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "RTC",
+    "claim": "PCF85063 RTC (the docs pin table header says PCF85063ATL) on the shared I2C bus: SCL=GPIO10, SDA=GPIO11, RTC_INT=GPIO9. There is an RTC battery header; Waveshare says an RTC battery must be connected to keep time.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "IO expander",
+    "claim": "TCA9554PWR GPIO expander on the GPIO10/11 I2C bus. Documented EXIO uses: EXIO1=TP_RST, EXIO2=LCD_RST, EXIO3=SD_D3/CS, EXIO4=IMU_INT2, EXIO5=IMU_INT1. The FAQ address 0x20 fits the TCA9554; xiaozhi config uses ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_000. Waveshare says the GPIO10/11 I2C header only supports I2C peripherals and cannot be remapped to other functions.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "Audio output (DAC + amp + speaker)",
+    "claim": "PCM5101 I2S audio decoder (DAC): Speak_DIN=GPIO47, LRCK=GPIO38, BCK=GPIO48. It feeds an onboard 'power amplifier chip' whose part number Waveshare does not give for this board. There is a speaker header for an 8 ohm 2 W '2030' speaker and an onboard volume knob/button. xiaozhi drives it as a plain I2S simplex output (NoAudioCodecSimplex), meaning there is no I2C-controlled codec.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "Microphone",
+    "claim": "Onboard I2S digital MEMS microphone: MIC_WS=GPIO2, MIC_SCK=GPIO15, MIC_SD=GPIO39. From the FAQ: 'The old version used the MSM261S4030H0R microphone, which has been discontinued. It has been replaced with the ICS-43434, and the related circuitry has been adjusted', and the pickup position stays the same.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "TF/microSD slot",
+    "claim": "TF card slot in SPI-style wiring: SD_D0/MISO=GPIO16, SD_CMD/MOSI=GPIO17, SD_SCK=GPIO14, SD_D3/CS=EXIO3 (the chip select is on the IO expander, not a native GPIO).",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "Battery / charger / power",
+    "claim": "MX1.25 2-pin connector for a 3.7 V Li-ion/LiPo battery (any capacity, per the FAQ). There is an onboard 'battery recharge manager chip' whose part number is not given, a charge LED that is on while charging and off when full, a power LED, and an ME6217C33M5G 3.3 V LDO rated 800 mA max.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "Buttons",
+    "claim": "Three buttons: RESET, BOOT, and a 'battery power supply control' (PWR) button (items 22, 23, 25 on the official list). The docs do not say how the PWR button works.",
+    "source_url": "https://www.waveshare.com/esp32-s3-touch-lcd-1.85.htm",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "Button / power-latch GPIOs (secondary)",
+    "claim": "xiaozhi-esp32 config.h for this board: BOOT_BUTTON_GPIO=GPIO0, PWR_BUTTON_GPIO=GPIO6, PWR_Control_PIN=GPIO7. Firmware drives GPIO7 to keep battery power latched or to switch it off, triggered by a long press of the PWR button.",
+    "source_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/config.h",
+    "source_kind": "github",
+    "confidence": "medium"
+   },
+   {
+    "topic": "USB",
+    "claim": "USB Type-C wired to the ESP32-S3 native USB (USB_DN=GPIO19, USB_DP=GPIO20). The official component list has no USB-UART bridge, which fits esptool reporting USB-Serial/JTAG mode. UART header: TXD=GPIO43, RXD=GPIO44.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "Antenna",
+    "claim": "Onboard ceramic (patch) antenna plus an IPEX1 (IPEX Gen 1) connector for an optional external antenna.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "Dimensions",
+    "claim": "Touch version: 55.0 (H) x 55.0 (V) mm (wiki spec table). The non-touch ESP32-S3-LCD-1.85 wiki gives 49.95 x 48.08 mm. The product page summary claimed both versions share one outline, so the sources conflict.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "source_kind": "official",
+    "confidence": "medium"
+   },
+   {
+    "topic": "Product variants / naming",
+    "claim": "The plain ESP32-S3-Touch-LCD-1.85 (SKU 28514 per docs) comes in two versions: ESP32-S3-LCD-1.85 without touch and ESP32-S3-Touch-LCD-1.85 with touch. Different boards: the 1.85B (aluminium badge, ES8311 + ES7210 codec, dual mics, BQ27220 fuel gauge, CST816S) and the 1.85C (round 58 mm puck / speaker box, MP1605GTF-Z 3.3 V 2 A regulator, touch on GPIO10/11).",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85B",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "Revision marking 'Rev2.x' (related board only)",
+    "claim": "Waveshare documents a V1 to V2 change only for the 1.85C. V2 is marked 'Rev2.0' on the PCB silkscreen, on the boot screen and on a V2 QC sticker. V2 swaps the PCM5101APWR DAC + NS8002 amp + digital mic for an ES8311 codec + NS4150B amp + ES7210 ADC with dual analog mics. Pins change too: GPIO2 becomes I2S_MCLK, GPIO15 becomes PA_CTRL, GPIO10/11 become I2C. 1.85C V1 was discontinued, with V2 replacing it from 30 Jan 2026. The plain 1.85 docs and FAQ mention no Rev2.x; their only stated hardware change is the MSM261S4030H0R to ICS-43434 microphone swap.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85C",
+    "source_kind": "official",
+    "confidence": "high"
+   },
+   {
+    "topic": "Official schematic / repos",
+    "claim": "Official schematic: https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf. It was unreachable from this machine (TLS handshake failure on files.waveshare.com), so no part numbers were read from it. Waveshare's demos for the plain 1.85 are on Google Drive (file id 1sOXcEqyUIieougwPozj5q5Z8X1xILjIs). The waveshareteam GitHub org has repos for 1.85B, 1.85C and the bare 1.85inch-Touch-LCD-Module, but none for the plain ESP32-S3-Touch-LCD-1.85.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Resources-And-Documents",
+    "source_kind": "official",
+    "confidence": "high"
+   }
+  ],
+  "open_questions": [
+   "What does 'rev 2.1' mean on a plain ESP32-S3-Touch-LCD-1.85? Waveshare documents Rev2.x only for the 1.85C (Rev2.0 = ES8311/ES7210 audio). It is unconfirmed whether rev 2.1 here is just the ICS-43434 mic revision or an audio redesign like V2. Physical check: read the markings on the audio IC (PCM5101 vs ES8311) and look for a second mic or an ES7210. Also confirm the silkscreen really has no 'C' or 'B' suffix.",
+   "The amplifier IC and charger IC part numbers for the plain 1.85 are not named in the docs I could open. The schematic PDF on files.waveshare.com could not be fetched here (TLS error). NS8002 is documented only for 1.85C V1. ETA6098 showed up only in an unverified search snippet.",
+   "Exact flash part (probably XMC XM25QH128-class, from JEDEC 0x20/0x4018) is not confirmed by Waveshare.",
+   "Touch IC suffix: the wiki says CST816, the resources page says CST816T, and the datasheet file and module page say CST816S. Read the chip marking or the chip-ID register to settle it.",
+   "Power input range is not stated. Official docs give only USB Type-C and a 3.7 V Li-ion on MX1.25. Battery charge current and the battery-voltage ADC pin are also undocumented in the sources I opened.",
+   "Dimensions: 55 x 55 mm for the touch version (wiki) vs 49.95 x 48.08 mm for the non-touch wiki. Measure the board to confirm.",
+   "Speaker connector type/pitch is not confirmed: docs say only 'speaker header' for an 8 ohm 2 W 2030 speaker, and one summary mentioned MX or SH1.0 inconsistently.",
+   "QMI8658 I2C address is not listed in the FAQ, which gives only 0x15, 0x20 and 0x51. Running an I2C scan on GPIO10/11 and GPIO1/3 would confirm the addresses and show which audio chip revision is fitted."
+  ]
+ },
+ "research:software": {
+  "findings": [
+   {
+    "topic": "Officially supported environments",
+    "claim": "Waveshare officially supports two frameworks for ESP32-S3-Touch-LCD-1.85: Arduino IDE and ESP-IDF. The docs list these sub-pages: Resources, Working with Arduino, Working with ESP-IDF, AI Application Tutorials (XiaoZhi), Firmware Flashing and Erasing, FAQ. PlatformIO, ESPHome and MicroPython are not mentioned anywhere in Waveshare's docs, wiki or product page.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Arduino: esp32 core version",
+    "claim": "The current Waveshare docs require the board package 'esp32 by Espressif Systems', version 3.0.2 ≤ Version ≤ 3.1.1 (online or offline install). The older wiki page says '3.0.2 and above'. The latest arduino-esp32 release is 3.3.12 (2026-09-18), which is outside Waveshare's tested range.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Arduino",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Arduino: board selection",
+    "claim": "The wiki says to select 'esp32s3 dev module'. It also says that with esp32 core 3.0.7 or newer you can select the dedicated board 'Waveshare ESP32-S3-Touch-LCD-1.85', and then some parameters need no change. The screenshot shows it chosen with port 'COM52 Serial Port (USB)'.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Arduino: core board definition defaults",
+    "claim": "arduino-esp32 boards.txt defines 'waveshare_esp32_s3_touch_lcd_185'. It was added by PR #10477 on 2024-10-17 and is present in tags 3.0.6, 3.0.7, 3.1.1 and master. Defaults: flash_size=16MB; psram_type=opi (PSRAM menu: Enabled=OPI); flash mode menu starts with 'QIO 120MHz' (also QIO 80MHz, DIO, OPI); USB Mode defaults to 'Hardware CDC and JTAG' (usb_mode=1); USB CDC On Boot defaults to Disabled (cdc_on_boot=0); Upload Mode defaults to 'UART0 / Hardware CDC' (no 1200bps touch). The first partition option is ESP SR 16M. In 3.1.1 it is named 'ESP SR 16M (3MB APP/7MB SPIFFS/2.9MB MODEL)'; master renames it '(3MB APP/6MB SPIFFS/3.9MB MODEL)'. The variant pins_arduino.h sets USB_VID 0x303a, USB_PID 0x8290, USB_PRODUCT 'ESP32-S3-Touch-LCD-1.85', I2C SCL=10, SDA=11, TX=43, RX=44.",
+    "source_url": "https://github.com/espressif/arduino-esp32/blob/master/boards.txt",
+    "confidence": "high",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Arduino: Waveshare 'project parameter settings' screenshot",
+    "claim": "Waveshare's Tools-menu screenshot for LVGL_Arduino shows: Board 'ESP32S3 Dev Module'; USB CDC On Boot 'Disabled'; CPU 240MHz (WiFi); Events Run On Core 0; Flash Mode 'QIO 120MHz'; Flash Size '16MB (128Mb)'; Arduino Runs On Core 1; Partition Scheme 'ESP SR 16M (3MB APP/7MB SPIFFS/2.9MB MODEL)'; PSRAM 'OPI PSRAM'; Upload Mode 'UART0 / Hardware CDC'; Upload Speed 921600; USB Mode 'Hardware CDC and JTAG'. Caveat: the image file is named ESP32-S3-Touch-LCD-1.46_Demo_2 and shows a 'Display_SPD201…' tab, so it was likely reused from the 1.46 board page. The highlighted rows are Flash Mode/Size, Core settings, Partition and PSRAM.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Arduino",
+    "confidence": "medium",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Arduino: partition scheme rule",
+    "claim": "If the sketch contains the speech-recognition model, select 'ESP SR 16M (3MB APP/7MB SPIFFS/2.9MB MODEL)'. Otherwise select '16M Flash (3MB APP/9.9MB FATFS)' or another suitable scheme.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Arduino",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Arduino: USB CDC On Boot / Serial output",
+    "claim": "Waveshare: 'If the ESP32S3 mainboard only has a USB port, you need to enable USB CDC'. The FAQ says that on boards with a direct USB connection printf works, but Serial needs 'USB CDC On Boot' enabled or an HWCDC object. Espressif's troubleshooting guide says the same for the USB connector: set CDC On Boot=Enabled (-D ARDUINO_USB_CDC_ON_BOOT=1) and USB Mode='Hardware CDC and JTAG' (-D ARDUINO_USB_MODE=1). This conflicts with the 'Disabled' value in Waveshare's screenshot and the core default. Without enabling it, Serial.print output goes to UART0 and does not reach the USB COM port.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Arduino: settings per Espressif ESP32_Display_Panel library",
+    "claim": "Espressif's ESP32_Display_Panel library (esp-arduino-libs, latest v1.0.4, 2025-09-23) lists Waveshare ESP32-S3-Touch-LCD-1.85 as supported: QSPI ST77916 360x360 with I2C CST816 touch. Its recommended Arduino settings are ESP32S3 Dev Module, PSRAM OPI, Flash Mode QIO 80MHz, Flash Size 16MB, USB CDC On Boot Enabled, Partition '16M Flash (3MB)'. Waveshare's demo does not necessarily use this library; it is an alternative driver.",
+    "source_url": "https://github.com/esp-arduino-libs/ESP32_Display_Panel/blob/master/docs/board/board_waveshare.md",
+    "confidence": "high",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Arduino: library versions",
+    "claim": "Required libraries, both installed offline from the demo package's Arduino\\libraries folder: LVGL v8.3.10 and ESP32-audioI2S-master v2.0.0. Waveshare warns that LVGL and its driver libraries depend strongly on each other's versions (v8 drivers may not work with v9) and recommends these exact versions.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Arduino",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Arduino: speech model tied to core 3.0.2",
+    "claim": "Switching between the Chinese and English speech models means replacing esp32-hal-sr.c in ...\\Arduino15\\packages\\esp32\\hardware\\esp32\\3.0.2\\libraries\\ESP_SR\\src. It also means replacing srmodels.bin in ...\\tools\\esp32-arduino-libs\\idf-release_v5.1-bd2b9390ef\\esp32s3\\esp_sr. So the voice part of the demo is written against core 3.0.2. The default is English, wake word 'hi esp'. The wiki also warns that the Windows username must be in English, or compilation fails.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "On-board chips relevant to drivers",
+    "claim": "Display: ST77916 over QSPI, 360x360. Touch: CST816. IMU: QMI8658. Audio decoder: PCM5101. RTC: PCF85063. Chip: ESP32-S3R8 with 16MB flash. GPIO expander: TCA9554PWR. I2C addresses on the board: 0x15, 0x20, 0x51. The external I2C header uses SCL GPIO10 / SDA GPIO11.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Demo package: download and contents",
+    "claim": "Demo package 'ESP32-S3-Touch-LCD-1.85-Demo.zip' is on Google Drive (Resources page) and on files.waveshare.com (Firmware Flashing page). It contains: Arduino\\libraries (all required libs); Arduino example LVGL_Arduino; ESP-IDF example ESP32-S3-Touch-LCD-1.85-Test; and a Firmware directory with the test bin. Both examples work the same way. Page 1 shows SD card size, flash size, battery voltage, IMU angle, RTC time, Wi-Fi scan count and a backlight slider. Page 2 plays MP3 files from the TF card root. Voice recognition (wake word 'hi esp') turns the backlight on/off, brightest or darkest.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Firmware-Flashing",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "ESP-IDF version and setup",
+    "claim": "ESP-IDF v5.3.1 or newer is required. Recommended setup is VS Code + the ESP-IDF extension, using the EIM installer; screenshots use v5.5.2. Install to a path without Chinese characters or spaces. FAQ: if the ESP-IDF program keeps resetting after flashing, downgrade ESP-IDF to v5.3.2. The ESP-IDF example is in the ESP-IDF folder of the demo package. Its speech model is chosen in sdkconfig.defaults.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/ESP-IDF",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Restore factory / test firmware",
+    "claim": "FAQ: to restore factory mode, flash the factory bin. The Firmware Flashing page says the bin is in the Firmware directory of the demo package, with flash address 0x00. Steps: use Espressif Flash Download Tool (dl.espressif.com/public/flash_download_tool.zip); choose ESP32-S3 and USB; select the COM port; set BAUD to 1152000; pick the bin, enter address 0x00 and tick the checkbox; press START; when done, press reset. To erase: select the COM port without any bin, press START, then ERASE. If the tool stays at 'Waiting for power-on sync', hold BOOT and power-cycle the board to enter download mode.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Firmware-Flashing",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Entering download mode when upload fails",
+    "claim": "Waveshare FAQ remedies: (1) press and hold RESET for more than 1 s, wait for the PC to re-detect the device, then upload again; (2) hold BOOT, press RESET, release RESET, then release BOOT; (3) hold BOOT, plug in the USB cable, then release BOOT. If the board keeps resetting and the device keeps appearing and disappearing in Device Manager, the flash is probably blank and the USB is unstable: use BOOT+RESET to enter download mode and flash. The wiki adds: after a download, press RESET to run the program.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Native USB (USB-Serial/JTAG) behavior",
+    "claim": "On Windows the ESP32-S3 USB-Serial/JTAG controller appears as a 'COM*' port. It can put the chip into download mode automatically, so BOOT is normally not needed. Exceptions: the device disappears from the host during deep sleep (controller and PHY powered off) and returns on wake. In light sleep the host may report it disconnected or faulty, and replugging may be needed. If the application reconfigures the USB pins (GPIO19 D-, GPIO20 D+) or disables the controller, the device disappears. Recovery is manual download mode via GPIO0, which is the BOOT button.",
+    "source_url": "https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/usb-serial-jtag-console.html",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "COM port changes after flashing",
+    "claim": "Espressif's Arduino tutorial for ESP32-S3 USB CDC flashing: put the board into download mode (hold BOOT, press and release RESET), select the new USB device that appears in Ports, and reset manually after the first flash. Later uploads need no manual boot or reset with 'USB CDC On Boot: Enabled' and 'Upload Mode: UART0 / Hardware CDC'. Secondary source (arduino-esp32 GitHub discussion #11327): the COM port number can change when 'USB Mode: USB-OTG (TinyUSB)' is used. The maintainer recommends Hardware CDC plus CDC On Boot Enabled to avoid this. The board variant also gives TinyUSB mode its own USB identity (VID 0x303a / PID 0x8290), which fits with Windows assigning a different COM number.",
+    "source_url": "https://docs.espressif.com/projects/arduino-esp32/en/latest/tutorials/cdc_dfu_flash.html",
+    "confidence": "medium",
+    "source_kind": "official"
+   },
+   {
+    "topic": "COM port changes (secondary source)",
+    "claim": "Secondary (GitHub discussion): with USB-OTG (TinyUSB) upload mode on ESP32-S3, the COM port changed during uploads. The maintainer advice: use 'USB CDC On Boot: Enabled' + 'USB Mode: Hardware CDC and JTAG'; in OTG mode, enter upload mode by holding BOOT and pulsing RESET.",
+    "source_url": "https://github.com/espressif/arduino-esp32/discussions/11327",
+    "confidence": "medium",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Hardware revision (old vs new)",
+    "claim": "Waveshare FAQ 'Differences between the old and new versions': the old version used the discontinued MSM261S4030H0R microphone. The new version uses an ICS-43434 with adjusted circuitry, at the same pickup position. The FAQ comparison photo shows the new board's silkscreen as 'ESP32-S3-Touch-LCD-1.85 Rev2.0'. 'Rev 2.1' is not mentioned anywhere in the docs.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "XiaoZhi AI firmware (official alternative firmware)",
+    "claim": "Waveshare lists XiaoZhi AI firmware v2.4.0 for ESP32-S3-Touch-LCD-1.85. The same firmware also runs on the non-touch ESP32-S3-LCD-1.85, and no V1/V2 split is noted for this model. It is available from github.com/78/xiaozhi-esp32/releases or github.com/waveshareteam/ESP32-AIChats/tree/master/xiaozhi-esp32 and is flashed like any bin. XiaoZhi and the demo are separate programs: switching between them means reflashing.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/ESP32-AI-Tutorials",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "ESPHome (community only)",
+    "claim": "ESPHome's mipi_spi documentation has no preset for this board. The closest is 'ESP-VOCAT', a 1.43\" 360x360 QSPI ST77916 display. Secondary (Home Assistant forum): users got ESPHome running on the 1.85 with the ESP-IDF framework, a qspi_dbi ST77916 display with custom init, and LCD reset through the I2C IO expander (pca9554 component, pin 1). They also used CST816 touch and PSRAM settings (CONFIG_SPIRAM_FETCH_INSTRUCTIONS/RODATA), which fixed black screens, plus I2S audio and voice assistant. A working YAML gist is gist.github.com/matze19999/9118f667510291e1e0ea28e74ec03245 (Feb 2025).",
+    "source_url": "https://community.home-assistant.io/t/waveshare-esp32-s3-lcd-1-85/833702",
+    "confidence": "medium",
+    "source_kind": "forum"
+   },
+   {
+    "topic": "PlatformIO (community only)",
+    "claim": "Neither platformio/platform-espressif32 nor pioarduino/platform-espressif32 has a board JSON for the 1.85; the only Waveshare LCD board in either is waveshare_esp32s3_touch_lcd_128, checked via the GitHub API. Secondary (PlatformIO forum, Feb 2025): the advice was the pioarduino platform (Arduino core 3.x) with a 16MB/N16R8 ESP32-S3 board config, QIO flash, OPI PSRAM and board_build.partitions = esp_sr_16.csv. The user reported it worked.",
+    "source_url": "https://community.platformio.org/t/help-adding-board-for-waveshare-esp32-s3-with-round-1-85-display/46062",
+    "confidence": "medium",
+    "source_kind": "forum"
+   },
+   {
+    "topic": "Misc FAQ relevant to development",
+    "claim": "Wi-Fi and Bluetooth can be used together, but not while the audio functions run, because audio needs too much memory. The board works without a TF card; only TF-card features are lost. If the TF card is not recognized, format it as FAT32. On macOS, if flashing fails, Waveshare says to install the CH34x Mac driver. The first compile is slow, which is normal.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ",
+    "confidence": "high",
+    "source_kind": "official"
+   }
+  ],
+  "open_questions": [
+   "The silkscreen reads 'rev 2.1', but Waveshare only documents 'Rev2.0' (the ICS-43434 microphone version). What changed in 2.1 is unknown. It is also unknown whether the current demo package covers the new microphone without code changes.",
+   "The exact contents of ESP32-S3-Touch-LCD-1.85-Demo.zip were not checked. The zip was not downloaded: it needs the user's permission, files.waveshare.com timed out from this machine, and Google Drive asks for a login. Still unconfirmed: which display/touch driver sources the Arduino demo bundles (ST77916/CST816 code vs ESP32_Display_Panel), the LVGL and component versions in the ESP-IDF demo's idf_component.yml, and the bin file name in the Firmware folder.",
+   "Is the 'test firmware' bin in the demo Firmware folder the same as the factory firmware shipped on the board? The FAQ says 'flash the factory bin'; the flashing page calls it test firmware.",
+   "The schematic PDF (files.waveshare.com) could not be opened, so the USB wiring (direct to GPIO19/20, no USB-UART bridge) is not confirmed from the schematic. The user's esptool output (USB mode USB-Serial/JTAG) does show the native USB port is in use.",
+   "Waveshare's Tools screenshot conflicts with its own text and with Espressif's ESP32_Display_Panel table on 'USB CDC On Boot' (Disabled vs Enabled) and Flash Mode (QIO 120MHz vs QIO 80MHz). The screenshot appears to be reused from the 1.46 board. Which value Waveshare intends for the 1.85 is not stated explicitly.",
+   "Whether the official demos build and run on arduino-esp32 cores newer than 3.1.1 (current 3.3.12) is unknown. Waveshare caps support at 3.1.1, and the voice-model steps are written for 3.0.2.",
+   "No official or community MicroPython port for this board was found. Only a CircuitPython PR for a different Waveshare board (Touch LCD 2.8) turned up.",
+   "The user's Desktop is in a OneDrive folder with Cyrillic characters ('Рабочий стол'). Waveshare warns about non-English usernames and about ESP-IDF install paths with non-ASCII characters or spaces. Whether a Cyrillic project path breaks Arduino or ESP-IDF builds for this demo is not confirmed. Keeping projects in an ASCII path such as C:\\esp\\ is the safe choice."
+  ]
+ },
+ "research:pinout": {
+  "findings": [
+   {
+    "topic": "Board identity",
+    "claim": "The Waveshare ESP32-S3-Touch-LCD-1.85 uses an ESP32-S3R8 (8MB PSRAM in the package) with 16MB flash, an ST77916 360x360 QSPI LCD, a CST816 touch controller, a QMI8658 IMU, a PCF85063 RTC, a PCM5101 DAC and a TCA9554PWR IO expander. This matches the esptool readout (S3, 8MB embedded PSRAM, 16MB flash).",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "LCD QSPI pins",
+    "claim": "LCD (ST77916, QSPI): CS=GPIO21, SCK=GPIO40, D0=GPIO46, D1=GPIO45, D2=GPIO42, D3=GPIO41, TE=GPIO18. LCD_RST is on expander pin EXIO2, not a GPIO. Backlight LCD_BL=GPIO5.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "LCD pins in driver code",
+    "claim": "Espressif's ESP32_Display_Panel board file for this board (co-authored by Waveshare) uses the same pins: QSPI SCK 40, DATA0-3 = 46/45/42/41, CS 21, 80 MHz. It sets LCD_RST_IO = -1 and resets the LCD through expander pin index 1 (EXIO2): low 10 ms, then high. Backlight is GPIO5, active high.",
+    "source_url": "https://raw.githubusercontent.com/esp-arduino-libs/ESP32_Display_Panel/master/src/board/supported/waveshare/BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85.h",
+    "confidence": "high",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Touch controller pins",
+    "claim": "Touch (CST816) has its own I2C bus: TP_SDA=GPIO1, TP_SCL=GPIO3, TP_INT=GPIO4. TP_RST is on expander pin EXIO1.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Touch bus config and address",
+    "claim": "Code puts touch on I2C host/port 1 at 400 kHz (SDA 1, SCL 3, INT 4, RST -1). The touch reset is done through expander pin index 0 (EXIO1). The CST816S I2C address is 0x15.",
+    "source_url": "https://raw.githubusercontent.com/esp-arduino-libs/ESP32_Display_Panel/master/src/board/supported/waveshare/BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85.h",
+    "confidence": "high",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Touch address in demo-derived code",
+    "claim": "Touch_Driver/CST816.h in a community copy of the Waveshare ESP-IDF demo defines CST816S address 0x15, I2C_Touch_SDA_IO 1, SCL 3, INT 4, RST -1, I2C port 1, 400 kHz. Its reset() toggles Set_EXIO(TCA9554_EXIO1).",
+    "source_url": "https://github.com/oxcdx/ESP32-S3-Touch-LCD-Display",
+    "confidence": "medium",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Shared internal I2C bus",
+    "claim": "The shared internal I2C bus is SCL=GPIO10, SDA=GPIO11. It carries the QMI8658 IMU, the PCF85063 RTC and the TCA9554 expander, and also goes to the 4-pin I2C header. Waveshare says these pins cannot be used as regular GPIO. The demo uses I2C port 0 at 400 kHz.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "I2C addresses on GPIO10/11",
+    "claim": "Addresses on the GPIO10/11 bus per demo-derived code: TCA9554 at 0x20, PCF85063 at 0x51, QMI8658 at 0x6B. QMI8658_Init uses QMI8658_L_SLAVE_ADDRESS 0x6B; 0x6A is defined as the alternate. Espressif's board file and xiaozhi also use TCA9554 at 0x20 (TCA9554_ADDRESS_000).",
+    "source_url": "https://github.com/oxcdx/ESP32-S3-Touch-LCD-Display",
+    "confidence": "medium",
+    "source_kind": "github"
+   },
+   {
+    "topic": "CONFLICT: wiki I2C address list",
+    "claim": "The 1.85 wiki lists the I2C addresses as \"0x15, 0x20, 0x51\". On this board 0x15 (CST816) is on the separate GPIO1/GPIO3 touch bus, and the QMI8658 (0x6B in the demo) is missing from the list. The 1.85C wiki has the identical string, and on that board touch really is on GPIO10/11. Inference: the list was copied from the 1.85C page.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85C",
+    "confidence": "medium",
+    "source_kind": "official"
+   },
+   {
+    "topic": "IO expander numbering",
+    "claim": "Expander numbering is 1-based: EXIOn = TCA9554 port P(n-1). In Waveshare's official TCA9554PWR.c, Set_EXIO(Pin 1..8) writes bit (0x01 << (Pin-1)) of the output register. ST77916 reset toggles TCA9554_EXIO2 (low 10 ms, high 50 ms).",
+    "source_url": "https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85C",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "IO expander pin map",
+    "claim": "TCA9554 pin map on the 1.85: EXIO1 (P0) = TP_RST, EXIO2 (P1) = LCD_RST, EXIO3 (P2) = SD_D3/CS, EXIO4 (P3) = IMU_INT2, EXIO5 (P4) = IMU_INT1. EXIO6-EXIO8 are not documented on the wiki or docs.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "CONFLICT: expander pin direction",
+    "claim": "The demo's EXIO_Init() calls TCA9554PWR_Init(0x00), which sets all expander pins to output, including EXIO4/EXIO5 that the wiki lists as QMI8658 interrupt lines. xiaozhi-esp32 sets only P0|P1 as outputs and pulses them together to reset LCD and touch. If you use the IMU interrupts, configure EXIO4/5 as inputs.",
+    "source_url": "https://github.com/78/xiaozhi-esp32/blob/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/esp32-s3-touch-lcd-1.85.cc",
+    "confidence": "medium",
+    "source_kind": "github"
+   },
+   {
+    "topic": "RTC interrupt",
+    "claim": "The PCF85063 RTC is on GPIO10/11 and RTC_INT goes to GPIO9 on the 1.85. On the 1.85C, RTC_INT goes to EXIO4 instead.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Speaker I2S (PCM5101)",
+    "claim": "Speaker DAC PCM5101: Speak_DIN=GPIO47, Speak_LRCK=GPIO38, Speak_BCK=GPIO48.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Speaker I2S config in code",
+    "claim": "Demo PCM5101.h: I2S port 0, BCLK=GPIO48, WS/LRCK=GPIO38, DOUT=GPIO47, MCLK=NC, DIN=NC. It uses standard Philips framing, 16-bit mono. xiaozhi uses the same pins (SPK DOUT 47, BCLK 48, LRCK 38).",
+    "source_url": "https://github.com/78/xiaozhi-esp32/blob/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/config.h",
+    "confidence": "high",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Microphone I2S",
+    "claim": "The microphone is an I2S MEMS mic: MIC_WS=GPIO2, MIC_SCK=GPIO15, MIC_SD=GPIO39. Waveshare notes the old MSM261S4030H0R mic was discontinued and replaced by an ICS-43434, with adjusted circuitry.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Microphone I2S config in code",
+    "claim": "Demo MIC_Speech uses I2S_NUM_1: BCLK=GPIO15, WS=GPIO2, DIN=GPIO39, MCLK/DOUT=NC. It runs standard Philips framing, 32-bit, right slot only, at 16 kHz, so it is separate from the speaker's I2S0.",
+    "source_url": "https://github.com/oxcdx/ESP32-S3-Touch-LCD-Display",
+    "confidence": "medium",
+    "source_kind": "github"
+   },
+   {
+    "topic": "SD card pins",
+    "claim": "TF card: SD_D0/MISO=GPIO16, SD_CMD/MOSI=GPIO17, SD_SCK=GPIO14, SD_D3/CS=EXIO3 (expander). SD_D1 and SD_D2 are NC.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "SD card mode",
+    "claim": "Mode is SDMMC 1-bit. Waveshare's ESP-IDF page says the demo supports SDMMC 1-bit. The demo SD_MMC.c sets slot_config.width = 1 with CLK 14, CMD 17, D0 16, D1/D2/D3 = -1 and internal pull-ups. The official Arduino SDMMC example (1.85C repo, same SD wiring) calls SD_MMC.setPins(14,17,16) and SD_MMC.begin(\"/sdcard\", true) (1-bit). SPI mode would need CS driven through the expander (EXIO3); that is my inference.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/ESP-IDF",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "CONFLICT: stray SD define",
+    "claim": "Both the official 1.85C demo and the 1.85 demo copy have '#define CONFIG_SD_Card_D3 21' in SD_MMC.h. GPIO21 is LCD_CS, so this would collide, but the define is not used: slot_config.d3 = CONFIG_EXAMPLE_PIN_D3 = -1. Ignore it, because SD D3 is really on EXIO3.",
+    "source_url": "https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85C",
+    "confidence": "medium",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Battery voltage ADC",
+    "claim": "Battery voltage is read on ADC1 channel 7 = GPIO8. The demo BAT_Driver uses EXAMPLE_ADC1_CHAN ADC_CHANNEL_7, ADC_ATTEN_DB_12, with V_bat = calibrated_mV * 3.0 / 1000 / 0.9945 (a 1/3 divider). ESP-IDF confirms ADC1_CHANNEL_7_GPIO_NUM = 8 on ESP32-S3. The official Waveshare 06_AnalogRead example (1.85C repo) reads analogRead(8) and multiplies by 3.",
+    "source_url": "https://github.com/espressif/esp-idf/blob/master/components/soc/esp32s3/include/soc/adc_channel.h",
+    "confidence": "high",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Buttons and power latch",
+    "claim": "BOOT button = GPIO0. The battery power button input is GPIO6 (active low). PWR_Control (power latch) is GPIO7, an output driven high to keep the board on battery power. Sources: demo PWR_Key.h (PWR_KEY_Input_PIN 6, PWR_Control_PIN 7) and xiaozhi config (BOOT_BUTTON_GPIO 0, PWR_BUTTON_GPIO 6, PWR_Control_PIN 7). RESET is the hardware EN reset. The docs list RESET, BOOT, a battery power control button and a volume adjustment knob; no source gives the knob a GPIO.",
+    "source_url": "https://github.com/78/xiaozhi-esp32/blob/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/config.h",
+    "confidence": "medium",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Battery pins in forum configs",
+    "claim": "The Home Assistant ESPHome thread for this board uses power control GPIO7, power button GPIO6, battery ADC GPIO8 and BOOT GPIO0, with a separate touch I2C bus on GPIO1/GPIO3 (secondary source).",
+    "source_url": "https://community.home-assistant.io/t/waveshare-esp32-s3-lcd-1-85/833702?page=2",
+    "confidence": "medium",
+    "source_kind": "forum"
+   },
+   {
+    "topic": "Headers / broken-out GPIOs",
+    "claim": "Pins broken out on headers: UART header TXD=GPIO43 and RXD=GPIO44 (usable as regular GPIO), each with GND and 3V3. I2C header SCL=GPIO10 and SDA=GPIO11 (shared internal bus, not regular GPIO). USB-C D-/D+ are GPIO19/GPIO20 (using them as GPIO requires download mode).",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Free GPIOs",
+    "claim": "GPIOs assigned across all sources opened: 0,1,2,3,4,5,6,7,8,9,10,11,14,15,16,17,18,19,20,21,38,39,40,41,42,45,46,47,48 (plus 43/44 on the UART header). GPIO12 and GPIO13 do not appear in any source opened, and no header exposes them. In practice the only freely usable GPIOs are GPIO43/44 on the UART header, plus I2C devices added on the GPIO10/11 header. This is an inference; the schematic was not checked.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "medium",
+    "source_kind": "official"
+   },
+   {
+    "topic": "LCD panel batches",
+    "claim": "xiaozhi's 1.85 board code reads ST77916 register 0x04 at boot to pick the init table. Data 00 7F 7F 7F uses the default table; 00 02 7F 7F uses 'vendor_specific_init_new'. So at least two LCD panel batches/revisions exist with different init sequences. Users on the HA forum also report init sequence and color-inversion differences between units.",
+    "source_url": "https://github.com/78/xiaozhi-esp32/blob/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/esp32-s3-touch-lcd-1.85.cc",
+    "confidence": "medium",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Rev2.0 / V2 notes (1.85C only)",
+    "claim": "Waveshare's V1/V2 notes are for the 1.85C only. 1.85C V2 (identified by a 'Rev2.0' silkscreen) replaces the PCM5101 + NS8002 + MEMS mic with ES8311 + ES7210 + NS4150B + analog mics. V2 changes GPIO2 from MIC_WS to I2S_MCLK and GPIO15 from MIC_SCK to PA_CTRL, while GPIO38/39/47/48 stay LRCK/MIC_SD/DIN/BCK. The 1.85C V2 schematic in the official repo contains the nets ES8311, ES7210, NS4150B, PA_CTRL, I2S_MCLK and BAT_ADC. The plain 1.85 docs have no V1/V2 section.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85C",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "1.85 vs 1.85C differences",
+    "claim": "How to tell the 1.85 from the 1.85C: on the 1.85C, touch shares the GPIO10/11 bus (TP_SDA=GPIO11, TP_SCL=GPIO10, official demo I2C port 0), RTC_INT goes to EXIO4, and no QMI8658 is listed. On the 1.85, touch is on GPIO1/GPIO3, there is a QMI8658, and RTC_INT goes to GPIO9. LCD, SD, backlight, battery ADC and V1 audio pins are the same on both.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85C",
+    "confidence": "high",
+    "source_kind": "official"
+   }
+  ],
+  "open_questions": [
+   "I could not open the board schematic. The official links (https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf and https://www.waveshare.net/w/upload/f/f2/ESP32-S3-Touch-LCD-1.85.pdf) failed with TLS errors, and the manuals.plus mirror is behind a bot check. So these are unverified: EXIO6-EXIO8 usage, PCM5101 control pins (XSMT/FMT), whether GPIO12/13 are NC or routed, I2C pull-ups, and the battery divider resistor values. The user can open the PDF to check.",
+   "The official 1.85 demo package is a Google Drive / files.waveshare.com zip. I did not download it. The pin defines above come from Espressif's ESP32_Display_Panel board file, the xiaozhi-esp32 board config, a community copy of the Waveshare ESP-IDF demo (github.com/oxcdx), and Waveshare's official 1.85C repo, which shares the same driver code.",
+   "No source documents a 'rev 2.1' for the plain 1.85; Waveshare documents Rev2.0/V2 only for the 1.85C. Suggested check: an I2C scan on GPIO10/11 should show 0x20, 0x51 and 0x6B, and one on GPIO1/3 should show 0x15. If 0x15 is on GPIO10/11, or ES8311/ES7210 codecs answer there, or the board has an ES8311 chip, it is a 1.85C-V2-style board: GPIO2 is then I2S_MCLK and GPIO15 is PA_CTRL.",
+   "In SDMMC 1-bit mode, does EXIO3 (SD_D3/CS) have to be driven high explicitly? The demo never sets it; it only calls TCA9554PWR_Init(0x00), which makes all pins outputs.",
+   "Is the 'volume adjustment knob' a purely analog potentiometer in the amplifier path? No source maps it to a GPIO.",
+   "Which GPIOs are taken by the in-package octal PSRAM on the ESP32-S3R8 (normally GPIO33-37)? I did not check this against an Espressif datasheet."
+  ]
+ },
+ "verify:hardware": {
+  "checked": [
+   {
+    "claim": "SoC variant: Waveshare lists the MCU as ESP32-S3R8 (dual-core LX7 up to 240 MHz, 512KB SRAM, 384KB ROM, Wi-Fi b/g/n, BT5 LE), item #1 in onboard resources.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "note": "Matches the docs page and the wiki (https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85), where it is item 1. The schematic mirror also labels U5 as ESP32-S3R8 (see the schematic entry below)."
+   },
+   {
+    "claim": "Espressif datasheet v2.2 Table 1-1: ESP32-S3R8 has no in-package flash, 8 MB Octal PSRAM, VDD_SPI 3.3 V, rev v0.1/v0.2, -40 to 65 C (85 C with PSRAM ECC, which costs 1/16 of PSRAM). Table 2-14: Octal PSRAM uses GPIO33-37.",
+    "status": "verified",
+    "evidence_url": "https://documentation.espressif.com/esp32-s3_datasheet_en.pdf",
+    "note": "I opened the datasheet and confirmed it is v2.2. Table 1-1 and its footnote 3 match exactly. Table 2-14 gives GPIO33-36 as DQ4-DQ7 and GPIO37 as DQS/DM, and says 'Do not use the pins connected to in-package flash/PSRAM for any other purposes'. The board schematic marks IO33-IO37 'Internal occupancy'."
+   },
+   {
+    "claim": "The esptool readout (8MB AP_3v3 PSRAM, rev v0.2, 16MB quad flash) matches the S3R8 plus external 16MB flash. Firmware should use OPI PSRAM and a 16MB flash setting.",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/espressif/arduino-esp32/master/boards.txt",
+    "note": "Consistent with datasheet Table 1-1. The official arduino-esp32 board entry 'Waveshare ESP32-S3-Touch-LCD-1.85' hard-codes flash_size=16MB, flash_mode=qio, psram_type=opi, and has PSRAM enabled by default."
+   },
+   {
+    "claim": "Waveshare feature list: 'Built-in 512KB SRAM and 384KB ROM, 16MB Flash, and 8MB PSRAM'.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "note": "Exact wording on the docs page. The product page and wiki say the same thing."
+   },
+   {
+    "claim": "Waveshare does not name the flash part. JEDEC 0x20 = XMC (from an ESP-IDF GitHub issue); 0x4018 = the 16MB part; exact part unconfirmed.",
+    "status": "corrected",
+    "corrected_claim": "Waveshare's schematic does name the flash: U3 = W25Q128JVSI (Winbond). ESP-IDF's Winbond driver uses manufacturer ID 0xEF, though, while this board reports 0x20. ESP-IDF's bootloader defines XMC_VENDOR_ID_1 = 0x20, and its strict XMC check accepts mfid 0x40 with capacity byte 0x13-0x20, so ID 20 40 18 is a 16MB XMC chip. This unit therefore has an XMC flash in place of the Winbond part on the schematic, which means its parts differ from the published schematic. The exact XMC part number is still unconfirmed.",
+    "evidence_url": "https://raw.githubusercontent.com/espressif/esp-idf/master/components/bootloader_support/bootloader_flash/src/bootloader_flash.c",
+    "note": "Winbond ID: https://raw.githubusercontent.com/espressif/esp-idf/master/components/spi_flash/spi_flash_chip_winbond.c (MFG_ID = 0xEF). The schematic text comes from a third-party GitHub mirror (secondary): https://github.com/WU-AetherCore/WU-ESP32-S3-Touch-LCD-1.85/blob/main/hardware/ESP32-S3-Touch-LCD-1.85.pdf. It is an Altium export dated 2024-09-18, and its SHA256 matches the repo's manifest. The original on files.waveshare.com failed the TLS handshake from here and through WebFetch."
+   },
+   {
+    "claim": "Display: 1.85 inch round, 360x360, 262K colors, QSPI. Product page title is 'ESP32-S3 1.85inch Round Display Development Board' and it says IPS. Wiki spec gives LCD type TFT, controller ST77916, interface 'I2C QSPI'.",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/esp32-s3-touch-lcd-1.85.htm",
+    "note": "Product page: 'IPS Display Panel' and 'Integrates QSPI interface display'. The wiki infobox reads '1.85 inch, I2C QSPI 360×360' and the spec table says 'LCD type TFT'."
+   },
+   {
+    "claim": "ST77916 driver; LCD pins SDA0=46, SDA1=45, SDA2=42, SDA3=41, SCK=40, CS=21, TE=18, RST=EXIO2, BL=GPIO5.",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "note": "Same pin table on the docs page. The schematic mirror's nets also match (IO46 = LCD_SDA0 … IO18 = LCD_TE, Extend_IO2 = LCD_RST). BL_PWM on IO5 drives the backlight through a DMG1012T MOSFET (Q3). The Waveshare demo copy sets the backlight PWM to 20 kHz and resets the LCD by toggling EXIO2."
+   },
+   {
+    "claim": "(secondary) xiaozhi drives ST77916 over QSPI on SPI2_HOST, 16 bpp, reads register 0x04 and picks an init sequence: 00 7F 7F 7F = default, 00 02 7F 7F = vendor_specific_init_new. So at least two panel batches exist.",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/esp32-s3-touch-lcd-1.85.cc",
+    "note": "Confirmed in xiaozhi (secondary). The same 0x04 check and vendor_specific_init_new table also appear in Waveshare's own ESP-IDF demo (LCD_Driver/ST77916.c, read from a third-party mirror): https://github.com/WU-AetherCore/WU-ESP32-S3-Touch-LCD-1.85/tree/main/references/waveshare-demo. 'Old init code may fail on new panels' is an inference; no source says so."
+   },
+   {
+    "claim": "Touch CST816 over I2C with interrupt: TP_SDA=GPIO1, TP_SCL=GPIO3, TP_INT=GPIO4, TP_RST=EXIO1, on a separate bus from GPIO10/11. The resources page labels it CST816T but links CST816S_Datasheet_EN.pdf. FAQ addresses 0x15, 0x20, 0x51.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Resources-And-Documents",
+    "note": "The resources page HTML shows the text 'CST816T Datasheet' linking to files.waveshare.com/wiki/common/CST816S_Datasheet_EN.pdf. The FAQ (https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ) lists '0x15,0x20,0x51'. The separate bus is confirmed by the schematic nets (IO1 = TP_SDA, IO3 = TP_SCL). The demo copy uses address 0x15 on I2C port 1 at 400 kHz. Note that 0x15 sits on the touch bus, not on the GPIO10/11 bus."
+   },
+   {
+    "claim": "The 1.85inch Touch LCD Module page: built-in ST77916 and CST816S, QSPI + I2C, display area 45.68 x 45.68 mm.",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/1.85inch-touch-lcd-module.htm",
+    "note": "Says 'Touch Driver IC CST816S', 'Display Panel IPS', 45.68 × 45.68 mm. That it is the same panel as this board is an inference."
+   },
+   {
+    "claim": "QMI8658 6-axis IMU; product page says QMI8658C and the datasheet link is QMI8658A.pdf; IMU_SCL=GPIO10, IMU_SDA=GPIO11, INT1=EXIO5, INT2=EXIO4.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "note": "Product page: 'QMI8658C'. The resources page links QMI8658A.pdf. The schematic labels U10 as QMI8658C, with Extend_IO4 = IMU_INT2 and Extend_IO5 = IMU_INT1. Waveshare's demo copy uses I2C address 0x6B, which the FAQ address list leaves out."
+   },
+   {
+    "claim": "PCF85063 (PCF85063ATL) RTC on SCL=GPIO10/SDA=GPIO11, RTC_INT=GPIO9; RTC battery header; an RTC battery is needed to keep time.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "note": "The pin table header reads PCF85063ATL. The Arduino page says to keep RTC time 'you need to connect an RTC battery'. The header is for a 'rechargeable RTC battery'. The schematic shows U2 PCF85063ATL with a 32.768 kHz crystal, and the demo uses address 0x51."
+   },
+   {
+    "claim": "TCA9554PWR expander on GPIO10/11: EXIO1=TP_RST, EXIO2=LCD_RST, EXIO3=SD_D3/CS, EXIO4=IMU_INT2, EXIO5=IMU_INT1. Address 0x20. The I2C header cannot be remapped.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "note": "In the schematic, Extend_IO1-8 map to TCA9554 P0-P7. So in esp_io_expander terms EXIO1 = IO_EXPANDER_PIN_NUM_0; xiaozhi resets LCD and touch through PIN_NUM_0|1. EXIO6-8 have no documented use. The demo copy has TCA9554_ADDRESS 0x20, and xiaozhi config.h uses ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_000 (secondary)."
+   },
+   {
+    "claim": "PCM5101 I2S DAC (DIN=GPIO47, LRCK=GPIO38, BCK=GPIO48) feeds an amp Waveshare does not name; 8 ohm 2 W 2030 speaker header; volume knob/button; xiaozhi uses NoAudioCodecSimplex, so no I2C codec.",
+    "status": "corrected",
+    "corrected_claim": "The pins and the PCM5101 (U9 = PCM5101APWR) are correct. The schematic does name the amplifier: U8 = APA2068KAI-TRG, a stereo amp whose VOLUME pin goes to a 10K ±20% potentiometer (R57), so the 'volume' control is an analog knob. The speaker connector J10 is labelled as a 1.25 mm 4-pin horizontal SMD connector carrying both channels (VOLP/VOLN and VORP/VORN). The PCM5101 has no I2C link, so the claim of no I2C codec holds.",
+    "evidence_url": "https://github.com/WU-AetherCore/WU-ESP32-S3-Touch-LCD-1.85/blob/main/hardware/ESP32-S3-Touch-LCD-1.85.pdf",
+    "note": "Schematic mirror (secondary copy of a Waveshare document, dated 2024-09). The docs list says 'Volume adjustment knob'; the wiki says 'Speaker volume button'. The demo copy's PCM5101.h uses BCLK 48, LRCK 38, DOUT 47, MCLK NC. xiaozhi NoAudioCodecSimplex confirmed (secondary)."
+   },
+   {
+    "claim": "I2S MEMS mic: MIC_WS=GPIO2, MIC_SCK=GPIO15, MIC_SD=GPIO39. FAQ: the old MSM261S4030H0R was replaced with ICS-43434, circuitry adjusted, pickup position unchanged.",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "note": "FAQ text matches on the wiki and on https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ. The only schematic I could open still shows U6 = MSM261S4030H0R, so it predates the mic change. I found no schematic for the ICS-43434 revision."
+   },
+   {
+    "claim": "TF slot in SPI-style wiring: SD_D0/MISO=GPIO16, SD_CMD/MOSI=GPIO17, SD_SCK=GPIO14, SD_D3/CS=EXIO3.",
+    "status": "corrected",
+    "corrected_claim": "The pin numbers are right, but the slot is wired as an SDIO slot: TF-110 with nets SDIO_D0-D3, CMD and SCK. D1 and D2 are listed as NC (the schematic has 0R options), and D3/CS goes to EXIO3. Waveshare's own Arduino and ESP-IDF demos use SD_MMC in 1-bit mode (CLK=14, CMD=17, D0=16), not SPI. SPI mode with CS on EXIO3 should also work, since the docs give dual labels.",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "note": "Demo SD_Card.h / SD_MMC.c read from the third-party mirror (secondary): https://github.com/WU-AetherCore/WU-ESP32-S3-Touch-LCD-1.85/tree/main/references/waveshare-demo"
+   },
+   {
+    "claim": "MX1.25 2-pin 3.7 V Li-ion connector, any capacity. Charger chip not named. Charge LED and power LED. ME6217C33M5G 800 mA LDO.",
+    "status": "corrected",
+    "corrected_claim": "The LDO (U4 ME6217C33M5G, 800 mA max), the LEDs and the 3.7 V MX1.25 connector are confirmed; the FAQ says capacity is 'depending on customer needs'. The schematic names the charger: U1 = ETA6098, a switching charger with a 2.2 uH inductor (L1) and ISET resistor R8 = 82K. It labels the battery connector J1 'PH1.25 2P'. Battery voltage goes through a 200K/100K divider (×3) to net BAT_ADC = GPIO8 (ADC1_CH7). The Waveshare demo reads ADC1_CHANNEL_7, multiplies by 3.0, and divides by a ~0.99 calibration offset.",
+    "evidence_url": "https://github.com/WU-AetherCore/WU-ESP32-S3-Touch-LCD-1.85/blob/main/hardware/ESP32-S3-Touch-LCD-1.85.pdf",
+    "note": "Schematic and demo come from the third-party mirror (secondary). GPIO8 = ADC1_CH7 is confirmed by the Espressif datasheet. The charge current set by 82K is not computed here."
+   },
+   {
+    "claim": "Three buttons: RESET, BOOT, PWR (battery power supply control). The docs do not say how PWR works.",
+    "status": "corrected",
+    "corrected_claim": "There are three buttons (wiki items 22, 23 and 25; schematic Key1-3). The docs FAQ does explain PWR. Pressing it switches battery power on. Firmware must then hold SYS_EN high to stay powered. After that, PWR pulls SYS_OUT low, so firmware can read presses and long presses and drop SYS_EN to cut battery power.",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ",
+    "note": "FAQ entry 'Do I need to keep pressing the PWR button when using battery power?'. Wiki item 22 (RESET) wrongly repeats the speaker text, which is a copy error."
+   },
+   {
+    "claim": "(secondary) xiaozhi config.h: BOOT=GPIO0, PWR_BUTTON=GPIO6, PWR_Control=GPIO7. Firmware drives GPIO7 to keep or cut battery power on a long press of PWR.",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/78/xiaozhi-esp32/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/config.h",
+    "note": "Also confirmed by the schematic mirror (net Key_BAT = IO6, BAT_Control = IO7) and by Waveshare's demo PWR_Key.h (PWR_KEY_Input_PIN 6, PWR_Control_PIN 7). The demo sets GPIO7 high at boot if PWR is held, and Shutdown() drives it low. xiaozhi toggles GPIO7 after a 5 s long press."
+   },
+   {
+    "claim": "USB-C goes to native USB (DN=GPIO19, DP=GPIO20); no USB-UART bridge. UART header TXD=GPIO43, RXD=GPIO44.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "note": "The docs 'USB Interfaces' table lists 5V/GND/DN(GPIO19)/DP(GPIO20). The schematic shows Type-C to IO19/IO20 through 22R resistors and no bridge IC. The board's Arduino entry has VID:PID 0x303a:0x8290."
+   },
+   {
+    "claim": "Onboard ceramic antenna plus IPEX1 connector for an external antenna.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "note": "Switching to the external antenna needs a resistor moved ('via resoldering an onboard resistor'). The schematic shows J6 = U.FL-R IPEX 1."
+   },
+   {
+    "claim": "Touch version is 55.0 x 55.0 mm; the non-touch wiki gives 49.95 x 48.08 mm; the product page claims one shared outline.",
+    "status": "corrected",
+    "corrected_claim": "Both values are confirmed: 55.0 (H) x 55.0 (V) mm on the touch wiki and docs, and 49.95 (H) x 48.08 (V) mm on the ESP32-S3-LCD-1.85 wiki. The product page does not claim a shared outline. Its 'outline dimensions' section shows a separate drawing for each version.",
+    "evidence_url": "https://www.waveshare.com/wiki/ESP32-S3-LCD-1.85",
+    "note": "Touch value: https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85"
+   },
+   {
+    "claim": "SKU 28514 (touch); variants ESP32-S3-LCD-1.85 and ESP32-S3-Touch-LCD-1.85. The 1.85B has an aluminium badge, ES8311+ES7210, dual mics, BQ27220 and CST816S. The 1.85C is a 58 mm puck/speaker box with MP1605GTF-Z and touch on GPIO10/11.",
+    "status": "corrected",
+    "corrected_claim": "SKU 28514 (touch) and 28511 (non-touch) are confirmed. The 1.85B facts are confirmed (CNC aluminium badge, ES8311, ES7210, dual mics, BQ27220, CST816S), and its pin map is completely different: touch and everything else on GPIO10/11, LCD_RST=GPIO3, 4-bit SDMMC, RTC_INT=GPIO6. The 1.85C MP1605GTF-Z (3.3 V 2 A) is confirmed. Its '58 mm puck' size and 'touch on GPIO10/11' are unverified, and the 1.85C pin-differences table lists GPIO10/11 as NC on V1.",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85B",
+    "note": "1.85C: https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85C. Do not use 1.85B or 1.85C example code on this board."
+   },
+   {
+    "claim": "A V1 to V2 change is documented only for the 1.85C (Rev2.0 shown on silkscreen, boot screen and a V2 sticker; ES8311 + NS4150B + ES7210 replace PCM5101APWR + NS8002; GPIO2 = MCLK, GPIO15 = PA_CTRL, GPIO10/11 = I2C; V1 discontinued, V2 from 30 Jan 2026). The plain 1.85 docs mention no Rev2.x.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85C",
+    "note": "I checked the plain 1.85 English docs and FAQ, the Chinese docs (docs.waveshare.net) and the wiki. Their only version note is the MSM261S4030H0R to ICS-43434 mic swap. A web search for 'Rev2.1' on this board found nothing."
+   },
+   {
+    "claim": "The official schematic on files.waveshare.com was unreachable. Demos are on Google Drive (id 1sOXcEqyUIieougwPozj5q5Z8X1xILjIs). waveshareteam has repos for 1.85B, 1.85C and the 1.85inch module, but none for the plain 1.85.",
+    "status": "corrected",
+    "corrected_claim": "These facts hold: files.waveshare.com also failed the TLS handshake from here, the Drive link is the official demo package, and the GitHub search finds waveshareteam repos only for 1.85B, 1.85C and 1.85inch-Touch-LCD-Module. Part numbers can still be read, though: the third-party repo WU-AetherCore/WU-ESP32-S3-Touch-LCD-1.85 mirrors the schematic PDF and Waveshare's Arduino and ESP-IDF demo sources (secondary).",
+    "evidence_url": "https://github.com/WU-AetherCore/WU-ESP32-S3-Touch-LCD-1.85",
+    "note": "Treat the mirror as a secondary source. It has not been compared byte-for-byte with Waveshare's server copy."
+   }
+  ],
+  "missing": [
+   "Arduino settings. The official arduino-esp32 core has a board entry 'Waveshare ESP32-S3-Touch-LCD-1.85'; the wiki says to use it from core 3.0.7. It fixes 16MB QIO flash, enables OPI PSRAM by default, and defaults to USB Mode 'Hardware CDC and JTAG' with USB CDC On Boot = Disabled. Serial.print over USB therefore needs CDC On Boot set to Enabled. Its default partition is 'ESP SR 16M (3MB APP/6MB SPIFFS/3.9MB MODEL)'. Waveshare names 'ESP SR 16M (3MB APP/7MB SPIFFS/2.9MB MODEL)' for speech demos, or '16M Flash (3MB APP/9.9MB FATFS)'. Source: https://raw.githubusercontent.com/espressif/arduino-esp32/master/boards.txt and https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Arduino",
+   "Arduino core version conflict. The new docs say esp32 core '3.0.2 ≤ Version ≤ 3.1.1'; the old wiki says '3.0.2 and above'. Required libraries are LVGL v8.3.10 and ESP32-audioI2S v2.0.0, both installed offline from the demo package. ESP-IDF needs v5.3.1 or later, and the FAQ says to downgrade to v5.3.2 if the board reset-loops after flashing.",
+   "Arduino variant trap. pins_arduino.h for this board defines the default SPI pins as SS=34, MOSI=35, SCK=36, MISO=37. Those pins belong to the Octal PSRAM (datasheet Table 2-14; schematic 'Internal occupancy'), so always pass explicit pins to SPI.begin(). The default Wire pins (SDA=11, SCL=10) are the main sensor bus. Touch needs a second bus on GPIO1/3. Source: https://raw.githubusercontent.com/espressif/arduino-esp32/master/variants/waveshare_esp32_s3_touch_lcd_185/pins_arduino.h",
+   "Battery voltage sensing: GPIO8 (ADC1_CH7) through a 200K/100K divider, so multiply by 3. The schematic mirror and Waveshare demo BAT_Driver agree. The original finding left this out.",
+   "BOM drift. The only schematic available (dated 2024-09-18) shows W25Q128JVSI flash and the old MSM261S4030H0R mic. This board's flash reports manufacturer 0x20 (XMC), so a 'rev 2.1' unit already differs from that schematic. No schematic for rev 2.x was found.",
+   "Strapping pins used by peripherals: GPIO45 and GPIO46 (straps for VDD_SPI voltage and boot/ROM-print, per the datasheet) are LCD_SDA1 and LCD_SDA0, and GPIO3 (the JTAG-source strap) is TP_SCL. Do not load these pins externally at reset.",
+   "Few free GPIOs. Everything except GPIO43/44 (UART header) is used on board. In the schematic text, GPIO12/GPIO13 appear only on test points (TP1/TP2) and as optional 0R mic routing. Treat that as unverified until the PDF is checked visually.",
+   "Speaker output is stereo-capable. The APA2068 drives a 4-pin 1.25 mm connector carrying L+ L- R+ R-, but Waveshare ships one 8 ohm 2 W 2030 speaker. The package also contains two SH1.0 4-pin ~100 mm cables (product page), which suggests the I2C and UART headers are SH1.0 4-pin. That connector type is inferred, not stated.",
+   "Rev 2.1 is still unexplained. No Waveshare page I could open mentions Rev2.x for the plain ESP32-S3-Touch-LCD-1.85, only for the 1.85C. Physical checks: the audio IC marking (PCM5101 or ES8311), the amp marking (APA2068 or NS4150B), whether there are one or two mics, and an I2C scan of GPIO10/11 (expect 0x20, 0x51, 0x6B; an ES8311 at 0x18 would mean a redesign) and of GPIO1/3 (expect 0x15).",
+   "ESP32-S3 GPIO19/20 (USB D-/D+) can be used as GPIO, but per the docs you then have to enter download mode manually (hold BOOT, then reset or plug in) for every flash. The same manual entry is the standard recovery when the port disappears.",
+   "The docs FAQ warns that the screen is glued to the backplate and that damage from prying it off cannot be repaired."
+  ]
+ },
+ "verify:software": {
+  "checked": [
+   {
+    "claim": "Officially supported environments: Arduino IDE and ESP-IDF only. Sub-pages are Resources, Arduino, ESP-IDF, AI Application Tutorials, Firmware Flashing and Erasing, and FAQ. PlatformIO, ESPHome and MicroPython are not mentioned.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "note": "The docs say it 'supports two development frameworks: Arduino IDE and ESP-IDF'. The navigation also has a 'Support' page (/Technical-Support). The Resources page is actually at /Resources-And-Documents; /Resources returns 404. PlatformIO, ESPHome and MicroPython appear neither in the docs nor on the product page (https://www.waveshare.com/esp32-s3-touch-lcd-1.85.htm)."
+   },
+   {
+    "claim": "Arduino core: current docs require esp32 by Espressif 3.0.2 <= version <= 3.1.1. The old wiki says '3.0.2 and above'. The latest arduino-esp32 release is 3.3.12 (2026-09-18).",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Arduino",
+    "note": "The old wiki table says '3.0.2 and above' (https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85). The GitHub releases API shows 3.3.12 published 2026-09-18 as the latest stable release. It also shows a 4.0.0-RC1 pre-release from 2026-09-23 (https://github.com/espressif/arduino-esp32/releases)."
+   },
+   {
+    "claim": "Board selection: the wiki says to select 'esp32s3 dev module'. With core 3.0.7+ you can pick 'Waveshare ESP32-S3-Touch-LCD-1.85' directly. The screenshot shows COM52 Serial Port (USB).",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "note": "I opened the screenshot ESP32-S3-LCD-1.85-demo-02.png: Arduino IDE 2.3.2, board 'Waveshare ESP32-S3-Touch-LCD-1.85', port 'COM52 Serial Port (USB)'. This guidance exists only on the old wiki; the new docs.waveshare.com Arduino page does not mention board selection. The board actually exists from core 3.0.6, not only 3.0.7 (see next item)."
+   },
+   {
+    "claim": "arduino-esp32 boards.txt defines waveshare_esp32_s3_touch_lcd_185. It was added by PR #10477 on 2024-10-17 and is present in tags 3.0.6, 3.0.7, 3.1.1 and master. The defaults, menus and variant pins are as listed in the finding.",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/espressif/arduino-esp32/master/boards.txt",
+    "note": "Checked raw boards.txt at the tags. The board is absent in 3.0.2 and 3.0.5 and present in 3.0.6, 3.0.7, 3.1.1 and master; 3.0.6 was released 2024-10-21. PR #10477 was merged 2024-10-17T11:31Z. Confirmed values: flash_size=16MB, psram_type=opi, usb_mode=1, cdc_on_boot=0, use_1200bps_touch=false. The first UploadMode is 'UART0 / Hardware CDC'. FlashMode labels are 'QIO 120MHz', 'QIO 80MHz', 'DIO 80MHz' and 'OPI 80MHz'. ESP SR is '3MB APP/7MB SPIFFS/2.9MB MODEL' in 3.0.6 and 3.1.1, and '3MB APP/6MB SPIFFS/3.9MB MODEL' in master. pins_arduino.h has VID 0x303a, PID 0x8290, product 'ESP32-S3-Touch-LCD-1.85', SCL 10, SDA 11, TX 43, RX 44 (https://raw.githubusercontent.com/espressif/arduino-esp32/master/variants/waveshare_esp32_s3_touch_lcd_185/pins_arduino.h). Caveat: the variant's default SPI pins (SS 34, MOSI 35, SCK 36, MISO 37) do not match this board (see missing)."
+   },
+   {
+    "claim": "Waveshare's Tools-menu screenshot shows ESP32S3 Dev Module, CDC On Boot Disabled, QIO 120MHz, 16MB, ESP SR 16M partition, OPI PSRAM, UART0/Hardware CDC, 921600 and Hardware CDC and JTAG. The image is reused from the 1.46 board.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/assets/images/ESP32-S3-Touch-LCD-1.46_Demo_2-2dab81d5a8e3280485f5d6025b3a0566.webp",
+    "note": "I opened the image on the Arduino page; every value matches, and the file name and the 'Display_SPD201' tab are visible. There are two red boxes: (Events Run On, Flash Mode, Flash Size) and (Arduino Runs On, USB Firmware MSC On Boot, Partition Scheme, PSRAM). The screenshot shows Arduino IDE 2.2.1 and COM9. It sits under '3. Arduino Project Parameter Settings', which only gives the partition rule in text."
+   },
+   {
+    "claim": "Partition rule: 'ESP SR 16M (3MB APP/7MB SPIFFS/2.9MB MODEL)' if the sketch has a speech model, otherwise '16M Flash (3MB APP/9.9MB FATFS)' or another suitable scheme.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Arduino",
+    "note": "The same text is on the old wiki. On cores newer than 3.1.1 (master), the ESP SR entry is renamed to '6MB SPIFFS/3.9MB MODEL', so the exact string Waveshare gives will not be found there."
+   },
+   {
+    "claim": "USB CDC On Boot must be enabled for Serial over the native USB, per Waveshare's FAQ and wiki and Espressif's troubleshooting guide. This conflicts with the screenshot and the core default (Disabled).",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ",
+    "note": "The FAQ says 'For boards with a direct USB connection, the printf function works... To use Serial... enable the USB CDC On Boot option or declare an HWCDC object.' The quoted line 'If the ESP32S3 mainboard only has a USB port, you need to enable USB CDC' comes from the OLD wiki (https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85), not the FAQ. Its screenshot shows CDC On Boot 'Enabled'. Espressif's troubleshooting guide says the same: use -D ARDUINO_USB_CDC_ON_BOOT=1 with USB Mode 'Hardware CDC and JTAG' (-D ARDUINO_USB_MODE=1) (https://docs.espressif.com/projects/arduino-esp32/en/latest/troubleshooting.html)."
+   },
+   {
+    "claim": "Espressif's ESP32_Display_Panel (latest v1.0.4, 2025-09-23) supports the 1.85 (QSPI ST77916 360x360, I2C CST816). Its recommended settings are ESP32S3 Dev Module, OPI, QIO 80MHz, 16MB, CDC On Boot Enabled and '16M Flash (3MB)'.",
+    "status": "verified",
+    "evidence_url": "https://github.com/esp-arduino-libs/ESP32_Display_Panel/blob/master/docs/board/board_waveshare.md",
+    "note": "Confirmed in board_waveshare.md and the releases API (v1.0.4 published 2025-09-23). The board header BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85.h uses: touch CST816S on I2C host 1 with SCL 3, SDA 1, INT 4; TCA95xx expander at 0x20 on SCL 10 / SDA 11; backlight on GPIO5 (PWM); and a single fixed ST77916 vendor init sequence. It has no panel-variant detection (see missing)."
+   },
+   {
+    "claim": "Required libraries: LVGL v8.3.10 and ESP32-audioI2S-master v2.0.0, both installed offline from the demo's Arduino\\libraries folder. Waveshare warns about LVGL v8/v9 incompatibility.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Arduino"
+   },
+   {
+    "claim": "Switching the speech model means replacing esp32-hal-sr.c under ...esp32\\3.0.2\\libraries\\ESP_SR\\src and srmodels.bin under ...idf-release_v5.1-bd2b9390ef\\esp32s3\\esp_sr. The default is English, wake word 'hi esp'. The Windows username must be in English.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Arduino",
+    "note": "The paths, default and wake word are on both the new docs and the old wiki. The Chinese model's wake word is 'hi lexin'. The username warning ('the computer username must be in English') appears only on the old wiki (https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85). The new docs only warn about Chinese characters or spaces in the ESP-IDF install path. The new docs allow cores up to 3.1.1, but the model-swap paths are written only for 3.0.2 / IDF 5.1."
+   },
+   {
+    "claim": "On-board chips: ST77916 QSPI 360x360, CST816 touch, QMI8658, PCM5101, PCF85063, ESP32-S3R8 with 16MB flash, TCA9554PWR. I2C addresses 0x15, 0x20, 0x51. External I2C header on SCL GPIO10 / SDA GPIO11.",
+    "status": "corrected",
+    "corrected_claim": "The chips are correct (ESP32-S3R8 with 16MB flash and 8MB PSRAM, ST77916, CST816, QMI8658, PCM5101, PCF85063, TCA9554PWR, ME6217C33M5G LDO). The FAQ does list I2C addresses '0x15,0x20,0x51', but they are not all on the GPIO10/11 header bus. The CST816 touch (0x15) is on a separate bus: TP_SDA GPIO1, TP_SCL GPIO3, TP_INT GPIO4. The GPIO10/11 bus carries the TCA9554 (0x20), the PCF85063 (0x51) and the QMI8658, whose address the FAQ does not list. Waveshare's Resources page labels the touch datasheet 'CST816T'.",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "note": "The pin table on the main docs page lists TP_SDA GPIO1, TP_SCL GPIO3, TP_INT GPIO4 and IMU_SCL/SDA GPIO10/11. The FAQ (https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ) gives the address list. ESP32_Display_Panel and the XiaoZhi board config both put touch on a second I2C port (GPIO1/3)."
+   },
+   {
+    "claim": "The demo package ESP32-S3-Touch-LCD-1.85-Demo.zip is on Google Drive and files.waveshare.com. It contains Arduino\\libraries, LVGL_Arduino, ESP-IDF ESP32-S3-Touch-LCD-1.85-Test and a Firmware folder. The page and voice features are as described.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Firmware-Flashing",
+    "note": "The Google Drive link on the Resources page shows the file name 'ESP32-S3-Touch-LCD-1.85-Demo.zip' (https://drive.google.com/file/d/1sOXcEqyUIieougwPozj5q5Z8X1xILjIs/view). The folder contents come from what the docs pages say, not from opening the zip. files.waveshare.com fails the TLS handshake from this machine (WRONG_VERSION_NUMBER), and Drive needs a login. The page 1 and page 2 descriptions and the four backlight voice commands are the same on the Arduino and ESP-IDF pages."
+   },
+   {
+    "claim": "ESP-IDF v5.3.1+ is required. Setup is VS Code + ESP-IDF extension via the EIM installer, with screenshots using v5.5.2. Install path must have no Chinese characters or spaces. FAQ: if it keeps resetting, downgrade to v5.3.2. The speech model is selected in sdkconfig.defaults.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/ESP-IDF",
+    "note": "The FAQ line 'Downgrade ESP-IDF to v5.3.2' is confirmed (https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ). The old wiki table also says '>=5.3.1'."
+   },
+   {
+    "claim": "To restore factory/test firmware, use the Flash Download Tool with ESP32-S3 + USB, the COM port, BAUD 1152000, the bin at address 0x00, START, then reset. To erase, press START with no bin, then ERASE. If stuck at 'Waiting for power-on sync', hold BOOT and power-cycle.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Firmware-Flashing",
+    "note": "The FAQ says 'Flash the factory bin file'. The flashing page calls it 'test firmware'. ESP32-S3 + USB is given only 'as an example' in the screenshot."
+   },
+   {
+    "claim": "Upload-failure remedies from the FAQ: hold RESET more than 1 s; BOOT+RESET sequence; hold BOOT while plugging in USB. Continuous resetting means blank flash, so use BOOT+RESET. Wiki: press RESET after a download.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ",
+    "note": "The 'press the RESET button to run the demo' line is in the old wiki's Precautions section."
+   },
+   {
+    "claim": "USB-Serial/JTAG appears as COM* on Windows and auto-enters download mode. It disappears in deep sleep, may need a replug after light sleep, and disappears if GPIO19/20 are reconfigured. Recovery is GPIO0 (BOOT).",
+    "status": "verified",
+    "evidence_url": "https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/usb-serial-jtag-console.html",
+    "note": "BOOT = GPIO0 is confirmed by BOOT_BUTTON_GPIO GPIO_NUM_0 in the XiaoZhi board config (https://github.com/78/xiaozhi-esp32/blob/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/config.h). Waveshare's own USB-header table warns that using DN/DP (GPIO19/20) as GPIO means entering download mode before every flash."
+   },
+   {
+    "claim": "Espressif's CDC flashing tutorial: enter download mode, select the new USB port, reset manually after the first flash; later uploads are automatic with CDC On Boot Enabled + UART0/Hardware CDC. The PID 0x8290 TinyUSB identity explains COM number changes.",
+    "status": "verified",
+    "evidence_url": "https://docs.espressif.com/projects/arduino-esp32/en/latest/tutorials/cdc_dfu_flash.html",
+    "note": "The tutorial steps are confirmed, but the tutorial itself does not mention COM ports changing. The last sentence (that the variant's VID/PID for TinyUSB explains a different COM number) is the agent's own inference and is not stated in any source."
+   },
+   {
+    "claim": "Secondary: GitHub discussion #11327. COM port changes in USB-OTG (TinyUSB) mode. The maintainer recommends CDC On Boot Enabled + Hardware CDC and JTAG, and BOOT plus a RESET pulse for uploads in OTG mode.",
+    "status": "verified",
+    "evidence_url": "https://github.com/espressif/arduino-esp32/discussions/11327",
+    "note": "Secondary source. The maintainer is SuGlider. The discussion is about ESP32-S3 boards in general, not this board."
+   },
+   {
+    "claim": "Old vs new versions: MSM261S4030H0R mic replaced by ICS-43434 with adjusted circuitry, same pickup position. The comparison photo shows 'Rev2.0'. 'Rev 2.1' is not mentioned anywhere.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ",
+    "note": "I opened the comparison image (ESP32-S3-Touch-LCD-1.85-Version-Compare): the 'New Version' silkscreen is circled and reads 'Rev2.0'. A web search, the docs, the old wiki and the product page turn up no 'Rev2.1'."
+   },
+   {
+    "claim": "Waveshare lists XiaoZhi AI firmware v2.4.0 for the 1.85, shared with the non-touch 1.85, with no V1/V2 split. Sources: 78/xiaozhi-esp32 releases or waveshareteam/ESP32-AIChats.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/ESP32-AI-Tutorials",
+    "note": "The table row reads 'ESP32-S3-Touch-LCD-1.85 | v2.4.0 | XiaoZhi GitHub or Waveshare GitHub | -'. Upstream is newer: v2.5.2 (2026-10-11) ships asset 'v2.5.2_waveshare-esp32-s3-touch-lcd-1.85.zip' (https://github.com/78/xiaozhi-esp32/releases). The page says nothing about how to flash it or about reflashing to switch back to the demo; that part is inference."
+   },
+   {
+    "claim": "ESPHome has no mipi_spi preset for this board; the closest is ESP-VOCAT (1.43\" ST77916). Secondary: the HA forum and gist use ESP-IDF, qspi_dbi ST77916 custom init, LCD reset via pca9554 pin 1, CST816, and PSRAM fetch/rodata options. Gist from Feb 2025.",
+    "status": "verified",
+    "evidence_url": "https://esphome.io/components/display/mipi_spi/",
+    "note": "Secondary for the forum and gist parts. The gist was created 2025-02-14 and updated 2026-05-13 (gist API). It uses i2c_touch on GPIO1/3 and the main bus on GPIO11/10, with octal PSRAM at 120MHz. The HA thread started 2025-01-21 (https://community.home-assistant.io/t/waveshare-esp32-s3-lcd-1-85/833702). ESPHome's qspi_dbi page now warns the component 'has been made redundant' by mipi_spi and 'will be removed in a future release' (https://esphome.io/components/display/qspi_dbi/)."
+   },
+   {
+    "claim": "PlatformIO: there is no board JSON for the 1.85 in platformio or pioarduino; the only Waveshare LCD board is waveshare_esp32s3_touch_lcd_128. Secondary forum advice is pioarduino + N16R8 config, QIO/OPI and esp_sr_16.csv, which worked.",
+    "status": "verified",
+    "evidence_url": "https://community.platformio.org/t/help-adding-board-for-waveshare-esp32-s3-with-round-1-85-display/46062",
+    "note": "The GitHub API confirms the board lists. pioarduino also has waveshare_esp32_s3_zero.json, which is not an LCD board. Secondary: the advice was to use the 'ESP32-S3-WROOM-(1/1U)-N16R8' manifest from sivar2311/platformio_boards, and the original poster confirmed it on 2025-02-28. A later user (2025-11-19) reported only blank screens."
+   },
+   {
+    "claim": "Misc FAQ: Wi-Fi and BT work together but not while audio runs; works without a TF card; format the card FAT32; install the CH34x Mac driver if flashing fails on a Mac; the first compile is slow.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ",
+    "note": "The Mac driver link is CH34XSER_MAC.7z. This is generic Waveshare advice: the board uses the ESP32-S3 native USB-Serial/JTAG (as the user's esptool output confirms), so a CH34x driver should not be relevant. The old wiki also says that to keep Bluetooth while all on-board devices run, you should switch to a smaller audio library."
+   }
+  ],
+  "missing": [
+   "GPIO map from the main docs page (https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85). LCD QSPI: SDA0 GPIO46, SDA1 GPIO45, SDA2 GPIO42, SDA3 GPIO41, SCK GPIO40, CS GPIO21, TE GPIO18, RST EXIO2 (on the TCA9554), backlight GPIO5. Touch: SDA GPIO1, SCL GPIO3, INT GPIO4, RST EXIO1. TF card: D0/MISO GPIO16, CMD/MOSI GPIO17, SCK GPIO14, D3/CS EXIO3, D1/D2 not connected. IMU on GPIO10/11 with INT1 EXIO5 and INT2 EXIO4. RTC INT GPIO9. Mic I2S: WS GPIO2, SCK GPIO15, SD GPIO39. PCM5101: DIN GPIO47, LRCK GPIO38, BCK GPIO48. UART header TX43/RX44. USB DN/DP GPIO19/20 are also on a header. The findings give almost none of these.",
+   "LCD and touch resets are NOT on GPIOs. They go through the TCA9554 expander (0x20 on GPIO10/11), so any third-party driver must initialise the expander and toggle its P0/P1 before the panel will start. XiaoZhi toggles IO_EXPANDER_PIN_NUM_0|1 (https://github.com/78/xiaozhi-esp32/blob/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/esp32-s3-touch-lcd-1.85.cc), and ESPHome users use pca9554 pin 1 for the LCD reset.",
+   "Two ST77916 panel variants exist. Waveshare's XiaoZhi board code reads LCD register 0x04 at startup. If it returns 00 7F 7F 7F it uses the default init; if it returns 00 02 7F 7F it uses a different short 'vendor_specific_init_new' sequence (https://github.com/78/xiaozhi-esp32/blob/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/esp32-s3-touch-lcd-1.85.cc). ESP32_Display_Panel hard-codes one long init sequence. Unconfirmed risk: older or third-party code (ESP32_Display_Panel, ESPHome custom init) may show a black screen on a newer panel, which could matter for a 'rev 2.1' board. Whether the current demo zip includes this detection is unverified.",
+   "Power control: PWR button on GPIO6 and power-hold (SYS_EN) on GPIO7, which firmware must drive high to stay on when running from battery (XiaoZhi config.h, https://github.com/78/xiaozhi-esp32/blob/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/config.h). The Waveshare FAQ describes SYS_EN behaviour but does not give the GPIO numbers.",
+   "The arduino-esp32 variant pins_arduino.h for this board sets the default SPI pins to SS 34, MOSI 35, SCK 36, MISO 37. These are not the TF-card pins (14/16/17), and Espressif says GPIO33-37 are used by the in-package octal PSRAM on ESP32-S3R8 and are 'not recommended for other uses' (https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/gpio.html). Sketches must pass pins explicitly to SPI or SD instead of relying on the defaults.",
+   "There is no official waveshareteam GitHub repo for the plain ESP32-S3-Touch-LCD-1.85. The GitHub API lists only ESP32-S3-Touch-LCD-1.85B, ESP32-S3-Touch-LCD-1.85C and 1.85inch-Touch-LCD-Module. The demo is distributed only as a zip (Google Drive / files.waveshare.com). The open-source 78/xiaozhi-esp32 board folder 'waveshare/esp32-s3-touch-lcd-1.85' is the only browsable Waveshare-written driver code for this board that I found. Do not confuse the 1.85B/1.85C repos or docs with this board.",
+   "Waveshare's docs list both a touch (SKU 28514) and a non-touch ESP32-S3-LCD-1.85 model, and also separate 1.85B and 1.85C products. Users should check that the sidebar shows the plain 'ESP32-S3-Touch-LCD-1.85' page, because the 1.85C has V1/V2 variants with different audio chips.",
+   "arduino-esp32 4.0.0-RC1 (pre-release, 2026-09-23) exists in addition to 3.3.12. Waveshare's demo is tied to 3.0.2-3.1.1 with LVGL 8.3.10, so newer cores are untested.",
+   "QMI8658 I2C address: the IMU is on the GPIO10/11 bus but is missing from the FAQ address list (0x15, 0x20, 0x51). I could not confirm its address (commonly 0x6B/0x6A) from a primary Waveshare source.",
+   "Schematic PDF (https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf) and the demo zip could not be opened: files.waveshare.com fails TLS from this machine. The USB wiring, the battery ADC pin, the TF-card mode (SPI vs 1-bit SDMMC) and the rev 2.0 vs 2.1 schematic differences remain unverified."
+  ]
+ },
+ "research:revisions": {
+  "findings": [
+   {
+    "topic": "Official revision note (1.85 / 1.85 non-touch)",
+    "claim": "Waveshare documents only one hardware change between the 'old' and 'new' ESP32-S3-Touch-LCD-1.85. The MSM261S4030H0R I2S MEMS mic was discontinued and replaced by an ICS-43434, with 'related circuitry adjusted' and the pickup position unchanged. No other component changes are listed. The FAQ entry was added to the wiki on 2025-09-11 (rev 105813). The same FAQ appears on the non-touch ESP32-S3-LCD-1.85 wiki page and on the new docs site.",
+    "source_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Revision naming / silkscreen",
+    "claim": "In Waveshare's official old-vs-new comparison photo, the old board has no revision marking under the 'ESP32-S3-Touch-LCD-1.85' silkscreen. The new board reads 'ESP32-S3-Touch-LCD-1.85 Rev2.0'. Both photos show the same layout (PCM5101A, APA2068, TF slot, connectors). The visible difference is the MIC spot: the old board has a top-mounted mic package, the new one shows only a small acoustic hole. Waveshare does not call the old board 'V1.0' for this model; it only says 'old version'.",
+    "source_url": "https://www.waveshare.com/w/upload/a/a7/ESP32-S3-Touch-LCD-1.85-Version-VSpng.jpg",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Rev 2.1 specifically",
+    "claim": "No Waveshare page I opened mentions 'Rev2.1' for any 1.85 board. This covers the EN wiki, the EN and CN docs (overview, FAQ, Resources), the product page, the 1.85C/1.85B docs and the 1.85C GitHub repo. The newest revision Waveshare documents for the 1.85 is 'Rev2.0', which marks the ICS-43434 mic change. Rev 2.1 is an undocumented later PCB spin.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ",
+    "confidence": "medium",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Old (pre-Rev2.0) schematic contents",
+    "claim": "The only schematic I could read is the Wayback copy of the official PDF. Its PDF metadata is dated 2024-09-18, and both Wayback captures (2025-04-15 and 2025-08-22) have the same digest. Parts: ESP32-S3R8, W25Q128JVSI flash, ST77916 panel on a 39-pin FPC with touch on TP_SCL/TP_SDA/TP_INT/TP_RST, TCA9554PWR expander, PCM5101APWR DAC, APA2068KAI-TRG amplifier, MSM261S4030H0R mic, QMI8658C IMU, PCF85063ATL RTC, ETA6098 charger, ME6217C33M5G LDO. The mic sits on its own I2S bus (MIC_WS/SCK/SD). L/R and EN are tied to 3V3 through 0R resistors (R61, R55), so the mic outputs on the RIGHT slot. NC 0R options exist to share the speaker I2S bus or drive EN/LR from GPIO12/GPIO13.",
+    "source_url": "http://web.archive.org/web/20250822181841/https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf",
+    "confidence": "high",
+    "source_kind": "schematic"
+   },
+   {
+    "topic": "Current official pin map (applies to all 1.85 revisions as published)",
+    "claim": "The docs list a single pin map with no per-revision variants. LCD QSPI: SDA0-3 = GPIO46/45/42/41, SCK GPIO40, CS GPIO21, TE GPIO18, RST = EXIO2, BL GPIO5. Touch: SDA GPIO1, SCL GPIO3, INT GPIO4, RST = EXIO1. TF: D0 GPIO16, CMD GPIO17, SCK GPIO14, D3/CS = EXIO3. IMU/RTC I2C on GPIO10/11 with RTC_INT GPIO9 and IMU INT1/INT2 = EXIO5/EXIO4. Mic: WS GPIO2, SCK GPIO15, SD GPIO39. PCM5101: DIN GPIO47, LRCK GPIO38, BCK GPIO48. FAQ lists the onboard I2C addresses as 0x15, 0x20 and 0x51. The 'Version Description' section only distinguishes the touch and non-touch versions and notes that colors may differ between versions.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Demo packages per version",
+    "claim": "Waveshare publishes one demo package for ESP32-S3-Touch-LCD-1.85, with no separate old/new or Rev2.x package. The file is 'ESP32-S3-Touch-LCD-1.85-Demo.zip' (192 MB) on Google Drive id 1sOXcEqyUIieougwPozj5q5Z8X1xILjIs. On 2025-09-18 (wiki rev 106096), one week after the mic FAQ was added, the wiki link moved from files.waveshare.com/.../ESP32-S3-Touch-LCD-1.85-Demo.zip to that Drive file. Whether the package content changed for Rev2.0 is not stated. The non-touch ESP32-S3-LCD-1.85 has its own schematic and Drive package (id 1m4gzP47vtY57U4GV-e-k0dgPO_gMlUxB).",
+    "source_url": "https://www.waveshare.com/w/api.php?action=compare&fromrev=105813&torev=106096&format=json",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Wiki moved to docs site",
+    "claim": "Since 2026-09-28 (wiki rev 111227), the EN wiki page has been a meta-refresh redirect to docs.waveshare.com/ESP32-S3-Touch-LCD-1.85. The docs site carries the same FAQ, resources and pin map. The CN equivalent is docs.waveshare.net/ESP32-S3-Touch-LCD-1.85, which has the same old/new FAQ in Chinese.",
+    "source_url": "https://www.waveshare.com/w/api.php?action=compare&fromrev=110768&torev=111227&format=json",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Toolchain requirements (official)",
+    "claim": "Arduino requires esp32 by Espressif Systems with 3.0.2 <= version <= 3.1.1. ESP-IDF requires V5.3.1 or above. The official FAQ says that if an ESP-IDF program keeps resetting after flashing, downgrade ESP-IDF to v5.3.2. The FAQ also says Wi-Fi and Bluetooth cannot be used together while audio is active, because audio uses a lot of memory.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Arduino",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "LCD panel batches (affects old code on newer boards)",
+    "claim": "Waveshare's own ST77916 init code reads panel register 0x04 at startup. If it returns 00 7F 7F 7F ('case 1'), it uses the driver's default init. If it returns 00 02 7F 7F ('case 2'), it applies a different vendor table, vendor_specific_init_new. So at least two LCD panel batches ship, and code without this detection or the right table can give a bad image. The excerpt is from the official 1.85C Arduino LVGL example.",
+    "source_url": "https://raw.githubusercontent.com/waveshareteam/ESP32-S3-Touch-LCD-1.85C/HEAD/Arduino/examples/01_lvgl_example/Display_ST77916.cpp",
+    "confidence": "high",
+    "source_kind": "github"
+   },
+   {
+    "topic": "LCD panel batches on the plain 1.85",
+    "claim": "The xiaozhi-esp32 board support for esp32-s3-touch-lcd-1.85 (non-C) contains the same register-0x04 detection and case-2 table. It was added on 2025-03-07 (commit bdc4da06, PR #249), before Rev2.0 appeared. So the panel-batch split is independent of the PCB Rev marking.",
+    "source_url": "https://github.com/78/xiaozhi-esp32/blob/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/esp32-s3-touch-lcd-1.85.cc",
+    "confidence": "high",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Library change for new LCD batch",
+    "claim": "ESP32_Display_Panel PR #239 (2025-09-18, by ggc121238) says the screen manufacturer changed the panel and new init code is needed. It hard-codes the 'new' vendor init table (identical, 184 commands, to Waveshare's vendor_specific_init_new) into BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85.h. PR #238 also set the color-invert bit for this board. Both shipped in v1.0.4 (released 2025-09-23). Library versions up to v1.0.3 use the default init; v1.0.4+ always uses the new table, with no auto-detect.",
+    "source_url": "https://github.com/esp-arduino-libs/ESP32_Display_Panel/pull/239",
+    "confidence": "high",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Known issue on Rev2.0 1.85 (secondary)",
+    "claim": "[secondary/user report] A user with 'esp32-s3-touch-lcd-1.85 Rev2.0' saw lines and stripes with the generic Arduino_GFX ST77916 init. It was fixed by using Waveshare's vendor register table from the official demo and lowering the QSPI clock from 40 MHz to 10 MHz. PR #2 in the same repo describes Waveshare's demo detecting two panel batches.",
+    "source_url": "https://github.com/Picklepc/R48Display/issues/1",
+    "confidence": "medium",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Mic compatibility of old code on Rev2.x",
+    "claim": "xiaozhi-esp32 keeps a single config for the plain 1.85 with no version switch. It uses a separate mic I2S bus (WS GPIO2, SCK GPIO15, DIN GPIO39, RIGHT slot) and a separate speaker bus (BCLK 48, LRCK 38, DOUT 47). The 1.85C has an explicit VERSION_1_0/VERSION_2_0 Kconfig choice (default 2.0). This suggests mic code for the 1.85 did not need changes for the ICS-43434, but that is an inference, not a Waveshare statement.",
+    "source_url": "https://github.com/78/xiaozhi-esp32/blob/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/config.h",
+    "confidence": "medium",
+    "source_kind": "github"
+   },
+   {
+    "topic": "ICS-43434 wiring reference (from sibling board)",
+    "claim": "In Waveshare's ESP32-S3-Touch-LCD-1.85C V1 schematic, which also uses an ICS-43434, the mic's LR pin (MIC_LRCK_U) is tied to 3V3 through a 0R. That means right-channel output, the same slot as the old 1.85's MSM261. This is only an analogy for the 1.85 Rev2.x, whose schematic I could not read.",
+    "source_url": "https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85C/blob/main/hardware/schematics/ESP32-S3-Touch-LCD-1.85C-V1--Schematic.pdf_.pdf",
+    "confidence": "medium",
+    "source_kind": "schematic"
+   },
+   {
+    "topic": "ESP32-S3-Touch-LCD-1.85C: V1 vs V2 (different product)",
+    "claim": "Waveshare: 1.85C V1 was discontinued and replaced by V2 from 2026-01-30. How to identify V2: the factory firmware shows 'Rev2.0', the PCB has a Rev2.0 silkscreen, and the case has a V2 QC sticker. Parts, V1 -> V2: DAC PCM5101APWR -> ES8311 codec; amplifier NS8002 -> NS4150B; no ADC -> ES7210; MEMS digital mic -> analog dual mics with echo-cancellation circuit. Pins: GPIO2 MIC_WS -> I2S_MCLK, GPIO15 MIC_SCK -> PA_CTRL, GPIO10/11 NC -> I2C SCL/SDA. GPIO38/39/47/48 are unchanged. Old 1.85C audio code does not work on 1.85C V2. Like the 1.85, the 1.85C uses a 'Rev2.0' silkscreen, so check the 'C' suffix before applying 1.85C notes.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85C",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "1.85C schematics (V1/V2) vs 1.85",
+    "claim": "The official 1.85C repo ships separate V1 and V2 schematics. V1 is titled 'ESP32-S3-Touch-LCD-1.85C-Box' (PDF date 2025-02-28) and has ICS-43434, PCM5101APWR, NS8002. V2 (PDF date 2026-01-30) has ES8311 (I2C 0x18), ES7210, NS4150B. Neither 1.85C schematic contains a QMI8658 IMU. Both use an MP1605GTF-Z buck (3.3V/2A) instead of the 1.85's ME6217C33M5G LDO. The 1.85C repo puts touch on the shared I2C (I2C_SCL_PIN 10 / I2C_SDA_PIN 11), while the 1.85 uses GPIO1/GPIO3. A board with a QMI8658, an ME6217 LDO and touch on GPIO1/3 is a plain 1.85, not a 1.85C.",
+    "source_url": "https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85C",
+    "confidence": "high",
+    "source_kind": "schematic"
+   },
+   {
+    "topic": "ESP32-S3-Touch-LCD-1.85B (different product)",
+    "claim": "The 1.85B (SKU 34554 / 34556-EN) is a badge in a CNC aluminum case. Its audio chain is ES8311 codec + ES7210 echo-cancellation ADC with dual mics, plus a BQ27220 battery gauge and a QMI8658. Pins differ from the 1.85: CST816S touch at 0x15 on SCL GPIO10/SDA GPIO11, LCD RST on GPIO3, BL GPIO5. Code for the 1.85 is not drop-in for the 1.85B.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85B",
+    "confidence": "high",
+    "source_kind": "official"
+   },
+   {
+    "topic": "Community confusion about 'V2' naming (secondary)",
+    "claim": "[secondary/forum] On the HA forum, 1.85C V2 owners report the old YAMLs fail on V2, which has a 'completely different adc/dac config' (ES8311/ES7210). V2 uses a shared I2S bus, so ESPHome cannot run mic and speaker at the same time. Wake word worked on ESPHome 2026.4.0 but not 2026.3.3. A maintainer notes the community earlier used 'V2' for a 1.85C display-panel change (ESPHome model JC3636W518V2) before Waveshare's own V2. Non-C 1.85 configs in the same thread use mic GPIO2/15/39 with channel: right, and speaker 38/48/47.",
+    "source_url": "https://community.home-assistant.io/t/waveshare-esp32-s3-lcd-1-85/833702",
+    "confidence": "medium",
+    "source_kind": "forum"
+   },
+   {
+    "topic": "ESPHome panel models (secondary)",
+    "claim": "[secondary] ESPHome mipi_spi added a 'JC3636W518V2' model (PR #10392, merged 2025-08-24) for a second version of the 360x360 ST77916 Guition panel. The community uses it for Waveshare 1.85/1.85C boards whose panel needs the alternate vendor table.",
+    "source_url": "https://github.com/esphome/esphome/pull/10392",
+    "confidence": "medium",
+    "source_kind": "github"
+   },
+   {
+    "topic": "Flash chip on the user's rev 2.1 vs schematic",
+    "claim": "The old 1.85 schematic specifies Winbond W25Q128JVSI. Its JEDEC ID is 0xEF 0x40 0x18 (Linux spi-nor winbond.c: SNOR_ID(0xef, 0x40, 0x18) 'w25q128'). The user's esptool reports manufacturer 0x20, device 0x4018. So the rev 2.1 board most likely carries a second-source 16MB quad flash from another vendor. This should not matter for normal use; esptool detected 16MB quad.",
+    "source_url": "https://github.com/torvalds/linux/blob/master/drivers/mtd/spi-nor/winbond.c",
+    "confidence": "medium",
+    "source_kind": "other"
+   },
+   {
+    "topic": "Touch IC (no documented revision change)",
+    "claim": "The 1.85 docs name the touch controller CST816 (touch version only). The resources link the CST816S datasheet and register doc, and the I2C address is 0x15. No Waveshare source reports a touch IC change between old, Rev2.0 or later boards. On the 1.85 the touch IC is on the LCD FPC (TP-SCL/TP-SDA/TP-INT/TP-RESET pins of the 39-pin connector), so it does not appear on the mainboard BOM.",
+    "source_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Resources-And-Documents",
+    "confidence": "high",
+    "source_kind": "official"
+   }
+  ],
+  "open_questions": [
+   "What exactly changed in 'Rev 2.1' relative to Rev2.0? Waveshare publishes nothing about Rev2.1 for the plain 1.85. Likely candidates include a second-source flash (esptool shows mfr 0x20, not Winbond 0xEF), but this is unconfirmed.",
+   "Is the schematic now at files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf (or the CN copy at waveshare.net/w/upload/f/f2/ESP32-S3-Touch-LCD-1.85.pdf) updated for Rev2.x with the ICS-43434? From this network both Waveshare file hosts failed TLS, and the Wayback copies (last 2025-08-22) are the old MSM261 version.",
+   "On Rev2.x, which channel does the ICS-43434 output on, LEFT or RIGHT? The sibling 1.85C V1 ties LR to 3V3 (right), but the 1.85 Rev2.x circuit is unverified. If the mic records silence, try switching the I2S slot.",
+   "Does the current 192 MB Google Drive demo package (re-linked 2025-09-18) contain the register-0x04 panel auto-detect for the 1.85, and was its mic code changed for the ICS-43434? I did not download it, because a file download needs your permission. A quick check is to flash the demo and look for 'Register 0x04 data' / 'case 1/2' in the serial log.",
+   "Which LCD panel batch does this specific rev 2.1 board have? Read ST77916 reg 0x04: 00 7F 7F 7F means the default init, 00 02 7F 7F means the 'new' vendor table. Note ESP32_Display_Panel v1.0.4+ always uses the new table.",
+   "Is the user's board definitely the plain 1.85 and not a 1.85C? A silkscreen without a 'C', a QMI8658 IMU, a PWR button, no 28-pin 1.27mm header and touch on GPIO1/3 all point to the plain 1.85. The user should confirm visually."
+  ]
+ },
+ "verify:pinout": {
+  "checked": [
+   {
+    "claim": "Board identity: ESP32-S3R8 (8MB in-package PSRAM), 16MB flash, ST77916 360x360 QSPI LCD, CST816 touch, QMI8658 IMU, PCF85063 RTC, PCM5101 DAC, TCA9554PWR expander. This matches the esptool readout.",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "note": "Confirmed by the wiki, docs.waveshare.com and the product page, which says QMI8658C. I opened the official schematic through a Wayback copy (https://web.archive.org/web/20250822181841id_/https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf; PDF date 2024-09-18). It also shows a W25Q128JVSI flash, an APA2068KAI-TRG amplifier, an ETA6098 charger, an ME6217C33M5G LDO and a 40MHz crystal. The esptool flash manufacturer ID 0x20 suggests this unit has a different flash vendor than the schematic's Winbond part. I did not confirm that, and it does not matter for use."
+   },
+   {
+    "claim": "LCD QSPI pins: CS=21, SCK=40, D0=46, D1=45, D2=42, D3=41, TE=18. LCD_RST is on EXIO2. Backlight=GPIO5.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "note": "The wiki gives the same pins. The schematic netlist matches too: IO46/45/42/41 go to LCD_SDA0-3, IO40 to LCD_SCK, IO21 to LCD_CS, IO18 to LCD_TE, IO5 to BL_PWM (low-side MOSFET, so active high), and LCD_RST is Extend_IO2 = TCA9554 pin 5 (P1)."
+   },
+   {
+    "claim": "ESP32_Display_Panel board file: QSPI SCK 40, DATA 46/45/42/41, CS 21, 80MHz, LCD_RST_IO -1, LCD reset through expander pin index 1 (low 10ms, then high), backlight GPIO5 active high.",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/esp-arduino-libs/ESP32_Display_Panel/master/src/board/supported/waveshare/BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85.h",
+    "note": "Author line: '@martinroger & Waveshare@H-sw123'. After setting the pin high the code waits 100ms. The file also sets COLOR_INEVRT_BIT=1 and uses QSPI host 1."
+   },
+   {
+    "claim": "Touch (CST816) is on its own I2C bus: TP_SDA=GPIO1, TP_SCL=GPIO3, TP_INT=GPIO4, TP_RST=EXIO1.",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "note": "The schematic netlist agrees: IO1 goes to J4 pin 35 (TP-SDA), IO3 to J4 pin 34, IO4 to J4 pin 37 with a 10K pull-up (R65), and TP_RST is Extend_IO1 = TCA9554 P0. The main PCB has no pull-up resistors on TP_SDA/TP_SCL."
+   },
+   {
+    "claim": "Code puts touch on I2C host 1 at 400kHz (SDA 1, SCL 3, INT 4, RST -1), resets touch through expander pin index 0, and the CST816S address is 0x15.",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/esp-arduino-libs/ESP32_Display_Panel/master/src/drivers/touch/port/esp_lcd_touch_cst816s.h",
+    "note": "The board file sets TOUCH_I2C_ADDRESS to 0, which means 'driver default'. The driver header defines ESP_LCD_TOUCH_IO_I2C_CST816S_ADDRESS (0x15). The touch reset is low 30ms, then high with a 50ms wait. The board file also enables internal pull-ups on the touch bus."
+   },
+   {
+    "claim": "A community copy of the demo, Touch_Driver/CST816.h, defines 0x15, SDA 1, SCL 3, INT 4, RST -1, port 1, 400kHz. Its reset toggles Set_EXIO(TCA9554_EXIO1).",
+    "status": "verified",
+    "evidence_url": "https://github.com/oxcdx/ESP32-S3-Touch-LCD-Display",
+    "note": "Secondary source (a community repo, not Waveshare). I checked main/Touch_Driver/CST816.h and the CST816.c reset at lines 154/156."
+   },
+   {
+    "claim": "The shared internal I2C bus is SCL=GPIO10, SDA=GPIO11, carrying the QMI8658, PCF85063 and TCA9554 and going to the 4-pin I2C header. Waveshare says these pins cannot be used as GPIO. The demo uses I2C port 0 at 400kHz.",
+    "status": "verified",
+    "evidence_url": "https://web.archive.org/web/20250822181841id_/https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf",
+    "note": "In the schematic, the IO10 and IO11 nets connect J7 (I2C header), U2 PCF85063, U10 QMI8658 and U11 TCA9554. They have on-board 10K pull-ups (R52/R53). The 'cannot be used as regular GPIO' wording is on the wiki. Port 0 at 400kHz is in oxcdx I2C_Driver.h (secondary); xiaozhi also uses port 0."
+   },
+   {
+    "claim": "Addresses on the GPIO10/11 bus: TCA9554 0x20, PCF85063 0x51, QMI8658 0x6B (0x6A alternate). The Espressif board file and xiaozhi also use TCA9554 at 0x20.",
+    "status": "verified",
+    "evidence_url": "https://github.com/oxcdx/ESP32-S3-Touch-LCD-Display",
+    "note": "The code values are confirmed. The schematic backs them up: TCA9554 A0/A1/A2 are tied to GND, which is 0x20 per TI's address table (https://www.ti.com/lit/ds/symlink/tca9554.pdf), and QMI8658 SDO/SA0 is tied to GND. xiaozhi uses ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_000."
+   },
+   {
+    "claim": "CONFLICT: the wiki I2C address list '0x15, 0x20, 0x51' leaves out the QMI8658, and 0x15 is on the separate touch bus. The 1.85C wiki has the same string, so it was probably copied.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ",
+    "note": "The same string appears in the 1.85 wiki FAQ, the 1.85 docs FAQ and the 1.85C wiki. That it was copied from the 1.85C page is an inference."
+   },
+   {
+    "claim": "Expander numbering is 1-based: EXIOn = TCA9554 P(n-1). Set_EXIO writes bit (0x01<<(Pin-1)). The ST77916 reset toggles EXIO2 low 10ms, then high 50ms.",
+    "status": "verified",
+    "evidence_url": "https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85C",
+    "note": "Confirmed in the official 1.85C repo files ESP-IDF/.../EXIO/TCA9554PWR.c and LCD_Driver/ST77916.c (function ST7701_Reset). The 1.85 schematic agrees: Extend_IO1 is U11 pin 4 (P0) and Extend_IO5 is pin 9 (P4)."
+   },
+   {
+    "claim": "TCA9554 map: EXIO1=TP_RST, EXIO2=LCD_RST, EXIO3=SD_D3/CS, EXIO4=IMU_INT2, EXIO5=IMU_INT1. EXIO6-8 are undocumented.",
+    "status": "verified",
+    "evidence_url": "https://web.archive.org/web/20250822181841id_/https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf",
+    "note": "The wiki and docs agree with this map. The schematic adds that EXIO6-EXIO8 (P5-P7) connect only to 10K pull-ups to 3V3 (R60/R59/R58), with nothing else on them. EXIO3 has a 10K pull-up (R33)."
+   },
+   {
+    "claim": "The demo's EXIO_Init() calls TCA9554PWR_Init(0x00), making all expander pins outputs, including the IMU INT lines. xiaozhi sets only P0|P1 as outputs and pulses them together.",
+    "status": "verified",
+    "evidence_url": "https://github.com/78/xiaozhi-esp32/blob/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/esp32-s3-touch-lcd-1.85.cc",
+    "note": "The official 1.85C TCA9554PWR.c has EXIO_Init -> TCA9554PWR_Init(0x00). xiaozhi drives P0|P1 high, low, high with 300ms gaps. The schematic shows QMI8658 INT1/INT2 wired directly to P4/P3. Per the TI datasheet the TCA9554 powers up with all pins as inputs, so a conflict can only start after the demo's init has run."
+   },
+   {
+    "claim": "The PCF85063 is on GPIO10/11 and RTC_INT goes to GPIO9 on the 1.85. On the 1.85C, RTC_INT goes to EXIO4.",
+    "status": "verified",
+    "evidence_url": "https://web.archive.org/web/20250822181841id_/https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf",
+    "note": "On the 1.85 schematic, IO9 goes to U2 pin 4 (INT). For the 1.85C, both the wiki and the V1 schematic (Extend_IO4 = RTC_INT) confirm EXIO4."
+   },
+   {
+    "claim": "Speaker DAC PCM5101: DIN=GPIO47, LRCK=GPIO38, BCK=GPIO48.",
+    "status": "verified",
+    "evidence_url": "https://web.archive.org/web/20250822181841id_/https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf",
+    "note": "In the schematic, IO47 goes to U9 pin 14 (DIN), IO48 to pin 13 (BCK) and IO38 to pin 15 (LRCK). The wiki and docs give the same pins."
+   },
+   {
+    "claim": "Demo PCM5101.h: I2S port 0, BCLK=48, WS=38, DOUT=47, MCLK=NC, DIN=NC, standard Philips framing, 16-bit mono. xiaozhi uses the same pins.",
+    "status": "corrected",
+    "corrected_claim": "Demo PCM5101.h uses I2S port 0 with BCLK=GPIO48, WS=GPIO38, DOUT=GPIO47 and MCLK/DIN=NC. Its fallback macro is 16-bit mono at 22.05kHz, but Audio_Init() actually configures Philips framing at 44.1kHz, 16-bit STEREO, then reconfigures the clock and slots for each file. xiaozhi uses the same pins (DOUT 47, BCLK 48, LRCK 38). In hardware, PCM5101 SCK, FMT, FLT and DEMP are tied to GND (no MCLK needed, I2S format) and XSMT is tied to 3V3 (always unmuted).",
+    "evidence_url": "https://github.com/oxcdx/ESP32-S3-Touch-LCD-Display",
+    "note": "The PCM5101.c Audio_Init uses I2S_STD_PHILIP_SLOT_DEFAULT_CONFIG(16BIT, STEREO) at 44100 Hz. The control-pin wiring comes from the schematic netlist."
+   },
+   {
+    "claim": "Mic: MIC_WS=GPIO2, MIC_SCK=GPIO15, MIC_SD=GPIO39. Waveshare says the MSM261S4030H0R was replaced by an ICS-43434 with adjusted circuitry.",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85",
+    "note": "The mic replacement text is in the wiki FAQ and the docs FAQ. The only schematic available (2024-09-18) still shows the old MSM261S4030H0R, with EN and L/R tied to 3V3 (right channel). GPIO12 and GPIO13 are optional, unpopulated EN and L/R routes. No schematic for the ICS-43434 revision of the 1.85 is published."
+   },
+   {
+    "claim": "Demo MIC_Speech: I2S_NUM_1, BCLK=15, WS=2, DIN=39, Philips framing, 32-bit, right slot only, 16kHz.",
+    "status": "verified",
+    "evidence_url": "https://github.com/oxcdx/ESP32-S3-Touch-LCD-Display",
+    "note": "Secondary source (community copy). Confirmed in MIC_Speech.h and MIC_Speech.c. The right slot matches the old schematic, where the mic L/R pin is tied to 3V3."
+   },
+   {
+    "claim": "TF card: D0/MISO=16, CMD/MOSI=17, SCK=14, D3/CS=EXIO3. SD_D1 and SD_D2 are NC.",
+    "status": "verified",
+    "evidence_url": "https://web.archive.org/web/20250822181841id_/https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf",
+    "note": "The wiki says SD_D1 NC and SD_D2 NC. In the schematic, card pins D1 and D2 go through 0R resistors to 10K pull-ups only and never reach the ESP32. D3 is on TCA9554 P2 with a 10K pull-up."
+   },
+   {
+    "claim": "SD runs in SDMMC 1-bit mode. 'Waveshare's ESP-IDF page says the demo supports SDMMC 1-bit.' Demo slot width=1 with CLK14/CMD17/D0 16. The Arduino example uses setPins(14,17,16) and begin(\"/sdcard\", true).",
+    "status": "corrected",
+    "corrected_claim": "The SD card runs in SDMMC 1-bit mode, and 4-bit mode is impossible in hardware because D1/D2 are not wired to the ESP32. Official 1.85C code uses slot_config.width=1 with CLK 14, CMD 17, D0 16, D1-D3 = -1 and internal pull-ups, and its Arduino example calls SD_MMC.setPins(14,17,16) and SD_MMC.begin(\"/sdcard\", true). I found no sentence on the Waveshare 1.85 ESP-IDF page (wiki or docs) saying 'SDMMC 1-bit', so that attribution is unsupported. D3/CS on EXIO3 has a 10K pull-up, and the TCA9554 output register defaults to 1, so it sits high both before and after the demo's init.",
+    "evidence_url": "https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85C",
+    "note": "The output register default 0xFF comes from the TI TCA9554 datasheet, Table 5."
+   },
+   {
+    "claim": "The stray '#define CONFIG_SD_Card_D3 21' in SD_MMC.h is unused; slot d3 = -1.",
+    "status": "verified",
+    "evidence_url": "https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85C",
+    "note": "The define is present in both the official 1.85C SD_MMC.h and the oxcdx 1.85 copy. Nothing in SD_MMC.c references it."
+   },
+   {
+    "claim": "Battery voltage is read on ADC1 channel 7 = GPIO8, with V = mV*3/1000/0.9945 (a 1/3 divider). The official 06_AnalogRead example reads analogRead(8) and multiplies by 3.",
+    "status": "verified",
+    "evidence_url": "https://github.com/espressif/esp-idf/blob/master/components/soc/esp32s3/include/soc/adc_channel.h",
+    "note": "ADC1_CHANNEL_7_GPIO_NUM is 8. The 1.85 schematic confirms the BAT_ADC net goes to IO8, with R5 = 200K ±1% on top and R11 = 100K ±1% below, which is exactly a 1/3 divider."
+   },
+   {
+    "claim": "BOOT=GPIO0. The power button input is GPIO6 (active low). The power latch PWR_Control is GPIO7, driven high to stay on. The volume knob has no GPIO.",
+    "status": "verified",
+    "evidence_url": "https://web.archive.org/web/20250822181841id_/https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf",
+    "note": "Schematic: Key2 connects to GPIO0. Key1 pulls Key_BAT (IO6) low through a diode and also turns on the battery P-MOSFET Q1. BAT_Control (IO7) drives an 8050 transistor that holds Q1 on. The volume knob is R57, a 10K potentiometer on the APA2068KAI-TRG amplifier's VOLUME pin, so it is purely analog. This matches xiaozhi config.h and the demo PWR_Key code."
+   },
+   {
+    "claim": "The Home Assistant ESPHome thread uses power control GPIO7, power button GPIO6, battery ADC GPIO8, BOOT GPIO0 and a separate touch I2C bus on GPIO1/GPIO3.",
+    "status": "corrected",
+    "corrected_claim": "The HA thread (secondary source) uses GPIO6 as the power button, GPIO8 for the battery ADC, GPIO0 for BOOT, a second I2C bus on SDA GPIO1 / SCL GPIO3 with touch at 0x15, and LCD and touch resets on pca9554 pins 1 and 0. GPIO7 does not appear anywhere in the thread.",
+    "evidence_url": "https://community.home-assistant.io/raw/833702",
+    "note": "I grepped the raw thread export (93 of the thread's 94 posts) for GPIO7 and found nothing. GPIO7 as the latch is confirmed by the schematic and xiaozhi instead."
+   },
+   {
+    "claim": "Headers: UART TXD=GPIO43, RXD=GPIO44 (usable as GPIO). I2C header SCL=10, SDA=11 (not regular GPIO). USB D-/D+ = GPIO19/20, and using them as GPIO requires download mode for each flash.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "note": "The docs list a 'USB Interfaces' table: 5V, GND, DN (GPIO19), DP (GPIO20). The schematic puts a 499R series resistor (R19) on TXD, and 22R resistors between USB-C and GPIO19/20. There is no USB-UART bridge chip."
+   },
+   {
+    "claim": "Free GPIOs: GPIO12/13 appear in no source and on no header, so in practice only GPIO43/44 plus the I2C header are usable.",
+    "status": "corrected",
+    "corrected_claim": "The schematic routes GPIO12 and GPIO13 to test pads TP1 and TP2. Each also goes to an unpopulated optional resistor in the mic circuit (R55 for mic EN, R63 for mic L/R). So they are usable by soldering to the test pads, but no header exposes them. The schematic marks GPIO33-37 'Internal occupancy': the ESP32-S3R8's octal PSRAM uses them, with GPIO33-37 as DQ4-DQ7 and DQS per the Espressif datasheet. Usable spares are GPIO43/44 (UART header), GPIO12/13 (test pads), the shared I2C bus on the GPIO10/11 header, and GPIO19/20 if you give up native USB.",
+    "evidence_url": "https://web.archive.org/web/20250822181841id_/https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf",
+    "note": "Datasheet: https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf"
+   },
+   {
+    "claim": "The ST77916 register 0x04 ID read picks the init table (00 7F 7F 7F uses the default table; 00 02 7F 7F uses vendor_specific_init_new), so at least two panel batches exist. HA users report init and color-inversion differences.",
+    "status": "verified",
+    "evidence_url": "https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85C",
+    "note": "The same ID-read logic is in Waveshare's official 1.85C ESP-IDF ST77916.c, not only in xiaozhi. The HA thread has posts saying 'invert_colors: true' was needed and that the init_sequence may differ (secondary source)."
+   },
+   {
+    "claim": "V1/V2 notes apply only to the 1.85C. The V2 ('Rev2.0' silkscreen) uses ES8311 + ES7210 + NS4150B + analog mics. GPIO2 becomes I2S_MCLK and GPIO15 becomes PA_CTRL, while 38/39/47/48 are unchanged. The V2 schematic has those nets. The 1.85 docs have no V1/V2 section.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85C",
+    "note": "The official 1.85C V2 schematic text contains ES8311, ES7210, NS4150B, PA_CTRL, I2S_MCLK and BAT_ADC. The V1 schematic contains PCM5101, NS8002 and ICS-43434. The plain 1.85 docs 'Version Description' covers only touch vs non-touch, plus a note on color differences."
+   },
+   {
+    "claim": "1.85 vs 1.85C: the 1.85C puts touch on GPIO10/11 (port 0), RTC_INT on EXIO4 and has no QMI8658. The 1.85 has touch on GPIO1/3, a QMI8658 and RTC_INT on GPIO9. LCD, SD, backlight, battery ADC and V1 audio pins are the same.",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85C",
+    "note": "Confirmed by the 1.85C wiki, the official 1.85C CST816.h (SDA 11, SCL 10, port 0) and the 1.85C V1/V2 schematics, neither of which has a QMI8658. One caveat: the 1.85C docs V1/V2 table lists GPIO10/11 as 'NC' on V1, which contradicts the 1.85C wiki and the V1 schematic (an I2C bus with touch, RTC and TCA9554). Also, on the 1.85C V1 schematic GPIO1/3/6/7/9 go to a header (J7), so the power-key and latch pins are not shared between the two boards."
+   }
+  ],
+  "missing": [
+   "Strapping pins are in use by peripherals. Per the Espressif ESP32-S3 datasheet, GPIO0, GPIO3, GPIO45 and GPIO46 are strapping pins. On this board GPIO0 is BOOT, GPIO3 is TP_SCL, GPIO45 is LCD_SDA1 (and the VDD_SPI voltage strap) and GPIO46 is LCD_SDA0 (boot mode and ROM print). Do not add external pull-ups to these.",
+   "Arduino settings were not checked by the findings. Board: 'ESP32S3 Dev Module'. Set 'USB CDC On Boot' to Enabled: the board has only native USB-Serial/JTAG and no UART bridge, and the wiki says USB CDC must be enabled. Flash Size 16MB. Partition scheme: 'ESP SR 16M (3MB APP/7MB SPIFFS/2.9MB MODEL)' with speech recognition, otherwise '16M Flash (3MB APP/9.9MB FATFS)'. PSRAM should be 'OPI PSRAM', because the datasheet says the ESP32-S3R8 has 8MB Octal SPI PSRAM and arduino-esp32 boards.txt offers esp32s3.menu.PSRAM.opi; Waveshare's text does not state this, so it is an inference. Libraries: LVGL v8.3.10 and ESP32-audioI2S v2.0.0.",
+   "Core version conflict: docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Arduino says esp32 core '3.0.2 ≤ Version ≤ 3.1.1', while the wiki says '3.0.2 and above'. Prefer the docs range.",
+   "There is no official waveshareteam GitHub repo for the plain 1.85 (the API returns 404 for waveshareteam/ESP32-S3-Touch-LCD-1.85). Official demos come only from the Google Drive or files.waveshare.com zip. The 1.85C repo has already moved to V2 (ES8311) audio code, so its audio examples do not apply to the 1.85.",
+   "Schematic access: files.waveshare.com fails with a TLS error from this network, but an archived copy of the official PDF is at https://web.archive.org/web/20250822181841id_/https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf. It is dated 2024-09-18 and still shows the old MSM261S4030H0R mic, so it may not match a 'rev 2.1' board exactly. No source mentions 'rev 2.1' for the plain 1.85.",
+   "Mic channel for the ICS-43434 revision is unverified. The old schematic ties MSM261 L/R to 3V3 (right slot, which the demo uses), and the 1.85C V1 also ties ICS-43434 LR to 3V3. If mic audio is silent on rev 2.1, try the left slot.",
+   "Audio hardware details: the amplifier is an APA2068KAI-TRG and the speaker connector J10 is 4-pin (VORN/VORP/VOLP/VOLN, two channels). PCM5101 SCK/FMT/FLT/DEMP are tied to GND and XSMT to 3V3, so no MCLK, no mute GPIO and no I2C control are needed.",
+   "On-board pull-ups: the GPIO10/11 I2C bus has 10K pull-ups (R52/R53). The touch bus (GPIO1/3) has none on the main PCB; code enables the internal pull-ups. TP_INT has a 10K pull-up.",
+   "Both ESP32-S3 I2C controllers are already used in reference code: touch on I2C1 (GPIO1/3) and the internal bus on I2C0 (GPIO10/11). External I2C sensors should go on the GPIO10/11 header bus, avoiding addresses 0x20, 0x51 and 0x6B. This is an inference.",
+   "Antenna: there is an onboard ceramic antenna plus an IPEX1 connector, selected by re-soldering a resistor (wiki and docs).",
+   "Flash part: the schematic lists W25Q128JVSI, but esptool reported manufacturer 0x20. The unit probably uses a different 16MB flash vendor; this is unverified and does not matter for use."
+  ]
+ },
+ "verify:revisions": {
+  "checked": [
+   {
+    "claim": "Official revision note: the only documented old-to-new change on the ESP32-S3-Touch-LCD-1.85 is the mic. The MSM261S4030H0R was discontinued and replaced by an ICS-43434, related circuitry was adjusted, and the pickup position is unchanged. The FAQ was added to the wiki on 2025-09-11 (rev 105813). The same FAQ is on the non-touch wiki and on the docs sites.",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/w/api.php?action=compare&fromrev=105413&torev=105813&format=json",
+    "note": "The diff for rev 105813 (2025-09-11, Waveshare-admin, '/* FAQ */') adds exactly these lines plus the image File:ESP32-S3-Touch-LCD-1.85-Version-VSpng.jpg. The same text appears on docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ, in Chinese on docs.waveshare.net/ESP32-S3-Touch-LCD-1.85/FAQ, and on www.waveshare.com/wiki/ESP32-S3-LCD-1.85. No other component change is listed."
+   },
+   {
+    "claim": "In the official comparison photo, the old board has no Rev marking. The new board reads 'ESP32-S3-Touch-LCD-1.85 Rev2.0'. The layout is the same (PCM5101A, APA2068, TF slot, connectors). The visible difference is the MIC spot: a top-mounted package on the old board, only an acoustic hole on the new one. Waveshare says 'old version', not 'V1.0'.",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/w/upload/a/a7/ESP32-S3-Touch-LCD-1.85-Version-VSpng.jpg",
+    "note": "I downloaded and inspected the image. The red circle is on the 'ESP32-S3-Touch-LCD-1.85 Rev2.0' silkscreen and the MIC area. The PCM5101A, APA2068 KD2412X, TF slot and connectors match. Not mentioned by the other agent: the flash on the Rev2.0 board in this photo is clearly marked 'winbond 25Q128JVSQ 2423'. That chip has JEDEC manufacturer 0xEF, which differs from the user's 0x20."
+   },
+   {
+    "claim": "No Waveshare page mentions 'Rev2.1' for any 1.85 board. The newest documented revision for the plain 1.85 is Rev2.0 (the ICS-43434 change), so Rev 2.1 is an undocumented later PCB spin.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/FAQ",
+    "note": "I grepped the EN wiki, the docs overview/FAQ/Arduino/ESP-IDF/Resources pages, the CN FAQ, the product page (waveshare.com/esp32-s3-touch-lcd-1.85.htm), and the 1.85B and 1.85C docs. None contains 'Rev2.1', 'Rev 2.1' or 'V2.1'. For the plain 1.85, 'Rev2.0' appears only in the comparison photo's silkscreen, not in any text. A web search for '\"ESP32-S3-Touch-LCD-1.85\" \"Rev2.1\"' also found nothing. Calling it a 'later PCB spin' is an inference."
+   },
+   {
+    "claim": "Old (pre-Rev2.0) schematic, Wayback copy dated 2024-09-18, same digest in both captures. Parts: ESP32-S3R8, W25Q128JVSI, ST77916 panel on a 39-pin FPC with TP pins, TCA9554PWR, PCM5101APWR, APA2068KAI-TRG, MSM261S4030H0R, QMI8658C, PCF85063ATL, ETA6098, ME6217C33M5G. The mic is on its own I2S bus. L/R and EN are tied to 3V3 via 0R (R61, R55), so the mic outputs on the RIGHT slot. NC 0R options allow sharing the speaker bus or driving EN/LR from GPIO12/13.",
+    "status": "corrected",
+    "corrected_claim": "Most of this is correct, with one fix: the schematic does not name the ST77916. It shows only a 0.3mm 39-pin FPC connector (J4) with D0-D3, CS, RD(SCL), TE, RESET, TP-SCL, TP-SDA, TP-RESET, TP-INT and TP-VCC. The ST77916 name comes from the docs page. Everything else checks out. The PDF metadata date is 2024-09-18. The Wayback CDX shows the same digest 2JZZLWWD... for the 2025-04-15 and 2025-08-22 captures. All the listed part numbers are present. R61 and R55 are 0R to 3V3 on MIC_LRCK_U and MIC_EN_U. R63 (NC) and the NC side of R55 would route these to GPIO13 and GPIO12. R30, R64 and R46 select MIC_SD/SCK/WS (populated) versus I2S_DIN/BCK/LRCK (NC). The schematic also shows Key_BAT=GPIO6, BAT_Control=GPIO7 and BAT_ADC=GPIO8.",
+    "evidence_url": "http://web.archive.org/web/20250822181841id_/https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-1.85/ESP32-S3-Touch-LCD-1.85.pdf",
+    "note": "I rendered the mic section at high zoom and checked it visually. The RIGHT-slot conclusion matches xiaozhi's use of I2S_STD_SLOT_RIGHT for this board. I did not open the MSM261 datasheet."
+   },
+   {
+    "claim": "The docs show a single pin map for all revisions. LCD SDA0-3=46/45/42/41, SCK 40, CS 21, TE 18, RST=EXIO2, BL 5. Touch SDA 1, SCL 3, INT 4, RST=EXIO1. TF D0 16, CMD 17, SCK 14, D3=EXIO3. IMU/RTC I2C 10/11, RTC_INT 9, IMU INT1/INT2=EXIO5/EXIO4. Mic WS 2, SCK 15, SD 39. PCM5101 DIN 47, LRCK 38, BCK 48. The FAQ lists I2C addresses 0x15, 0x20, 0x51. Version Description only covers touch vs non-touch and notes possible color differences.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85",
+    "note": "Every GPIO matches the 'Internal Hardware Connections' tables. The mic table header is mislabeled 'Buzzer'. Version Description says the board comes in touch and non-touch versions and that 'Due to version variations, some color differences may exist'. The docs pin map leaves out GPIO6 (Key_BAT/PWR key), GPIO7 (BAT_Control, the power latch) and GPIO8 (BAT_ADC); these are shown in the schematic. The FAQ address list also omits the QMI8658."
+   },
+   {
+    "claim": "There is one demo package for the 1.85, ESP32-S3-Touch-LCD-1.85-Demo.zip (192 MB), at Google Drive id 1sOXcEqyUIieougwPozj5q5Z8X1xILjIs. The link was moved from files.waveshare.com to Drive on 2025-09-18 (rev 106096). The non-touch board has its own Drive package, id 1m4gzP47vtY57U4GV-e-k0dgPO_gMlUxB.",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/w/api.php?action=compare&fromrev=105813&torev=106096&format=json",
+    "note": "The diff confirms the link change in rev 106096 (2025-09-18, '/* Demo */'). The Drive page title is 'ESP32-S3-Touch-LCD-1.85-Demo.zip'. The non-touch wiki links Drive id 1m4gzP47vtY57U4GV-e-k0dgPO_gMlUxB. I could not confirm the 192 MB size from the Drive page. Wayback shows the older files.waveshare.com zip at 199,388,270 bytes. The CN docs still link files.waveshare.net/.../ESP32-S3-Touch-LCD-1.85-Demo.zip."
+   },
+   {
+    "claim": "Since 2026-09-28 (rev 111227), the EN wiki page has been a meta-refresh redirect to docs.waveshare.com. The docs carry the same FAQ, resources and pin map. The CN docs at docs.waveshare.net have the same FAQ in Chinese.",
+    "status": "verified",
+    "evidence_url": "https://www.waveshare.com/w/api.php?action=compare&fromrev=110768&torev=111227&format=json",
+    "note": "Rev 111227 adds only '<meta http-equiv=\"refresh\" content=\"0; url=https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85\">'. The old wiki content is still in the page HTML under the refresh tag. The CN FAQ text reads: 旧版本的麦克风，MSM261S4030H0R 停产，换成了 ICS-43434..."
+   },
+   {
+    "claim": "Toolchain: Arduino needs esp32 by Espressif 3.0.2 <= version <= 3.1.1. ESP-IDF needs V5.3.1 or later. The FAQ says to downgrade ESP-IDF to v5.3.2 if the board keeps resetting. Wi-Fi and BT cannot be used together while audio is active.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Arduino",
+    "note": "All four statements match the docs Arduino page, the ESP-IDF page ('ESP-IDF V5.3.1 or above is required') and the FAQ. Other official settings not mentioned in the claim: the partition scheme is 'ESP SR 16M (3MB APP/7MB SPIFFS/2.9MB MODEL)' for speech examples, otherwise '16M Flash (3MB APP/9.9MB FATFS)'. The libraries are LVGL v8.3.10 and ESP32-audioI2S v2.0.0, installed offline. The FAQ says to enable 'USB CDC On Boot' for Serial output over native USB."
+   },
+   {
+    "claim": "Waveshare's ST77916 init (1.85C Arduino LVGL example) reads register 0x04. A result of 00 7F 7F 7F means case 1, the default init. A result of 00 02 7F 7F means case 2, which uses vendor_specific_init_new. So at least two LCD panel batches exist.",
+    "status": "verified",
+    "evidence_url": "https://raw.githubusercontent.com/waveshareteam/ESP32-S3-Touch-LCD-1.85C/HEAD/Arduino/examples/01_lvgl_example/Display_ST77916.cpp",
+    "note": "The code is exactly as described. It prints 'Register 0x04 data: ...' and 'Vendor-specific initialization for case 1/2.'. The vendor_specific_init_new table has 184 entries. This example sets the QSPI clock to 80 MHz (ESP_PANEL_LCD_SPI_CLK_HZ in Display_ST77916.h)."
+   },
+   {
+    "claim": "xiaozhi-esp32's plain-1.85 board has the same reg-0x04 detection and case-2 table. It was added 2025-03-07 (commit bdc4da06, PR #249), before Rev2.0 appeared, so the panel-batch split is independent of the PCB Rev.",
+    "status": "corrected",
+    "corrected_claim": "The detection and table are present. They were added in commit bdc4da06 on 2025-03-07 (PR #249, 'Added screen version compatibility'). The table is identical to Waveshare's: 184 entries, compared programmatically. This is about six months before Waveshare documented Rev2.0 (2025-09-11 FAQ). It is not proven to be before Rev2.0 boards first shipped. So the panel-batch split appears independent of the Rev2.0 mic change, but that remains an inference.",
+    "evidence_url": "https://api.github.com/repos/78/xiaozhi-esp32/commits/bdc4da06",
+    "note": "The current file main/boards/waveshare/esp32-s3-touch-lcd-1.85/esp32-s3-touch-lcd-1.85.cc reads reg 0x04 at 3 MHz and then switches to an 80 MHz QSPI clock. HA forum post #69 (2025-09-11, secondary) also reports 'a v1 and v2 of the display' for this model."
+   },
+   {
+    "claim": "ESP32_Display_Panel PR #239 (2025-09-18, ggc121238) hard-codes the 'new' vendor table into BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85.h. The table is identical (184 commands) to vendor_specific_init_new. PR #238 sets color invert. Both shipped in v1.0.4 (released 2025-09-23). v1.0.3 and earlier use the default init; v1.0.4+ always use the new table, with no auto-detect.",
+    "status": "verified",
+    "evidence_url": "https://github.com/esp-arduino-libs/ESP32_Display_Panel/pull/239",
+    "note": "PR #239 says '屏幕厂家有改动，需要适配新的初始化代码'. On GitHub, PRs #238 and #239 show as 'closed' with merged_at null. The v1.0.4 release notes (published 2025-09-23, changelog dated 2025-09-19) still list both. In the board header, the v1.0.3-to-v1.0.4 diff adds ESP_PANEL_BOARD_LCD_VENDOR_INIT_CMD with 184 entries identical to Waveshare's table and changes COLOR_INEVRT_BIT from 0 to 1. The header has no detection logic. I did not audit the library's ST77916 driver for any detection of its own."
+   },
+   {
+    "claim": "[secondary] A user with a 1.85 Rev2.0 got lines and stripes with the generic Arduino_GFX ST77916 init. It was fixed with Waveshare's vendor table and a QSPI clock lowered from 40 to 10 MHz. PR #2 describes the two-batch detection.",
+    "status": "verified",
+    "evidence_url": "https://github.com/Picklepc/R48Display/issues/1",
+    "note": "Secondary user report. In comment 2026-08-05, MikeStreetz says 'I'm using an esp32-s3-touch-lcd-1.85 Rev2.0'. He used the custom Arduino_ST77916_R48 with Waveshare's table and lowered the display bus clock from 40MHz to 10MHz. PR #2 (maswellM5, 2026-08-03) says Waveshare's demo 'detects two panel batches'."
+   },
+   {
+    "claim": "xiaozhi has a single config for the plain 1.85: mic bus WS2/SCK15/DIN39 on the RIGHT slot, speaker bus 48/38/47. The 1.85C has a VERSION_1_0/VERSION_2_0 Kconfig choice (default 2.0). This suggests 1.85 mic code needed no ICS-43434 change, but that is an inference.",
+    "status": "verified",
+    "evidence_url": "https://github.com/78/xiaozhi-esp32/blob/main/main/boards/waveshare/esp32-s3-touch-lcd-1.85/config.h",
+    "note": "config.h and the .cc match: NoAudioCodecSimplex(..., I2S_STD_SLOT_BOTH, 15, 2, 39, I2S_STD_SLOT_RIGHT). main/Kconfig.projbuild has 'choice DISPLAY_ESP32S3_TOUCH_LCD_1_85C ... default VERSION_2_0'; there is none for the plain 1.85. The same config.h also defines PWR_BUTTON_GPIO 6 and PWR_Control_PIN 7."
+   },
+   {
+    "claim": "In the 1.85C V1 schematic (also ICS-43434), the mic LR (MIC_LRCK_U) is tied to 3V3 through a 0R, so the mic outputs on the right channel. This is only an analogy for the 1.85 Rev2.x.",
+    "status": "verified",
+    "evidence_url": "https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85C/blob/main/hardware/schematics/ESP32-S3-Touch-LCD-1.85C-V1--Schematic.pdf_.pdf",
+    "note": "Rendered and checked visually: U9 ICS-43434 has LR going through R57 0R to MIC_LRCK_U, and that net is tied to 3V3. The ICS-43434 datasheet says 'When set high, the microphone outputs its signal in the right channel' (cdn-shop.adafruit.com/product-files/6049/6049_DS-000069-ICS-43434-v1.2.pdf). It is still only an analogy for the 1.85 Rev2.x."
+   },
+   {
+    "claim": "1.85C V1 was replaced by V2 from 2026-01-30. V2 is identified by factory firmware showing Rev2.0, a Rev2.0 silkscreen and a V2 QC sticker. Part changes: PCM5101APWR->ES8311, NS8002->NS4150B, ES7210 added, MEMS digital mic->analog dual mics. Pin changes: GPIO2 MIC_WS->I2S_MCLK, GPIO15 MIC_SCK->PA_CTRL, GPIO10/11 NC->I2C; 38/39/47/48 unchanged. Old 1.85C audio code does not work on V2.",
+    "status": "corrected",
+    "corrected_claim": "All the part, pin and identification details match the 1.85C docs. The last sentence is not an official statement: the 1.85C docs I fetched list the differences but do not say that V1 code fails on V2. That is an inference from the pin and codec changes, supported by secondary HA-forum reports such as post #86. Also: 1.85C V2 uses a 'Rev2.0' silkscreen, the same marking as the plain 1.85 Rev2.0, so check for the 'C' suffix.",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85C",
+    "note": "The docs text says: 'The ESP32-S3-Touch-LCD-1.85C V1 version has been discontinued and will be replaced by the V2 version starting from January 30, 2026.'"
+   },
+   {
+    "claim": "The 1.85C repo has separate V1 and V2 schematics. V1 is 'ESP32-S3-Touch-LCD-1.85C-Box', dated 2025-02-28, with ICS-43434, PCM5101APWR and NS8002. V2 is dated 2026-01-30, with ES8311 (0x18), ES7210 and NS4150B. Neither has a QMI8658. Both use an MP1605GTF-Z buck, not the ME6217. 1.85C touch is on I2C 10/11; on the 1.85 it is on GPIO1/3.",
+    "status": "verified",
+    "evidence_url": "https://github.com/waveshareteam/ESP32-S3-Touch-LCD-1.85C",
+    "note": "I downloaded both PDFs from hardware/schematics/ and extracted the text. The creation dates (D:20250228 and D:20260130), part numbers and the '0x18' text in V2 all match. Neither schematic has QMI8658 or ME6217. The 1.85C Arduino example's I2C_Driver.h has I2C_SCL_PIN 10 and I2C_SDA_PIN 11, and Touch_CST816.h uses CST816_ADDR 0x15 on the same Wire bus."
+   },
+   {
+    "claim": "1.85B (SKU 34554 / 34556-EN) is a badge in a CNC aluminum case. It has ES8311 + ES7210 with dual mics, a BQ27220 gauge and a QMI8658. CST816S is at 0x15 on SCL 10/SDA 11, LCD RST is GPIO3, BL is GPIO5. 1.85 code is not drop-in.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85B",
+    "note": "The SKUs, case description, chips and pins all match the 1.85B docs. That board also uses TP_RST GPIO1, TF in SDMMC 4-bit on GPIO12-17, and RTC_INT GPIO6."
+   },
+   {
+    "claim": "[secondary/forum] On the HA forum, 1.85C V2 owners say old YAMLs fail on V2 ('completely different adc/dac config'). V2 uses a shared I2S bus, so ESPHome cannot run mic and speaker at the same time. Wake word works on ESPHome 2026.4.0 but not 2026.3.3. A maintainer says 'V2' was earlier used for a display-panel change (JC3636W518V2). Non-C configs use mic 2/15/39 with channel: right and speaker 38/48/47.",
+    "status": "corrected",
+    "corrected_claim": "[secondary] These posts exist: #86 (2026-03-31) on the 'completely different adc/dac config', #87 and #89 on wake word working on 2026.4.0 but not 2026.3.3, and #92 on the shared I2S bus meaning no simultaneous mic and speaker in ESPHome. However, the person in #92 (RealDeco) is a community YAML author, not an ESPHome or Waveshare maintainer. His earlier 'V1/V2' naming, and the JC3636W518V2 model suggested in post #75, refer to an ST77916 display change discussed in this thread about the plain 1.85, not specifically the 1.85C. Non-C configs in posts #10 and #14 use mic WS GPIO2, BCLK GPIO15, DIN GPIO39 with channel: right, and speaker LRCLK 38, BCLK 48, DOUT 47.",
+    "evidence_url": "https://community.home-assistant.io/t/waveshare-esp32-s3-lcd-1-85/833702",
+    "note": "I read all 93 posts through the Discourse JSON API."
+   },
+   {
+    "claim": "[secondary] ESPHome mipi_spi added a 'JC3636W518V2' model (PR #10392, merged 2025-08-24) for a second version of the 360x360 ST77916 panel. The community uses it on Waveshare 1.85/1.85C boards that need the alternate table.",
+    "status": "verified",
+    "evidence_url": "https://github.com/esphome/esphome/pull/10392",
+    "note": "The PR is titled '[mipi_spi] Add model', merged 2025-08-24, with the body 'Add jc3636w518 version 2 display'. HA forum post #75 recommends 'JC3636W518V2 if v2 of the display' for this Waveshare board. Secondary."
+   },
+   {
+    "claim": "The old schematic specifies Winbond W25Q128JVSI (JEDEC EF 40 18). The user's esptool reports manufacturer 0x20, device 0x4018, so rev 2.1 likely has a second-source 16MB quad flash.",
+    "status": "verified",
+    "evidence_url": "https://github.com/torvalds/linux/blob/master/drivers/mtd/spi-nor/winbond.c",
+    "note": "Linux winbond.c has SNOR_ID(0xef, 0x40, 0x18) 'w25q128', and the old schematic lists W25Q128JVSI. Additional evidence: Waveshare's own Rev2.0 photo still shows a Winbond 25Q128JVSQ, so the vendor change is newer than the board in that photo. ID 0x204018 is the JEDEC ID used for XMC XM25QH128C in a U-Boot spi-nor-ids patch (secondary: https://ratatoskr.run/u-boot/2026/08/17408886/t), so the rev 2.1 flash is very likely an XMC XM25QH128C or compatible part. This is not in Linux mainline; Linux has 0x20 0x40 0x1x only for small Micron M45PE parts."
+   },
+   {
+    "claim": "The 1.85 docs name the touch controller CST816 (touch version only). Resources link the CST816S datasheet and register doc, at address 0x15. No revision change of the touch IC is reported. The touch IC sits on the LCD FPC (TP-SCL/SDA/INT/RESET on the 39-pin connector), not on the mainboard BOM.",
+    "status": "verified",
+    "evidence_url": "https://docs.waveshare.com/ESP32-S3-Touch-LCD-1.85/Resources-And-Documents",
+    "note": "On the Resources page the link labels read 'CST816T Datasheet' and 'CST816T Register Description', but the URLs are CST816S_Datasheet_EN.pdf and CST816S_register_declaration.pdf. The specs table says 'Touch: CST816'. The old schematic has no CST816 part; touch appears only as TP-* pins 34-37 on the 39-pin J4."
+   }
+  ],
+  "missing": [
+   "Flash vendor change: Waveshare's own Rev2.0 comparison photo shows a Winbond 25Q128JVSQ (date code 2423). The user's rev 2.1 reports JEDEC 0x20/0x4018, which matches XMC XM25QH128C (secondary U-Boot patch source). This is the most concrete known hardware difference on rev 2.1, but Waveshare does not document it. Waveshare's Arduino screenshot uses Flash Mode 'QIO 120MHz'. If boot or flash errors appear on rev 2.1, falling back to QIO 80MHz is an untested suggestion, not sourced.",
+   "Battery power latch pins are missing from the docs pin map. The old schematic shows Key_BAT/PWR key = GPIO6, BAT_Control = GPIO7 and BAT_ADC = GPIO8. xiaozhi config.h confirms PWR_BUTTON_GPIO 6 and PWR_Control_PIN 7. The FAQ says firmware must hold SYS_EN high to stay powered on battery after PWR is released. Someone writing their own firmware for battery use needs this.",
+   "Arduino board settings: arduino-esp32 (wiki: since core 3.0.7) has a dedicated board 'Waveshare ESP32-S3-Touch-LCD-1.85' (boards.txt: 16MB flash, QIO boot, OPI PSRAM). Waveshare's parameter screenshot uses ESP32S3 Dev Module, Flash Size 16MB, Partition 'ESP SR 16M', PSRAM 'OPI PSRAM', Events on Core 0 and Arduino on Core 1. The official supported core range is 3.0.2-3.1.1. The libraries are LVGL v8.3.10 and ESP32-audioI2S v2.0.0 from the demo package. Enable 'USB CDC On Boot' for Serial output over native USB.",
+   "There is no official Waveshare GitHub repo for the plain 1.85. A GitHub search of waveshareteam returned only ESP32-S3-Touch-LCD-1.85B and ESP32-S3-Touch-LCD-1.85C. The only official code for the plain 1.85 is the Drive demo zip.",
+   "The FAQ list of I2C addresses (0x15, 0x20, 0x51) omits the QMI8658 IMU that sits on the same GPIO10/11 bus. Its address on the 1.85 was not verified (the 1.85B docs give 0x6B). An I2C scan on GPIO10/11 would confirm it.",
+   "QSPI clock varies across sources. Waveshare's example, xiaozhi and ESP32_Display_Panel all use 80 MHz. One secondary Rev2.0 report needed 10 MHz to remove stripes. Worth trying if the rev 2.1 shows artifacts.",
+   "The current official schematic (files.waveshare.com/.../ESP32-S3-Touch-LCD-1.85.pdf and www.waveshare.net/w/upload/f/f2/ESP32-S3-Touch-LCD-1.85.pdf) could not be fetched from this network (TLS failure). It is unknown whether it was updated for Rev2.x with the ICS-43434 or for rev 2.1 flash changes. The only readable copy is the 2024-09-18 version with the MSM261."
+  ]
+ }
+}
