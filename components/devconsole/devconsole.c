@@ -30,6 +30,8 @@ static const char *TAG = "devcon";
 #define CAP_BYTES       (24 * 1024)
 #define OUT_LINE_BYTES  2048
 #define USB_CHUNK       512
+#define FMT_BYTES       640
+#define LOGBUF_BYTES    512
 #define WAIT_CMD_MS     1000     // command output: the host is reading, allow it to lag
 #define WAIT_LOG_MS     100
 #define LOCK_WAIT_MS    2000
@@ -45,15 +47,16 @@ static bool s_drv;
 static volatile bool s_ready;
 static uint32_t s_boot_ms;
 
-// the line being written (only touched while s_wr is held)
-static char s_stage[USB_CHUNK];
+// the line being written (only touched while s_wr is held). The buffers are in PSRAM: they
+// are used from task context only (never from an ISR or with the cache disabled).
+static char *s_stage;                        // USB_CHUNK
 static size_t s_stage_len;
 static bool s_line_important;
 static bool s_line_sent;                     // part of the current line already reached the driver
 static bool s_line_broken;                   // a part was dropped: drop the rest of this line
 static bool s_need_nl;                       // a cut line is still unterminated on the wire
-static char s_fmt[640];
-static int s_wr_depth;                       // >0 while this task is inside a write
+static char *s_fmt;                          // FMT_BYTES
+static int s_wr_depth;                      // >0 while this task is inside a write
 
 // command being executed (devcon task only)
 static uint16_t s_cur_id;
@@ -194,13 +197,13 @@ bool dc_line_begin(bool important)
 void dc_line_put(const char *s, size_t n)
 {
     while (n > 0) {
-        size_t room = sizeof(s_stage) - s_stage_len;
+        size_t room = USB_CHUNK - s_stage_len;
         size_t k = n < room ? n : room;
         memcpy(s_stage + s_stage_len, s, k);
         s_stage_len += k;
         s += k;
         n -= k;
-        if (s_stage_len == sizeof(s_stage)) {
+        if (s_stage_len == USB_CHUNK) {
             stage_flush();
         }
     }
@@ -215,10 +218,10 @@ void dc_line_printf(const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
-    int n = vsnprintf(s_fmt, sizeof(s_fmt), fmt, ap);
+    int n = vsnprintf(s_fmt, FMT_BYTES, fmt, ap);
     va_end(ap);
     if (n > 0) {
-        dc_line_put(s_fmt, (size_t)n < sizeof(s_fmt) ? (size_t)n : sizeof(s_fmt) - 1);
+        dc_line_put(s_fmt, (size_t)n < FMT_BYTES ? (size_t)n : FMT_BYTES - 1);
     }
 }
 
@@ -274,7 +277,7 @@ static void emit_raw(const char *s, size_t n, bool important)
 
 // ---------------------------------------------------------------- ESP_LOG and stdout hooks
 
-static char s_logbuf[512];
+static char *s_logbuf;                       // LOGBUF_BYTES, PSRAM, under the writer lock
 static bool s_log_busy;
 
 static int log_vprintf(const char *fmt, va_list ap)
@@ -287,8 +290,8 @@ static int log_vprintf(const char *fmt, va_list ap)
         return 0;
     }
     s_log_busy = true;
-    int n = vsnprintf(s_logbuf, sizeof(s_logbuf), fmt, ap);
-    size_t len = n < 0 ? 0 : ((size_t)n < sizeof(s_logbuf) ? (size_t)n : sizeof(s_logbuf) - 1);
+    int n = vsnprintf(s_logbuf, LOGBUF_BYTES, fmt, ap);
+    size_t len = n < 0 ? 0 : ((size_t)n < LOGBUF_BYTES ? (size_t)n : LOGBUF_BYTES - 1);
     // one log call is one line; split embedded newlines so every line stays a log line
     size_t start = 0;
     for (size_t i = 0; i <= len; i++) {
@@ -723,11 +726,11 @@ void devcon_event(const char *ev, const char *fmt, ...)
     if (fmt && fmt[0]) {
         va_list ap;
         va_start(ap, fmt);
-        int n = vsnprintf(s_fmt, sizeof(s_fmt), fmt, ap);
+        int n = vsnprintf(s_fmt, FMT_BYTES, fmt, ap);
         va_end(ap);
         if (n > 0) {
             dc_line_put(",", 1);
-            dc_line_put(s_fmt, (size_t)n < sizeof(s_fmt) ? (size_t)n : sizeof(s_fmt) - 1);
+            dc_line_put(s_fmt, (size_t)n < FMT_BYTES ? (size_t)n : FMT_BYTES - 1);
         }
     }
     dc_line_puts("}");
@@ -845,8 +848,13 @@ esp_err_t devconsole_start(void)
     s_line = heap_caps_malloc(DC_LINE_MAX + 1, MALLOC_CAP_SPIRAM);
     s_cap = heap_caps_malloc(CAP_BYTES, MALLOC_CAP_SPIRAM);
     s_ob = heap_caps_malloc(OUT_LINE_BYTES + 1, MALLOC_CAP_SPIRAM);
+    s_stage = heap_caps_malloc(USB_CHUNK, MALLOC_CAP_SPIRAM);
+    s_fmt = heap_caps_malloc(FMT_BYTES, MALLOC_CAP_SPIRAM);
+    s_logbuf = heap_caps_malloc(LOGBUF_BYTES, MALLOC_CAP_SPIRAM);
+    ESP_RETURN_ON_FALSE(s_line && s_cap && s_ob && s_stage && s_fmt && s_logbuf, ESP_ERR_NO_MEM, TAG, "buffers");
+    // the writer stays inert (all output dropped) until the mutex exists
     s_wr = xSemaphoreCreateRecursiveMutex();
-    ESP_RETURN_ON_FALSE(s_line && s_cap && s_ob && s_wr, ESP_ERR_NO_MEM, TAG, "buffers");
+    ESP_RETURN_ON_FALSE(s_wr, ESP_ERR_NO_MEM, TAG, "writer lock");
 
     usb_serial_jtag_driver_config_t usb = {
         .tx_buffer_size = DC_USB_TX_RING,
