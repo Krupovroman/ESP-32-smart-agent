@@ -536,6 +536,32 @@ static void t_cancel(void)
     CHECK(!find_ev(AI_EV_ERROR) && !find_ev(AI_EV_RESULT) && find_ev(AI_EV_RELEASED) && g_nreq == 0);
 }
 
+// Protocol §2.1 rule 2 also for the table default ai_effort=minimal.
+static void t_effort(void)
+{
+    printf("t_effort\n");
+    setup();
+    host_set("ai_effort", "minimal");
+    host_set("ai_model", "google/gemini-3.7-flash");
+    ai_model_t m = { .id = "google/gemini-3.7-flash", .audio = true, .structured = true, .mandatory = true,
+                     .min_effort = "low" };
+    ai_model_cache_put(&m);
+    mock_push_json(200, ok_body(ASSIST_OK, "stop"));
+    job_t j = mkjob(AI_MODE_ASSISTANT, "Сколько будет два плюс два?", NULL, 0);
+    run(&j);
+    CHECK(g_nreq == 1 && strstr(g_reqs[0].body, "\"effort\":\"low\"") != NULL);
+    // a model whose entry has no reasoning: the object is omitted
+    setup();
+    host_set("ai_effort", "minimal");
+    host_set("ai_model", "x/no-reasoning");
+    ai_model_t m2 = { .id = "x/no-reasoning", .audio = true, .structured = true };
+    ai_model_cache_put(&m2);
+    mock_push_json(200, ok_body(ASSIST_OK, "stop"));
+    j = mkjob(AI_MODE_ASSISTANT, "Сколько будет два плюс два?", NULL, 0);
+    run(&j);
+    CHECK(g_nreq == 1 && strstr(g_reqs[0].body, "\"reasoning\"") == NULL);
+}
+
 static void t_unheard_voice(void)
 {
     printf("t_unheard_voice\n");
@@ -575,5 +601,6 @@ void test_ai(void)
     t_translator();
     t_stt();
     t_cancel();
+    t_effort();
     t_unheard_voice();
 }
