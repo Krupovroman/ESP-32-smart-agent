@@ -993,7 +993,9 @@ esp_err_t devconsole_start(void)
 
     esp_console_config_t cc = ESP_CONSOLE_CONFIG_DEFAULT();
     cc.max_cmdline_length = DC_CMD_MAX + 1;
-    cc.max_cmdline_args = 16;
+    // esp_console drops arguments past the limit without notice, and texts typed for "ai ask"
+    // arrive word by word: 64 pointers (PSRAM, per command) leave room for them
+    cc.max_cmdline_args = 64;
     cc.heap_alloc_caps = MALLOC_CAP_SPIRAM;
     ESP_RETURN_ON_ERROR(esp_console_init(&cc), TAG, "console");
     esp_console_register_help_command();
