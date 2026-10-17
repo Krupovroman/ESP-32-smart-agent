@@ -132,7 +132,8 @@ void ai_model_from_json(const cJSON *m, ai_model_t *out)
 
 // ---- GET helper -------------------------------------------------------------------------------
 
-esp_err_t ai_get_json(const char *base_url, const char *path, size_t cap, char **body, int *status, or_err_t *err)
+esp_err_t ai_get_json(const char *base_url, const char *path, size_t cap, bool once, char **body, int *status,
+                      or_err_t *err)
 {
     *body = NULL;
     *status = 0;
@@ -163,7 +164,7 @@ esp_err_t ai_get_json(const char *base_url, const char *path, size_t cap, char *
         or_classify(OR_KIND_GET, &r, b, e);
         free(b);
         uint32_t delay;
-        if (!or_retry_next(&rs, e, 0, &delay)) {
+        if (once || !or_retry_next(&rs, e, 0, &delay)) {
             ret = e->http == 404 ? ESP_ERR_NOT_FOUND : ESP_FAIL;
             break;
         }
@@ -218,7 +219,7 @@ static esp_err_t job_list(void *ctx)
                  "&limit=%d&offset=%d", PAGE_CHAT, page * PAGE_CHAT);
         char *body;
         int status;
-        ret = ai_get_json(base, path, OR_CAP_MODELS, &body, &status, &lc->err);
+        ret = ai_get_json(base, path, OR_CAP_MODELS, false, &body, &status, &lc->err);
         if (ret != ESP_OK) {
             break;
         }
@@ -366,7 +367,7 @@ static esp_err_t job_tts_list(void *ctx)
         snprintf(path, sizeof(path), "models?output_modalities=speech&limit=%d&offset=%d", PAGE_TTS, page * PAGE_TTS);
         char *body;
         int status;
-        ret = ai_get_json(base, path, OR_CAP_MODELS, &body, &status, &lc->err);
+        ret = ai_get_json(base, path, OR_CAP_MODELS, false, &body, &status, &lc->err);
         if (ret != ESP_OK) {
             break;
         }
@@ -522,6 +523,7 @@ typedef struct {
     const char *id;
     ai_model_t *out;
     or_err_t *err;
+    bool once;
 } check_ctx_t;
 
 static esp_err_t job_check(void *ctx)
@@ -532,7 +534,7 @@ static esp_err_t job_check(void *ctx)
     snprintf(path, sizeof(path), "model/%s", cc->id);     // singular "model" (protocol §1.1)
     char *body;
     int status;
-    esp_err_t e = ai_get_json(base, path, OR_CAP_KEY, &body, &status, cc->err);
+    esp_err_t e = ai_get_json(base, path, OR_CAP_KEY, cc->once, &body, &status, cc->err);
     if (e != ESP_OK) {
         return e;
     }
@@ -567,6 +569,7 @@ esp_err_t ai_client_check_model(const char *id, ai_model_t *out, or_err_t *err)
 typedef struct {
     ai_key_info_t *out;
     or_err_t *err;
+    bool once;
 } key_ctx_t;
 
 static bool num_or_null(const cJSON *o, const char *k, double *v)
@@ -588,7 +591,7 @@ static esp_err_t job_key(void *ctx)
     base_url(base, sizeof(base));
     char *body;
     int status;
-    esp_err_t e = ai_get_json(base, "key", OR_CAP_KEY, &body, &status, kc->err);
+    esp_err_t e = ai_get_json(base, "key", OR_CAP_KEY, kc->once, &body, &status, kc->err);
     if (e != ESP_OK) {
         return e;
     }
@@ -641,6 +644,25 @@ esp_err_t ai_client_key_info(ai_key_info_t *out, or_err_t *err)
     key_ctx_t kc = { .out = out, .err = err ? err : &local };
     memset(kc.err, 0, sizeof(*kc.err));
     return ai_run_sync(job_key, &kc);
+}
+
+void ai_prewarm_gets(const char *model, bool (*pending)(void))
+{
+    // Background retries (2, 4, 8 s) would hold up the turn queued behind the pre-warm.
+    ai_key_info_t *k = ai_calloc(1, sizeof(ai_key_info_t));
+    ai_model_t *m = ai_calloc(1, sizeof(ai_model_t));
+    or_err_t *err = ai_calloc(1, sizeof(or_err_t));
+    if (k && m && err) {
+        key_ctx_t kc = { .out = k, .err = err, .once = true };
+        job_key(&kc);    // the TLS handshake overlaps the user's speech
+        if (!pending() && !ai_model_cache_get(model, m)) {
+            check_ctx_t cc = { .id = model, .out = m, .err = err, .once = true };
+            job_check(&cc);
+        }
+    }
+    free(k);
+    free(m);
+    free(err);
 }
 
 // "1 ноября" for the next reset of a daily / weekly / monthly window (UTC), or of resets_at.

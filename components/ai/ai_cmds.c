@@ -368,36 +368,49 @@ static int cmd_fetch(int argc, char **argv)
     return 0;
 }
 
+static int cmd_models_tts(void)
+{
+    ai_tts_model_t *l = ai_calloc(12, sizeof(ai_tts_model_t));   // PSRAM: the console stack is 6 KB
+    if (!l) {
+        return dc_fail("no memory");
+    }
+    int n = 0, total = 0, rc = 0;
+    for (int page = 0;; page++) {
+        esp_err_t e = ai_client_list_tts_models(page, l, 12, &n, &total);
+        if (e != ESP_OK) {
+            rc = dc_fail("models: %s", esp_err_to_name(e));
+            break;
+        }
+        for (int i = 0; i < n; i++) {
+            printf("%2d %-44s $%.4f/1k_ru voices=%u first=%s\n", page * 12 + i + 1, l[i].id, l[i].usd_1k_ru,
+                   l[i].n_voices, l[i].first_voice);
+        }
+        if (n < 12) {
+            printf("tts models: %d\n", total);
+            break;
+        }
+    }
+    free(l);
+    return rc;
+}
+
 static int cmd_models(int argc, char **argv)
 {
-    bool tts = argc > 2 && !strcmp(argv[2], "tts");
-    if (tts) {
-        ai_tts_model_t l[12];
-        int n = 0, total = 0;
-        for (int page = 0;; page++) {
-            esp_err_t e = ai_client_list_tts_models(page, l, 12, &n, &total);
-            if (e != ESP_OK) {
-                return dc_fail("models: %s", esp_err_to_name(e));
-            }
-            for (int i = 0; i < n; i++) {
-                printf("%2d %-44s $%.4f/1k_ru voices=%u first=%s\n", page * 12 + i + 1, l[i].id, l[i].usd_1k_ru,
-                       l[i].n_voices, l[i].first_voice);
-            }
-            if (n < 12) {
-                break;
-            }
-        }
-        printf("tts models: %d\n", total);
-        return 0;
+    if (argc > 2 && !strcmp(argv[2], "tts")) {
+        return cmd_models_tts();
     }
-    ai_model_t l[10];
-    int n = 0, total = 0;
+    ai_model_t *l = ai_calloc(10, sizeof(ai_model_t));
+    if (!l) {
+        return dc_fail("no memory");
+    }
+    int n = 0, total = 0, rc = 0;
     char cur[100];
     cfg_str("ai_model", cur, sizeof(cur), "");
     for (int page = 0;; page++) {
         esp_err_t e = ai_client_list_models(page, l, 10, &n, &total);
         if (e != ESP_OK) {
-            return dc_fail("models: %s", esp_err_to_name(e));
+            rc = dc_fail("models: %s", esp_err_to_name(e));
+            break;
         }
         for (int i = 0; i < n; i++) {
             printf("%2d %c %-44s est=$%.5f in=%.3f out=%.3f audio=%.3f effort=%s%s%s%s\n", page * 10 + i + 1,
@@ -406,11 +419,12 @@ static int cmd_models(int argc, char **argv)
                    l[i].expires[0] ? " истекает " : "", l[i].expires);
         }
         if (n < 10) {
+            printf("chat models: %d\n", total);
             break;
         }
     }
-    printf("chat models: %d\n", total);
-    return 0;
+    free(l);
+    return rc;
 }
 
 static int cmd_voices(int argc, char **argv)

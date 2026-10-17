@@ -23,7 +23,7 @@ static const char *TAG = "tts";
 #define TTS_CORE      0
 #define TTS_Q_LEN     16
 #define READ_BUF      4096
-#define OUT_WAIT_MS   2000          // one speaker write blocks at most this long (TCP throttles the server)
+#define OUT_POLL_MS   10            // ring full: wait this long, then retry (TCP throttles the server)
 #define OUT_STALL_MS  10000
 #define MAX_ROUTES    6
 
@@ -137,6 +137,8 @@ static esp_err_t out_begin(uint32_t turn, uint32_t rate, uint8_t ch)
     return e;
 }
 
+// Never blocks inside the stream buffer: xStreamBufferReset() (audio_out_stop) is refused while a
+// sender waits on it, so a blocked writer would make barge-in keep playing a full ring.
 static bool out_write(sink_t *s, const uint8_t *p, size_t n)
 {
     int64_t last = esp_timer_get_time();
@@ -144,7 +146,7 @@ static bool out_write(sink_t *s, const uint8_t *p, size_t n)
         if (abort_job(s->job)) {
             return false;
         }
-        size_t w = audio_out_write(p, n, pdMS_TO_TICKS(OUT_WAIT_MS));
+        size_t w = audio_out_write(p, n, 0);
         if (w) {
             p += w;
             n -= w;
@@ -152,6 +154,8 @@ static bool out_write(sink_t *s, const uint8_t *p, size_t n)
         } else if (esp_timer_get_time() - last > (int64_t)OUT_STALL_MS * 1000) {
             ESP_LOGE(TAG, "speaker ring stalled");
             return false;
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(OUT_POLL_MS));
         }
     }
     return true;

@@ -269,16 +269,15 @@ static void pick_effort(chat_t *ch)
     char e[16];
     cfg_str("ai_effort", e, sizeof(e), "auto");
     lower_ascii(e);
-    if (!strcmp(e, "auto")) {
-        // Protocol §2.1 rule 2: "minimal" if supported, else the lowest listed, else omit.
+    if (!strcmp(e, "auto") || !strcmp(e, "minimal") || !strcmp(e, "none")) {
+        // Protocol §2.1 rule 2: "minimal" if the model lists it, else its lowest effort, else omit
+        // (gemini-3.7-flash bottoms out at "low"). "none" is never sent: mandatory models reject it.
         ai_model_t m;
         if (ai_model_cache_get(ch->model, &m)) {
             strlcpy(ch->effort, m.min_effort, sizeof(ch->effort));
         } else {
             strlcpy(ch->effort, "minimal", sizeof(ch->effort));
         }
-    } else if (!strcmp(e, "none")) {
-        strlcpy(ch->effort, "minimal", sizeof(ch->effort));   // "none" is rejected by mandatory models
     } else {
         strlcpy(ch->effort, e, sizeof(ch->effort));
     }
@@ -337,7 +336,7 @@ static esp_err_t chat_build(chat_t *ch)
         return ESP_ERR_NO_MEM;
     }
     // Protocol §2.1 rule 1: "models" without "model" for an OpenRouter fallback chain.
-    if (ch->openrouter && ch->fallback[0]) {
+    if (ch->openrouter && ch->fallback[0] && strcmp(ch->fallback, ch->model)) {
         const char *ids[2] = { ch->model, ch->fallback };
         cJSON_AddItemToObject(root, "models", cJSON_CreateStringArray(ids, 2));
     } else {
@@ -518,7 +517,7 @@ static void trim_clip(const int16_t *pcm, size_t n, uint32_t rate, size_t *first
 
 typedef struct {
     char *transcript, *text;
-    char lang[8], src_lang[8], finish[16], model[64], provider[32];
+    char lang[8], src_lang[8], finish[16], model[64], provider[32], gen_id[64];
     bool truncated;
     double cost;
     int prompt_tokens, completion_tokens, audio_tokens, reasoning_tokens;
@@ -566,6 +565,7 @@ static esp_err_t parse_chat(const chat_t *ch, const char *body, parsed_t *out, c
     }
     strlcpy(out->model, ai_json_str(root, "model") ? ai_json_str(root, "model") : "", sizeof(out->model));
     strlcpy(out->provider, ai_json_str(root, "provider") ? ai_json_str(root, "provider") : "", sizeof(out->provider));
+    strlcpy(out->gen_id, ai_json_str(root, "id") ? ai_json_str(root, "id") : "", sizeof(out->gen_id));
     const cJSON *u = cJSON_GetObjectItemCaseSensitive(root, "usage");
     if (cJSON_IsObject(u)) {
         out->cost = ai_json_num(u, "cost", 0);
@@ -616,7 +616,11 @@ static esp_err_t parse_chat(const chat_t *ch, const char *body, parsed_t *out, c
                 }
                 out->truncated = true;
                 if (ch->mode == AI_MODE_ASSISTANT) {
-                    strlcpy(out->lang, "ru", sizeof(out->lang));   // "lang" comes last and is cut off
+                    // "lang" comes last and is cut off: assume the UI language
+                    char ul[8];
+                    cfg_str("ui_lang", ul, sizeof(ul), "ru");
+                    lower_ascii(ul);
+                    strlcpy(out->lang, ai_lang_in_enum(ul) ? ul : "ru", sizeof(out->lang));
                 } else if (sl) {
                     lower_ascii(sl);
                     strlcpy(out->src_lang, (!strcmp(sl, ch->lang_a) || !strcmp(sl, ch->lang_b)) ? sl : "other",
@@ -900,6 +904,9 @@ done:
         strlcpy(res.finish, pr.finish, sizeof(res.finish));
         strlcpy(res.model, pr.model, sizeof(res.model));
         strlcpy(res.provider, pr.provider, sizeof(res.provider));
+        if (!res.gen_id[0]) {
+            strlcpy(res.gen_id, pr.gen_id, sizeof(res.gen_id));   // the body "id" is the generation id
+        }
         res.prompt_tokens = pr.prompt_tokens;
         res.completion_tokens = pr.completion_tokens;
         res.audio_tokens = pr.audio_tokens;
@@ -942,23 +949,24 @@ done:
 
 // ---- prewarm ----------------------------------------------------------------------------------
 
+// True when a turn (or another job) is already waiting: the pre-warm would only delay it.
+static bool job_waiting(void)
+{
+    return uxQueueMessagesWaiting(s_q) > 0;
+}
+
 static void run_prewarm(void)
 {
     char base[136];
     cfg_str("ai_url", base, sizeof(base), "https://openrouter.ai/api/v1");
     or_conn_t *c = or_conn_get(base);
-    if (!c || or_conn_live(c) || !ai_net_up()) {
+    if (!c || or_conn_live(c) || !ai_net_up() || job_waiting()) {
         return;
     }
     int64_t t0 = esp_timer_get_time();
-    ai_key_info_t k;
-    ai_client_key_info(&k, NULL);       // GET /key: the TLS handshake overlaps the user's speech
     char model[100];
     cfg_str("ai_model", model, sizeof(model), "google/gemini-3.1-flash-lite");
-    ai_model_t m;
-    if (!ai_model_cache_get(model, &m)) {
-        ai_client_check_model(model, &m, NULL);
-    }
+    ai_prewarm_gets(model, job_waiting);
     ESP_LOGI(TAG, "prewarm %" PRId64 " ms", (esp_timer_get_time() - t0) / 1000);
 }
 

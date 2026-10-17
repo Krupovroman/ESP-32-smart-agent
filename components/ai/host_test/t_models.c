@@ -119,7 +119,13 @@ void test_models(void)
     int64_t t0 = g_now_us;
     char *body;
     int st;
-    CHECK(ai_get_json("https://relay.example/SECRET/api/v1", "key", 8192, &body, &st, &err) == ESP_FAIL);
+    CHECK(ai_get_json("https://relay.example/SECRET/api/v1", "key", 8192, false, &body, &st, &err) == ESP_FAIL);
     CHECK(g_nreq == 4);
     printf("    4 attempts in %lld ms\n", (long long)((g_now_us - t0) / 1000));
+
+    // the TLS pre-warm GETs never retry (a turn is queued behind them)
+    mock_reset();
+    for (int i = 0; i < 4; i++) mock_push_json(502, "{\"error\":{\"code\":502,\"message\":\"x\"}}");
+    CHECK(ai_get_json("https://relay.example/SECRET/api/v1", "key", 8192, true, &body, &st, &err) == ESP_FAIL);
+    CHECK(g_nreq == 1);
 }

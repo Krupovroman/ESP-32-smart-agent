@@ -4,3 +4,5 @@ void host_log(const char *lvl, const char *tag, const char *fmt, ...);
 #define ESP_LOGW(tag, ...) host_log("W", tag, __VA_ARGS__)
 #define ESP_LOGI(tag, ...) host_log("I", tag, __VA_ARGS__)
 #define ESP_LOGD(tag, ...) ((void)0)
+#define ESP_LOG_ERROR 1
+#define esp_log_level_set(tag, level) ((void)(tag), (void)(level))
