@@ -1,3 +1,5 @@
+#include "ai_client.h"
+#include "ai_cmds.h"
 #include "audio_in.h"
 #include "audio_out.h"
 #include "board.h"
@@ -51,6 +53,7 @@ void app_main(void)
     vTaskDelay(pdMS_TO_TICKS(80));   // let the first frame reach the panel before lighting it
     board_backlight_set((uint8_t)settings_get_int("bright"));
 
+    ai_console_register();
     ESP_ERROR_CHECK(devconsole_start());
     confirm_running_image();
 
@@ -58,5 +61,8 @@ void app_main(void)
         net_start();
     } else {
         ESP_LOGE(TAG, "wifi unavailable");
+    }
+    if (ai_client_init() != ESP_OK) {
+        ESP_LOGE(TAG, "ai client unavailable");
     }
 }

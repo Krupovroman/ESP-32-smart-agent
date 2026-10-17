@@ -1,0 +1,1070 @@
+// Assistant and translator turns over POST {ai_url}/chat/completions (protocol §2-§4, §9).
+#include "ai_priv.h"
+#include "settings.h"
+
+#include <inttypes.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include "esp_check.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#include "esp_random.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+
+static const char *TAG = "ai";
+
+#define AI_STACK        12288          // TLS handshakes run here; PSRAM, so be generous
+#define AI_PRIO         5
+#define AI_CORE         0
+#define AI_Q_LEN        6
+#define MAX_LISTENERS   4
+#define LAST_REQ_CAP    (16 * 1024)
+#define MAX_TOK_TR      768
+#define TURN_RETRY_US   (65LL * 1000 * 1000)     // 45 s per attempt + 20 s of retries
+#define VOICE_TEXT_AS   "Голосовое сообщение пользователя."
+#define VOICE_TEXT_TR   "Utterance:"
+
+static const char SCHEMA_ASSISTANT[] =
+    "{\"type\":\"object\",\"properties\":{"
+    "\"transcript\":{\"type\":\"string\",\"description\":\"Verbatim transcript of the user's latest message in its "
+    "original language. Empty string if there is no intelligible speech.\"},"
+    "\"reply\":{\"type\":\"string\",\"description\":\"Answer shown on screen and read aloud: plain speakable text, no "
+    "markdown, no emoji, numbers written as words. Empty string if transcript is empty.\"},"
+    "\"lang\":{\"type\":\"string\",\"enum\":[\"ru\",\"en\",\"de\",\"fr\",\"es\",\"it\",\"pt\",\"pl\",\"tr\",\"uk\","
+    "\"zh\",\"ja\",\"ko\",\"ar\",\"other\"],\"description\":\"ISO 639-1 code of the language of reply.\"}"
+    "},\"required\":[\"transcript\",\"reply\",\"lang\"],\"additionalProperties\":false}";
+
+static const char SCHEMA_TRANSLATOR[] =
+    "{\"type\":\"object\",\"properties\":{"
+    "\"src_lang\":{\"type\":\"string\",\"enum\":[\"%s\",\"%s\",\"other\"],\"description\":\"Language of the "
+    "utterance: one of the two selected codes, or other.\"},"
+    "\"transcript\":{\"type\":\"string\",\"description\":\"Verbatim transcript in the original language; empty if "
+    "no intelligible speech.\"},"
+    "\"translation\":{\"type\":\"string\",\"description\":\"Only the translated text.\"}"
+    "},\"required\":[\"src_lang\",\"transcript\",\"translation\"],\"additionalProperties\":false}";
+
+static const char NOTICE_P3[] = "(ответ обрезан)";
+static const char NOTICE_P4[] = "Не расслышал. Повторите, пожалуйста.";
+
+typedef enum { JOB_TURN, JOB_SYNC, JOB_PREWARM } job_type_t;
+
+typedef struct {
+    job_type_t type;
+    uint32_t turn;
+    ai_mode_t mode;
+    const int16_t *pcm;
+    size_t samples;
+    uint32_t rate;
+    char *text;
+    char lang_a[8], lang_b[8];
+    int64_t t_submit_us;
+    esp_err_t (*fn)(void *ctx);
+    void *ctx;
+    esp_err_t rc;
+    SemaphoreHandle_t done;
+} job_t;
+
+// One chat exchange: settings snapshot, request shape and the streamed body.
+typedef struct {
+    uint32_t turn;
+    ai_mode_t mode;
+    char url[200], key[208], model[100], fallback[100], effort[16], referer[136];
+    int max_tokens;
+    bool openrouter;
+    bool no_reasoning, json_object;          // protocol §9.1 400 auto-fixes
+    char lang_a[8], lang_b[8];
+    const char *user_text;                   // typed or Whisper text; NULL = voice
+    const int16_t *pcm;
+    size_t samples;
+    uint32_t rate;
+    char *prefix, *suffix;
+    size_t pre_len, suf_len;
+    bool upload_reported;
+    int64_t t_attempt_us;
+} chat_t;
+
+static QueueHandle_t s_q;
+static TaskHandle_t s_task;
+static struct {
+    ai_event_cb_t cb;
+    void *ctx;
+} s_listeners[MAX_LISTENERS];
+static int s_n_listeners;
+static uint32_t s_turn_counter;
+static uint32_t s_cancel_upto;
+static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+static double s_cost_session;
+static ai_last_t s_last;
+static char *s_last_req;
+
+// ---- events, cancellation, sync jobs ----------------------------------------------------------
+
+void ai_emit(const ai_event_t *ev)
+{
+    for (int i = 0; i < s_n_listeners; i++) {
+        s_listeners[i].cb(ev, s_listeners[i].ctx);
+    }
+}
+
+esp_err_t ai_add_listener(ai_event_cb_t cb, void *ctx)
+{
+    ESP_RETURN_ON_FALSE(cb, ESP_ERR_INVALID_ARG, TAG, "cb");
+    taskENTER_CRITICAL(&s_mux);
+    bool ok = s_n_listeners < MAX_LISTENERS;
+    if (ok) {
+        s_listeners[s_n_listeners].cb = cb;
+        s_listeners[s_n_listeners].ctx = ctx;
+        s_n_listeners++;
+    }
+    taskEXIT_CRITICAL(&s_mux);
+    return ok ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
+uint32_t ai_client_new_turn(void)
+{
+    return __atomic_add_fetch(&s_turn_counter, 1, __ATOMIC_RELAXED);
+}
+
+bool ai_turn_cancelled(uint32_t turn)
+{
+    return turn && turn <= __atomic_load_n(&s_cancel_upto, __ATOMIC_RELAXED);
+}
+
+bool ai_abort_turn(void *ctx)
+{
+    return ai_turn_cancelled(*(const uint32_t *)ctx);
+}
+
+void ai_client_cancel(uint32_t turn)
+{
+    if (turn == 0) {
+        turn = __atomic_load_n(&s_turn_counter, __ATOMIC_RELAXED);
+    }
+    uint32_t cur = __atomic_load_n(&s_cancel_upto, __ATOMIC_RELAXED);
+    while (turn > cur && !__atomic_compare_exchange_n(&s_cancel_upto, &cur, turn, false, __ATOMIC_RELAXED,
+                                                      __ATOMIC_RELAXED)) {
+    }
+    tts_client_cancel(turn);
+}
+
+esp_err_t ai_run_sync(esp_err_t (*fn)(void *ctx), void *ctx)
+{
+    if (!s_task) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xTaskGetCurrentTaskHandle() == s_task) {
+        return fn(ctx);
+    }
+    StaticSemaphore_t buf;
+    job_t j = { .type = JOB_SYNC, .fn = fn, .ctx = ctx, .rc = ESP_FAIL };
+    j.done = xSemaphoreCreateBinaryStatic(&buf);
+    job_t *p = &j;
+    xQueueSend(s_q, &p, portMAX_DELAY);
+    xSemaphoreTake(j.done, portMAX_DELAY);    // every job ends within its own deadlines
+    vSemaphoreDelete(j.done);
+    return j.rc;
+}
+
+double ai_client_session_cost(void)
+{
+    taskENTER_CRITICAL(&s_mux);
+    double c = s_cost_session;
+    taskEXIT_CRITICAL(&s_mux);
+    return c;
+}
+
+void ai_client_add_cost(double usd)
+{
+    if (usd > 0 && usd < 10) {
+        taskENTER_CRITICAL(&s_mux);
+        s_cost_session += usd;
+        taskEXIT_CRITICAL(&s_mux);
+    }
+}
+
+bool ai_client_last(ai_last_t *out)
+{
+    taskENTER_CRITICAL(&s_mux);
+    *out = s_last;
+    taskEXIT_CRITICAL(&s_mux);
+    return out->valid;
+}
+
+size_t ai_client_last_request_redacted(char *out, size_t len)
+{
+    if (!len) {
+        return 0;
+    }
+    out[0] = 0;
+    taskENTER_CRITICAL(&s_mux);
+    char *r = s_last_req;
+    s_last_req = NULL;          // take it out while copying (no allocation inside the lock)
+    taskEXIT_CRITICAL(&s_mux);
+    if (r) {
+        strlcpy(out, r, len);
+        taskENTER_CRITICAL(&s_mux);
+        if (!s_last_req) {
+            s_last_req = r;
+            r = NULL;
+        }
+        taskEXIT_CRITICAL(&s_mux);
+        free(r);
+    }
+    return strlen(out);
+}
+
+void ai_client_history_clear(void)
+{
+    hist_clear();
+}
+
+int ai_client_history_len(void)
+{
+    return hist_count();
+}
+
+bool ai_client_ready(void)
+{
+    return s_task != NULL;
+}
+
+uint32_t ai_task_stack_free(void)
+{
+    return s_task ? (uint32_t)uxTaskGetStackHighWaterMark(s_task) : 0;
+}
+
+// ---- request body -----------------------------------------------------------------------------
+
+static bool valid_lang(const char *s)
+{
+    size_t n = strlen(s);
+    if (n < 2 || n > 3) {
+        return false;
+    }
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] < 'a' || s[i] > 'z') {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void lower_ascii(char *s)
+{
+    for (; *s; s++) {
+        if (*s >= 'A' && *s <= 'Z') {
+            *s = (char)(*s - 'A' + 'a');
+        }
+    }
+}
+
+static void pick_effort(chat_t *ch)
+{
+    char e[16];
+    cfg_str("ai_effort", e, sizeof(e), "auto");
+    lower_ascii(e);
+    if (!strcmp(e, "auto")) {
+        // Protocol §2.1 rule 2: "minimal" if supported, else the lowest listed, else omit.
+        ai_model_t m;
+        if (ai_model_cache_get(ch->model, &m)) {
+            strlcpy(ch->effort, m.min_effort, sizeof(ch->effort));
+        } else {
+            strlcpy(ch->effort, "minimal", sizeof(ch->effort));
+        }
+    } else if (!strcmp(e, "none")) {
+        strlcpy(ch->effort, "minimal", sizeof(ch->effort));   // "none" is rejected by mandatory models
+    } else {
+        strlcpy(ch->effort, e, sizeof(ch->effort));
+    }
+}
+
+static cJSON *schema_json(const chat_t *ch)
+{
+    if (ch->mode == AI_MODE_ASSISTANT) {
+        return cJSON_Parse(SCHEMA_ASSISTANT);
+    }
+    char buf[sizeof(SCHEMA_TRANSLATOR) + 16];
+    snprintf(buf, sizeof(buf), SCHEMA_TRANSLATOR, ch->lang_a, ch->lang_b);
+    return cJSON_Parse(buf);
+}
+
+static void free_body(chat_t *ch)
+{
+    cJSON_free(ch->prefix);    // prefix is the printed buffer; suffix points into it
+    ch->prefix = ch->suffix = NULL;
+    ch->pre_len = ch->suf_len = 0;
+}
+
+static void store_redacted(const chat_t *ch)
+{
+    char *r = ai_malloc(LAST_REQ_CAP);
+    if (!r) {
+        return;
+    }
+    if (ch->pcm) {
+        snprintf(r, LAST_REQ_CAP, "%.*s<%u base64 chars of WAV>%s", (int)ch->pre_len, ch->prefix,
+                 (unsigned)or_wav_b64_len(ch->samples), ch->suffix ? ch->suffix : "");
+    } else {
+        snprintf(r, LAST_REQ_CAP, "%s", ch->prefix);
+    }
+    taskENTER_CRITICAL(&s_mux);
+    char *old = s_last_req;
+    s_last_req = r;
+    taskEXIT_CRITICAL(&s_mux);
+    free(old);
+}
+
+static esp_err_t chat_build(chat_t *ch)
+{
+    free_body(ch);
+    char ph[24] = "";
+    if (ch->pcm) {
+        snprintf(ph, sizeof(ph), "B64_%08" PRIx32 "%08" PRIx32, esp_random(), esp_random());
+    }
+    cJSON *schema = schema_json(ch);
+    char *sys = ch->mode == AI_MODE_ASSISTANT ? ai_prompt_assistant() : ai_prompt_translator(ch->lang_a, ch->lang_b);
+    cJSON *root = cJSON_CreateObject();
+    if (!schema || !sys || !root) {
+        cJSON_Delete(schema);
+        cJSON_Delete(root);
+        free(sys);
+        return ESP_ERR_NO_MEM;
+    }
+    // Protocol §2.1 rule 1: "models" without "model" for an OpenRouter fallback chain.
+    if (ch->openrouter && ch->fallback[0]) {
+        const char *ids[2] = { ch->model, ch->fallback };
+        cJSON_AddItemToObject(root, "models", cJSON_CreateStringArray(ids, 2));
+    } else {
+        cJSON_AddStringToObject(root, "model", ch->model);
+    }
+    cJSON *msgs = cJSON_AddArrayToObject(root, "messages");
+    cJSON *m = cJSON_CreateObject();
+    cJSON_AddStringToObject(m, "role", "system");
+    if (ch->json_object) {
+        // 400 auto-fix: json_object mode with the schema pasted into the system prompt.
+        char *sj = cJSON_PrintUnformatted(schema);
+        size_t n = strlen(sys) + (sj ? strlen(sj) : 0) + 96;
+        char *s2 = ai_malloc(n);
+        if (s2) {
+            snprintf(s2, n, "%s\n\nReturn only a JSON object that matches this JSON schema:\n%s", sys, sj ? sj : "");
+            free(sys);
+            sys = s2;
+        }
+        cJSON_free(sj);
+    }
+    cJSON_AddStringToObject(m, "content", sys);
+    cJSON_AddItemToArray(msgs, m);
+    free(sys);
+    if (ch->mode == AI_MODE_ASSISTANT) {
+        hist_append_messages(msgs, cfg_int("hist_n", cfg_int("ai_hist", 6)), AI_HIST_MAX_CP);
+    }
+    m = cJSON_CreateObject();
+    cJSON_AddStringToObject(m, "role", "user");
+    if (ch->pcm) {
+        cJSON *parts = cJSON_AddArrayToObject(m, "content");
+        cJSON *t = cJSON_CreateObject();
+        cJSON_AddStringToObject(t, "type", "text");
+        cJSON_AddStringToObject(t, "text", ch->mode == AI_MODE_ASSISTANT ? VOICE_TEXT_AS : VOICE_TEXT_TR);
+        cJSON_AddItemToArray(parts, t);
+        cJSON *a = cJSON_CreateObject();
+        cJSON_AddStringToObject(a, "type", "input_audio");
+        cJSON *ia = cJSON_AddObjectToObject(a, "input_audio");
+        cJSON_AddStringToObject(ia, "data", ph);
+        cJSON_AddStringToObject(ia, "format", "wav");
+        cJSON_AddItemToArray(parts, a);
+    } else {
+        cJSON_AddStringToObject(m, "content", ch->user_text ? ch->user_text : "");
+    }
+    cJSON_AddItemToArray(msgs, m);
+
+    cJSON *rf = cJSON_AddObjectToObject(root, "response_format");
+    if (ch->json_object) {
+        cJSON_AddStringToObject(rf, "type", "json_object");
+        cJSON_Delete(schema);
+    } else {
+        cJSON_AddStringToObject(rf, "type", "json_schema");
+        cJSON *js = cJSON_AddObjectToObject(rf, "json_schema");
+        cJSON_AddStringToObject(js, "name", ch->mode == AI_MODE_ASSISTANT ? "assistant_turn" : "translator_turn");
+        cJSON_AddBoolToObject(js, "strict", true);
+        cJSON_AddItemToObject(js, "schema", schema);
+    }
+    if (ch->openrouter && ch->effort[0] && !ch->no_reasoning) {
+        cJSON *rs = cJSON_AddObjectToObject(root, "reasoning");
+        cJSON_AddStringToObject(rs, "effort", ch->effort);
+        cJSON_AddBoolToObject(rs, "exclude", true);
+    }
+    cJSON_AddNumberToObject(root, "max_tokens", ch->max_tokens);
+    cJSON_AddBoolToObject(root, "stream", false);
+    if (ch->openrouter) {
+        cJSON *pv = cJSON_AddObjectToObject(root, "provider");
+        cJSON_AddBoolToObject(pv, "require_parameters", true);
+    }
+    char *js = cJSON_PrintUnformatted(root);     // cJSON leaves UTF-8 unescaped
+    cJSON_Delete(root);
+    if (!js) {
+        return ESP_ERR_NO_MEM;
+    }
+    ch->prefix = js;
+    if (ch->pcm) {
+        char *p = strstr(js, ph);
+        if (!p) {
+            cJSON_free(js);
+            ch->prefix = NULL;
+            return ESP_FAIL;
+        }
+        *p = 0;
+        ch->pre_len = (size_t)(p - js);
+        ch->suffix = p + strlen(ph);
+        ch->suf_len = strlen(ch->suffix);
+    } else {
+        ch->pre_len = strlen(js);
+    }
+    store_redacted(ch);
+    return ESP_OK;
+}
+
+static esp_err_t chat_write_body(or_conn_t *c, void *ctx)
+{
+    chat_t *ch = ctx;
+    esp_err_t e = or_write_all(c, ch->prefix, ch->pre_len);
+    if (e == ESP_OK && ch->pcm) {
+        e = or_write_b64_wav(c, ch->pcm, ch->samples, ch->rate);
+    }
+    if (e == ESP_OK && ch->suffix) {
+        e = or_write_all(c, ch->suffix, ch->suf_len);
+    }
+    if (e == ESP_OK && !ch->upload_reported) {
+        ch->upload_reported = true;
+        ai_event_t ev = { .type = AI_EV_UPLOAD_DONE, .turn = ch->turn,
+                          .i = (int32_t)((esp_timer_get_time() - ch->t_attempt_us) / 1000) };
+        ai_emit(&ev);
+    }
+    return e;
+}
+
+static int64_t body_len(const chat_t *ch)
+{
+    return (int64_t)ch->pre_len + (ch->pcm ? (int64_t)or_wav_b64_len(ch->samples) : 0) + (int64_t)ch->suf_len;
+}
+
+// ---- silence trim (protocol §1.4: energy VAD, 200 ms margins) ---------------------------------
+
+static int cmp_int(const void *a, const void *b)
+{
+    return *(const int *)a - *(const int *)b;
+}
+
+static void trim_clip(const int16_t *pcm, size_t n, uint32_t rate, size_t *first, size_t *count)
+{
+    *first = 0;
+    *count = n;
+    size_t frame = rate / 50;                  // 20 ms
+    size_t nf = frame ? n / frame : 0;
+    if (nf < 10) {
+        return;
+    }
+    int *db = ai_malloc(nf * 2 * sizeof(int));
+    if (!db) {
+        return;
+    }
+    int *sorted = db + nf;
+    for (size_t f = 0; f < nf; f++) {
+        double s = 0;
+        for (size_t k = 0; k < frame; k++) {
+            double v = pcm[f * frame + k];
+            s += v * v;
+        }
+        double ms = s / (double)frame;
+        // dBFS x10 without libm: count halvings of the power (3.01 dB each)
+        int d = 0;
+        double ref = 32768.0 * 32768.0;
+        while (ms < ref && d > -960) {
+            ref /= 2;
+            d -= 30;
+        }
+        db[f] = d;
+        sorted[f] = d;
+    }
+    qsort(sorted, nf, sizeof(int), cmp_int);
+    int floor = sorted[nf / 10];
+    int thr = floor + 100 > -500 ? floor + 100 : -500;   // 10 dB over the floor, at least -50 dBFS
+    size_t a = nf, b = 0;
+    for (size_t f = 0; f < nf; f++) {
+        if (db[f] > thr) {
+            if (a == nf) {
+                a = f;
+            }
+            b = f;
+        }
+    }
+    free(db);
+    if (a == nf) {
+        return;                                // nothing above the floor: let the model decide
+    }
+    const size_t margin = 10;                  // 200 ms
+    size_t s0 = a > margin ? a - margin : 0;
+    size_t s1 = b + 1 + margin < nf ? b + 1 + margin : nf;
+    *first = s0 * frame;
+    *count = (s1 == nf ? n : s1 * frame) - *first;
+}
+
+// ---- response parsing (protocol §2.3) ---------------------------------------------------------
+
+typedef struct {
+    char *transcript, *text;
+    char lang[8], src_lang[8], finish[16], model[64], provider[32];
+    bool truncated;
+    double cost;
+    int prompt_tokens, completion_tokens, audio_tokens, reasoning_tokens;
+} parsed_t;
+
+static void parsed_free(parsed_t *p)
+{
+    free(p->transcript);
+    free(p->text);
+    p->transcript = p->text = NULL;
+}
+
+// Content -> JSON object text: strip a code fence, keep the first '{' to the last '}'.
+static char *content_json(const char *content)
+{
+    const char *s = content;
+    while (*s == ' ' || *s == '\n' || *s == '\r' || *s == '\t') {
+        s++;
+    }
+    if (!strncmp(s, "```", 3)) {
+        const char *nl = strchr(s, '\n');
+        s = nl ? nl + 1 : s + 3;
+    }
+    const char *a = strchr(s, '{');
+    const char *b = strrchr(s, '}');
+    if (!a || !b || b < a) {
+        return ai_strdup(s);                   // truncated: the salvage path reads it
+    }
+    return ai_strndup(a, (size_t)(b - a + 1));
+}
+
+// ESP_OK, or the local row id in *row ("P2", "P5") / "P1" when the body carries an error.
+static esp_err_t parse_chat(const chat_t *ch, const char *body, parsed_t *out, const char **row)
+{
+    memset(out, 0, sizeof(*out));
+    *row = "P2";
+    cJSON *root = cJSON_Parse(body);
+    if (!root) {
+        return ESP_FAIL;
+    }
+    if (cJSON_IsObject(cJSON_GetObjectItemCaseSensitive(root, "error"))) {
+        cJSON_Delete(root);
+        *row = "P1";
+        return ESP_FAIL;
+    }
+    strlcpy(out->model, ai_json_str(root, "model") ? ai_json_str(root, "model") : "", sizeof(out->model));
+    strlcpy(out->provider, ai_json_str(root, "provider") ? ai_json_str(root, "provider") : "", sizeof(out->provider));
+    const cJSON *u = cJSON_GetObjectItemCaseSensitive(root, "usage");
+    if (cJSON_IsObject(u)) {
+        out->cost = ai_json_num(u, "cost", 0);
+        out->prompt_tokens = (int)ai_json_num(u, "prompt_tokens", 0);
+        out->completion_tokens = (int)ai_json_num(u, "completion_tokens", 0);
+        out->audio_tokens = (int)ai_json_num(cJSON_GetObjectItemCaseSensitive(u, "prompt_tokens_details"),
+                                             "audio_tokens", 0);
+        out->reasoning_tokens = (int)ai_json_num(cJSON_GetObjectItemCaseSensitive(u, "completion_tokens_details"),
+                                                 "reasoning_tokens", 0);
+    }
+    const cJSON *ch0 = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(root, "choices"), 0);
+    const cJSON *msg = cJSON_GetObjectItemCaseSensitive(ch0, "message");
+    const char *fin = ai_json_str(ch0, "finish_reason");
+    strlcpy(out->finish, fin ? fin : "", sizeof(out->finish));
+    const cJSON *refusal = cJSON_GetObjectItemCaseSensitive(msg, "refusal");
+    if (!strcmp(out->finish, "content_filter") || (refusal && !cJSON_IsNull(refusal))) {
+        cJSON_Delete(root);
+        *row = "P5";
+        return ESP_FAIL;
+    }
+    if (!strcmp(out->finish, "error")) {
+        cJSON_Delete(root);
+        *row = "P1";
+        return ESP_FAIL;
+    }
+    const char *content = ai_json_str(msg, "content");
+    if (!content) {
+        cJSON_Delete(root);
+        return ESP_FAIL;
+    }
+    char *cj = content_json(content);
+    cJSON_Delete(root);
+    if (!cj) {
+        return ESP_ERR_NO_MEM;
+    }
+    const char *k_text = ch->mode == AI_MODE_ASSISTANT ? "reply" : "translation";
+    cJSON *o = cJSON_Parse(cj);
+    if (!o) {
+        if (!strcmp(out->finish, "length")) {
+            // P3: salvage what was generated; it is not stored in the history
+            out->text = ai_json_salvage(cj, k_text);
+            out->transcript = ai_json_salvage(cj, "transcript");
+            free(cj);
+            if (out->text && out->text[0]) {
+                if (!out->transcript) {
+                    out->transcript = ai_strdup("");
+                }
+                out->truncated = true;
+                strlcpy(out->lang, ch->mode == AI_MODE_ASSISTANT ? "ru" : "", sizeof(out->lang));
+                return ESP_OK;
+            }
+            parsed_free(out);
+            return ESP_FAIL;
+        }
+        free(cj);
+        return ESP_FAIL;
+    }
+    free(cj);
+    const char *tr = ai_json_str(o, "transcript");
+    const char *tx = ai_json_str(o, k_text);
+    const char *lg = ai_json_str(o, ch->mode == AI_MODE_ASSISTANT ? "lang" : "src_lang");
+    if (!tr || !tx) {
+        cJSON_Delete(o);
+        return ESP_FAIL;
+    }
+    out->transcript = ai_strdup(tr);
+    out->text = ai_strdup(tx);
+    char l[8];
+    strlcpy(l, lg ? lg : "", sizeof(l));
+    lower_ascii(l);
+    if (ch->mode == AI_MODE_ASSISTANT) {
+        strlcpy(out->lang, ai_lang_in_enum(l) ? l : "other", sizeof(out->lang));
+    } else {
+        strlcpy(out->src_lang, (!strcmp(l, ch->lang_a) || !strcmp(l, ch->lang_b)) ? l : "other",
+                sizeof(out->src_lang));
+    }
+    out->truncated = !strcmp(out->finish, "length");
+    cJSON_Delete(o);
+    if (!out->transcript || !out->text) {
+        parsed_free(out);
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
+// ---- turn -------------------------------------------------------------------------------------
+
+static void finish_last(const ai_result_t *res, const or_err_t *err)
+{
+    taskENTER_CRITICAL(&s_mux);
+    memset(&s_last, 0, sizeof(s_last));
+    s_last.valid = true;
+    s_last.turn = res->turn;
+    s_last.mode = res->mode;
+    s_last.ok = err == NULL;
+    if (err) {
+        strlcpy(s_last.err_id, err->id, sizeof(s_last.err_id));
+        strlcpy(s_last.err_msg, err->msg_ru, sizeof(s_last.err_msg));
+    }
+    strlcpy(s_last.model, res->model, sizeof(s_last.model));
+    strlcpy(s_last.provider, res->provider, sizeof(s_last.provider));
+    strlcpy(s_last.gen_id, res->gen_id, sizeof(s_last.gen_id));
+    strlcpy(s_last.finish, res->finish, sizeof(s_last.finish));
+    s_last.cost = res->cost;
+    s_last.prompt_tokens = res->prompt_tokens;
+    s_last.completion_tokens = res->completion_tokens;
+    s_last.audio_tokens = res->audio_tokens;
+    s_last.truncated = res->truncated;
+    s_last.unheard = res->unheard;
+    s_last.stt_used = res->stt_used;
+    s_last.t = res->t;
+    taskEXIT_CRITICAL(&s_mux);
+}
+
+static void emit_error(const ai_result_t *res, const or_err_t *e)
+{
+    finish_last(res, e);
+    if (!strcmp(e->id, "AB")) {
+        ESP_LOGI(TAG, "turn %" PRIu32 " cancelled", res->turn);
+        return;                                // cancelled turns report nothing (the app moved on)
+    }
+    ESP_LOGW(TAG, "turn %" PRIu32 " failed: %s (%s)", res->turn, e->id, e->message);
+    ai_event_t ev = { .type = AI_EV_ERROR, .turn = res->turn, .err = e };
+    ai_emit(&ev);
+}
+
+static bool mentions_any(const char *s, const char *const *words, int n)
+{
+    for (int i = 0; i < n; i++) {
+        if (ai_contains_ci(s, words[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void run_turn(job_t *j)
+{
+    ai_result_t res = { .turn = j->turn, .mode = j->mode };
+    or_err_t err;
+    parsed_t pr = { 0 };
+    char *stt_text = NULL;
+    chat_t *ch = ai_calloc(1, sizeof(chat_t));
+    bool voice_in = j->pcm && j->samples;
+    bool failed = true;
+    if (!ch) {
+        or_err_local(&err, "M0");
+        goto done;
+    }
+    ch->turn = j->turn;
+    ch->mode = j->mode;
+    char base[136];
+    cfg_str("ai_url", base, sizeof(base), "https://openrouter.ai/api/v1");
+    ai_join_url(ch->url, sizeof(ch->url), base, "chat/completions");
+    cfg_str("ai_key", ch->key, sizeof(ch->key), "");
+    cfg_str("ai_model", ch->model, sizeof(ch->model), "google/gemini-3.1-flash-lite");
+    cfg_str("ai_model_fb", ch->fallback, sizeof(ch->fallback), "google/gemini-3.5-flash-lite");
+    cfg_str("ref_url", ch->referer, sizeof(ch->referer), "");
+    ch->openrouter = or_is_openrouter(base);
+    ch->max_tokens = j->mode == AI_MODE_ASSISTANT ? (int)cfg_int("ai_maxtok", 1024) : MAX_TOK_TR;
+    pick_effort(ch);
+    strlcpy(ch->lang_a, j->lang_a, sizeof(ch->lang_a));
+    strlcpy(ch->lang_b, j->lang_b, sizeof(ch->lang_b));
+    hist_touch(j->mode, ch->model, (int)cfg_int("hist_idle_min", 10));
+
+    if (ai_turn_cancelled(j->turn)) {
+        or_err_local(&err, "AB");
+        goto done;
+    }
+    if (!ai_net_up()) {
+        or_err_local(&err, "N0");
+        goto done;
+    }
+    if (!ch->key[0]) {
+        or_err_local(&err, "K0");
+        goto done;
+    }
+    if (voice_in) {
+        size_t first, count;
+        trim_clip(j->pcm, j->samples, j->rate, &first, &count);
+        ch->pcm = j->pcm + first;
+        ch->samples = count;
+        ch->rate = j->rate;
+        res.t.clip_ms = (uint32_t)(count * 1000 / (j->rate ? j->rate : 16000));
+    } else {
+        ch->user_text = j->text ? j->text : "";
+    }
+
+    // STT first when asked to, or when the cached model entry says it takes no audio (protocol §6).
+    ai_model_t mi;
+    bool stt_first = cfg_int("stt_mode", 0) == 1 || (ai_model_cache_get(ch->model, &mi) && !mi.audio);
+    bool stt_done = false;
+    or_retry_t rs;
+    or_retry_init(&rs, false);
+    int64_t deadline = j->t_submit_us + TURN_RETRY_US;
+    bool fix_reasoning = false, fix_schema = false, ctx_cleared = false, dirty = true;
+
+    for (;;) {
+        if (ch->pcm && stt_first && !stt_done) {
+            char ui_lang[8];
+            cfg_str("ui_lang", ui_lang, sizeof(ui_lang), "ru");
+            double c = 0;
+            uint32_t ms = 0;
+            stt_done = true;
+            if (stt_transcribe_ex(j->turn, ch->pcm, ch->samples, ch->rate,
+                                  j->mode == AI_MODE_ASSISTANT ? ui_lang : NULL, &stt_text, &c, &ms, &err) != ESP_OK) {
+                goto done;
+            }
+            res.cost += c;
+            res.t.stt_ms = ms;
+            res.stt_used = true;
+            ch->pcm = NULL;
+            ch->user_text = stt_text;
+            dirty = true;
+            if (!stt_text[0]) {
+                // nothing intelligible: P4 without a chat round trip
+                pr.transcript = ai_strdup("");
+                pr.text = ai_strdup("");
+                if (!pr.transcript || !pr.text) {
+                    or_err_local(&err, "M0");
+                    goto done;
+                }
+                failed = false;
+                goto done;
+            }
+        }
+        if (dirty) {
+            if (chat_build(ch) != ESP_OK) {
+                or_err_local(&err, "M0");
+                goto done;
+            }
+            dirty = false;
+        }
+        or_req_t q = {
+            .method = HTTP_METHOD_POST, .url = ch->url, .bearer = ch->key, .accept = "application/json",
+            .referer = ch->referer, .to = OR_TO_CHAT, .body_len = body_len(ch),
+            .write_body = chat_write_body, .body_ctx = ch, .abort = ai_abort_turn, .abort_ctx = &ch->turn,
+        };
+        or_resp_t r;
+        char *body = NULL;
+        ch->t_attempt_us = esp_timer_get_time();
+        esp_err_t e = or_exchange(&q, &r, &body, OR_CAP_CHAT, NULL);
+        res.t.upload_ms = r.t_sent_us ? (uint32_t)((r.t_sent_us - r.t_start_us) / 1000) : 0;
+        res.t.first_byte_ms = r.t_headers_us ? (uint32_t)((r.t_headers_us - r.t_sent_us) / 1000) : 0;
+        res.t.bytes_up = (uint32_t)r.bytes_sent;
+        res.t.http_status = r.status;
+        res.t.reused = r.reused;
+        strlcpy(res.gen_id, r.gen_id, sizeof(res.gen_id));
+        const char *row = NULL;
+        if (e == ESP_OK && r.status == 200 && body) {
+            parsed_free(&pr);
+            if (parse_chat(ch, body, &pr, &row) == ESP_OK) {
+                // Translator: an empty translation of real speech is retried once (protocol §3).
+                if (ch->mode == AI_MODE_TRANSLATOR && pr.transcript[0] && !pr.text[0]) {
+                    row = "P2";
+                } else {
+                    free(body);
+                    failed = false;
+                    break;
+                }
+            }
+        }
+        if (row && strcmp(row, "P1")) {
+            or_err_local(&err, row);
+        } else {
+            or_classify(OR_KIND_CHAT, &r, body, &err);
+        }
+        free(body);
+        if (!strcmp(err.id, "AB") || !strcmp(err.id, "P5")) {
+            goto done;
+        }
+        // Automatic fixes of protocol §9.1 (not counted as retries).
+        static const char *const W_AUDIO[] = { "audio", "modalit", "endpoint" };
+        static const char *const W_REASON[] = { "reasoning", "effort" };
+        static const char *const W_SCHEMA[] = { "response_format", "schema", "structured" };
+        if (ch->pcm && !stt_done && (!strcmp(err.id, "404") || !strcmp(err.id, "400")) &&
+            mentions_any(err.message, W_AUDIO, 3)) {
+            ESP_LOGW(TAG, "model rejects audio input, falling back to STT");
+            stt_first = true;
+            continue;
+        }
+        if (!strcmp(err.id, "400") && !fix_reasoning && ch->effort[0] && mentions_any(err.message, W_REASON, 2)) {
+            fix_reasoning = ch->no_reasoning = dirty = true;
+            continue;
+        }
+        if (!strcmp(err.id, "400") && !fix_schema && mentions_any(err.message, W_SCHEMA, 3)) {
+            fix_schema = ch->json_object = dirty = true;
+            continue;
+        }
+        if (!strcmp(err.id, "400ctx") && !ctx_cleared) {
+            ctx_cleared = dirty = true;
+            hist_clear();
+        }
+        uint32_t delay;
+        if (!or_retry_next(&rs, &err, deadline, &delay)) {
+            goto done;
+        }
+        res.t.retries++;
+        ESP_LOGW(TAG, "turn %" PRIu32 ": %s (%s), retry %" PRIu32 " in %" PRIu32 " ms", j->turn, err.id,
+                 err.message, res.t.retries, delay);
+        ai_event_t ev = { .type = AI_EV_RETRY, .turn = j->turn, .i = (int32_t)res.t.retries, .err = &err };
+        ai_emit(&ev);
+        if (!ai_sleep_ms(delay, ai_abort_turn, &ch->turn)) {
+            or_err_local(&err, "AB");
+            goto done;
+        }
+    }
+
+done:
+    if (voice_in) {
+        ai_event_t ev = { .type = AI_EV_RELEASED, .turn = j->turn };
+        ai_emit(&ev);
+    }
+    res.t.ai_ms = (uint32_t)((esp_timer_get_time() - j->t_submit_us) / 1000);
+    if (ch) {
+        free_body(ch);
+        memset(ch->key, 0, sizeof(ch->key));
+    }
+    if (failed) {
+        emit_error(&res, &err);
+    } else {
+        res.cost += pr.cost;
+        strlcpy(res.finish, pr.finish, sizeof(res.finish));
+        strlcpy(res.model, pr.model, sizeof(res.model));
+        strlcpy(res.provider, pr.provider, sizeof(res.provider));
+        res.prompt_tokens = pr.prompt_tokens;
+        res.completion_tokens = pr.completion_tokens;
+        res.audio_tokens = pr.audio_tokens;
+        res.reasoning_tokens = pr.reasoning_tokens;
+        res.truncated = pr.truncated;
+        // typed and Whisper text are shown as the transcript; the model's echo is ignored
+        res.transcript = (!voice_in || res.stt_used) ? (char *)(stt_text ? stt_text : (j->text ? j->text : ""))
+                                                     : pr.transcript;
+        res.text = pr.text;
+        res.unheard = voice_in && !res.transcript[0];
+        if (j->mode == AI_MODE_ASSISTANT) {
+            strlcpy(res.lang, pr.lang[0] ? pr.lang : "ru", sizeof(res.lang));
+            strlcpy(res.tts_lang, res.lang, sizeof(res.tts_lang));
+        } else {
+            strlcpy(res.src_lang, pr.src_lang[0] ? pr.src_lang : "other", sizeof(res.src_lang));
+            res.other_lang = !strcmp(res.src_lang, "other");
+            const char *target = !strcmp(res.src_lang, j->lang_a) ? j->lang_b : j->lang_a;
+            strlcpy(res.lang, target, sizeof(res.lang));
+            bool ignore = res.other_lang && cfg_int("tr_other", 0) == 1;
+            strlcpy(res.tts_lang, ignore ? "" : target, sizeof(res.tts_lang));
+        }
+        if (res.unheard || !res.text[0]) {
+            res.tts_lang[0] = 0;
+        }
+        res.notice_ru = res.unheard ? NOTICE_P4 : (res.truncated ? NOTICE_P3 : NULL);
+        if (j->mode == AI_MODE_ASSISTANT && !res.unheard && !res.truncated && res.transcript[0] && res.text[0]) {
+            hist_add(res.transcript, res.text, res.lang);
+        }
+        ai_client_add_cost(res.cost);
+        ESP_LOGI(TAG, "turn %" PRIu32 " ok: %s via %s (%s), %" PRIu32 " ms, $%.6f", j->turn, res.model, res.provider,
+                 res.gen_id, res.t.ai_ms, res.cost);
+        finish_last(&res, NULL);
+        ai_event_t ev = { .type = AI_EV_RESULT, .turn = j->turn, .result = &res };
+        ai_emit(&ev);
+    }
+    parsed_free(&pr);
+    free(stt_text);
+    free(ch);
+}
+
+// ---- prewarm ----------------------------------------------------------------------------------
+
+static void run_prewarm(void)
+{
+    char base[136];
+    cfg_str("ai_url", base, sizeof(base), "https://openrouter.ai/api/v1");
+    or_conn_t *c = or_conn_get(base);
+    if (!c || or_conn_live(c) || !ai_net_up()) {
+        return;
+    }
+    int64_t t0 = esp_timer_get_time();
+    ai_key_info_t k;
+    ai_client_key_info(&k, NULL);       // GET /key: the TLS handshake overlaps the user's speech
+    char model[100];
+    cfg_str("ai_model", model, sizeof(model), "google/gemini-3.1-flash-lite");
+    ai_model_t m;
+    if (!ai_model_cache_get(model, &m)) {
+        ai_client_check_model(model, &m, NULL);
+    }
+    ESP_LOGI(TAG, "prewarm %" PRId64 " ms", (esp_timer_get_time() - t0) / 1000);
+}
+
+esp_err_t ai_client_prewarm(void)
+{
+    ESP_RETURN_ON_FALSE(s_task, ESP_ERR_INVALID_STATE, TAG, "not started");
+    char base[136];
+    cfg_str("ai_url", base, sizeof(base), "https://openrouter.ai/api/v1");
+    or_conn_t *c = or_conn_get(base);
+    if (or_conn_live(c)) {
+        return ESP_OK;
+    }
+    job_t *j = ai_calloc(1, sizeof(job_t));
+    ESP_RETURN_ON_FALSE(j, ESP_ERR_NO_MEM, TAG, "job");
+    j->type = JOB_PREWARM;
+    if (xQueueSend(s_q, &j, 0) != pdTRUE) {
+        free(j);
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
+}
+
+// ---- task and submit --------------------------------------------------------------------------
+
+static void ai_task(void *arg)
+{
+    for (;;) {
+        job_t *j;
+        if (xQueueReceive(s_q, &j, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        switch (j->type) {
+        case JOB_TURN:
+            run_turn(j);
+            free(j->text);
+            free(j);
+            break;
+        case JOB_SYNC:
+            j->rc = j->fn(j->ctx);
+            xSemaphoreGive(j->done);           // j lives on the caller's stack
+            break;
+        case JOB_PREWARM:
+            run_prewarm();
+            free(j);
+            break;
+        }
+    }
+}
+
+esp_err_t ai_client_submit(const ai_request_t *r)
+{
+    ESP_RETURN_ON_FALSE(s_task, ESP_ERR_INVALID_STATE, TAG, "not started");
+    ESP_RETURN_ON_FALSE(r && r->turn, ESP_ERR_INVALID_ARG, TAG, "turn");
+    ESP_RETURN_ON_FALSE((r->pcm && r->samples) || r->text, ESP_ERR_INVALID_ARG, TAG, "no input");
+    job_t *j = ai_calloc(1, sizeof(job_t));
+    ESP_RETURN_ON_FALSE(j, ESP_ERR_NO_MEM, TAG, "job");
+    j->type = JOB_TURN;
+    j->turn = r->turn;
+    j->mode = r->mode;
+    j->pcm = r->pcm;
+    j->samples = r->pcm ? r->samples : 0;
+    j->rate = r->rate ? r->rate : 16000;
+    j->t_submit_us = esp_timer_get_time();
+    if (!j->pcm) {
+        j->text = ai_strdup(r->text);
+        if (!j->text) {
+            free(j);
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    // Translator languages: ISO codes, A != B (the UI enforces it; repair bad values here).
+    char a[8], b[8];
+    if (r->lang_a) {
+        strlcpy(a, r->lang_a, sizeof(a));
+    } else {
+        cfg_str("tr_lang_a", a, sizeof(a), "ru");
+    }
+    if (r->lang_b) {
+        strlcpy(b, r->lang_b, sizeof(b));
+    } else {
+        cfg_str("tr_lang_b", b, sizeof(b), "en");
+    }
+    lower_ascii(a);
+    lower_ascii(b);
+    if (!valid_lang(a)) {
+        strlcpy(a, "ru", sizeof(a));
+    }
+    if (!valid_lang(b) || !strcmp(a, b)) {
+        strlcpy(b, strcmp(a, "en") ? "en" : "ru", sizeof(b));
+    }
+    strlcpy(j->lang_a, a, sizeof(j->lang_a));
+    strlcpy(j->lang_b, b, sizeof(j->lang_b));
+    if (xQueueSend(s_q, &j, 0) != pdTRUE) {
+        free(j->text);
+        free(j);
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
+}
+
+esp_err_t ai_client_init(void)
+{
+    if (s_task) {
+        return ESP_OK;
+    }
+    // Every cJSON tree and printed string goes to PSRAM.
+    cJSON_Hooks hooks = { .malloc_fn = ai_malloc, .free_fn = free };
+    cJSON_InitHooks(&hooks);
+    hist_init();
+    s_q = xQueueCreate(AI_Q_LEN, sizeof(job_t *));
+    ESP_RETURN_ON_FALSE(s_q, ESP_ERR_NO_MEM, TAG, "queue");
+    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(ai_task, "ai", AI_STACK, NULL, AI_PRIO, &s_task, AI_CORE,
+                                                    MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "task");
+    ESP_RETURN_ON_ERROR(tts_client_init(), TAG, "tts");
+    ESP_LOGI(TAG, "ready");
+    return ESP_OK;
+}
