@@ -6,6 +6,7 @@
 #include "audio_in.h"
 #include "audio_out.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,16 +24,60 @@
 #define SCREEN_W 360
 #define SCREEN_H 360
 
+// Commands print their own lines and return 0/1; the trampoline prints the final OK/ERR.
 static int ok(void)
 {
-    printf("OK\n");
     return 0;
 }
 
 static int err(const char *why)
 {
-    printf("ERR %s\n", why);
+    return dc_fail("%s", why);
+}
+
+int dc_fail(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    printf("error: ");
+    vprintf(fmt, ap);
+    printf("\n");
+    va_end(ap);
     return 1;
+}
+
+static int trampoline(void *ctx, int argc, char **argv)
+{
+    int rc = ((dc_cmd_fn)ctx)(argc, argv);
+    printf(rc == 0 ? "OK\n" : "ERR %d\n", rc);
+    fflush(stdout);
+    return rc;
+}
+
+#define MAX_PENDING 48
+typedef struct {
+    const char *name, *help;
+    dc_cmd_fn fn;
+} pending_t;
+static pending_t s_pending[MAX_PENDING];
+static int s_n_pending;
+static bool s_started;
+
+static void register_now(const char *name, const char *help, dc_cmd_fn fn)
+{
+    const esp_console_cmd_t cmd = {
+        .command = name, .help = help, .func_w_context = trampoline, .context = (void *)fn,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+}
+
+void devconsole_register(const char *name, const char *help, dc_cmd_fn fn)
+{
+    if (s_started) {
+        register_now(name, help, fn);
+    } else if (s_n_pending < MAX_PENDING) {
+        s_pending[s_n_pending++] = (pending_t){ name, help, fn };
+    }
 }
 
 static const char *reset_reason_str(esp_reset_reason_t r)
@@ -301,17 +346,16 @@ static int cmd_touchlog(int argc, char **argv)
 
 static int cmd_reboot(int argc, char **argv)
 {
-    ok();
+    printf("OK\n");
     fflush(stdout);
     vTaskDelay(pdMS_TO_TICKS(100));
     esp_restart();
     return 0;
 }
 
-static void reg(const char *name, const char *help, esp_console_cmd_func_t fn)
+static void reg(const char *name, const char *help, dc_cmd_fn fn)
 {
-    const esp_console_cmd_t cmd = { .command = name, .help = help, .func = fn };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+    devconsole_register(name, help, fn);
 }
 
 esp_err_t devconsole_start(void)
@@ -325,6 +369,10 @@ esp_err_t devconsole_start(void)
     ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_cfg, &repl_cfg, &repl));
 
     esp_console_register_help_command();
+    s_started = true;
+    for (int i = 0; i < s_n_pending; i++) {
+        register_now(s_pending[i].name, s_pending[i].help, s_pending[i].fn);
+    }
     reg("info", "Firmware, panel and memory info", cmd_info);
     reg("heap", "Heap statistics", cmd_heap);
     reg("shot", "Screenshot as base64 RGB565 (SHOT: lines)", cmd_shot);

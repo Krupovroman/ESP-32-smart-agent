@@ -12,14 +12,12 @@
 
 static int ok(void)
 {
-    printf("OK\n");
     return 0;
 }
 
 static int err(const char *why)
 {
-    printf("ERR %s\n", why);
-    return 1;
+    return dc_fail("%s", why);
 }
 
 static int cmd_get(int argc, char **argv)
@@ -157,10 +155,9 @@ static int cmd_net(int argc, char **argv)
     return e == ESP_OK ? ok() : err(esp_err_to_name(e));
 }
 
-static void reg(const char *name, const char *help, esp_console_cmd_func_t fn)
+static void reg(const char *name, const char *help, dc_cmd_fn fn)
 {
-    const esp_console_cmd_t cmd = { .command = name, .help = help, .func = fn };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+    devconsole_register(name, help, fn);
 }
 
 void cmd_net_register(void)
