@@ -10,7 +10,9 @@
 #include "tts_client.h"
 #include "ui.h"
 #include "ui_str.h"
+#include "ui_sym.h"
 
+#include <ctype.h>
 #include <inttypes.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -33,7 +35,6 @@ static const char *TAG = "app";
 #define TICK_FAST_MS    20          // recording or a press pending: live speech detection, 400 ms hold
 #define TICK_MS         100
 #define CARD_REPEAT_MS  20000       // the same error card again within this time: orb and status only
-#define ELLIPSIS        "\xE2\x80\xA6"
 
 typedef enum { TURN_NONE, TURN_VOICE, TURN_TEXT, TURN_REPLAY } turn_kind_t;
 
@@ -54,6 +55,7 @@ typedef struct {
     int8_t press_side;
     bool ignore_up;                 // that press sent a latched recording: its release does nothing
     bool pending;                   // pressed while busy: becomes a recording if still held at APP_TAP_MS
+    uint32_t pending_preroll;       // pre-roll of that recording
     bool boot_ignored;              // the UI context ignored BOOT: swallow its release as well
     // recording
     bool latched, rec_vad;
@@ -409,7 +411,7 @@ static void close_placeholder(void)
 {
     // a waveform bubble that never got its transcript, so a later typed text does not land in it
     if (s_a.placeholder) {
-        ui_post_text(UI_USER_MSG, UI_SIDE_AUTO, ELLIPSIS);
+        ui_post_text(UI_USER_MSG, UI_SIDE_AUTO, TXT_ELLIPSIS);
         s_a.placeholder = false;
     }
 }
@@ -496,7 +498,8 @@ static void maybe_divider(void)
 
 // ---- recording
 
-static void start_recording(int8_t side)
+// preroll_ms: microphone audio from before the press that is kept (ui.md 5.1)
+static void start_recording(int8_t side, uint32_t preroll_ms)
 {
     ready_t r = ready();
     if (r != RDY_OK) {
@@ -509,7 +512,7 @@ static void start_recording(int8_t side)
     ai_client_prewarm();            // the TLS handshake (2-3 s on the first request) runs while the user speaks
     uint32_t max_ms = (uint32_t)app_cfg_int("max_rec_s", 20) * 1000u;
     s_a.clip_ok = false;            // this recording overwrites the kept clip
-    if (audio_in_start(max_ms) != ESP_OK) {
+    if (audio_in_start_ex(max_ms, preroll_ms) != ESP_OK) {
         turn_reset();
         show_error("MIC", NULL);
         return;
@@ -531,8 +534,9 @@ static void start_recording(int8_t side)
     app_vad_cfg(&c, NULL);
     vad_live_init(&s_a.vad, &c, mic ? app_io_ambient() : VAD_NO_HINT);
     s_a.vad_pos = 0;
-    devcon_event("rec", "\"phase\":\"start\",\"turn\":%u,\"src\":\"%s\",\"side\":%d,\"max_ms\":%u",
-                 (unsigned)s_a.turn, mic ? "mic" : "inject", s_a.rec_side, (unsigned)max_ms);
+    devcon_event("rec", "\"phase\":\"start\",\"turn\":%u,\"src\":\"%s\",\"side\":%d,\"max_ms\":%u,\"preroll_ms\":%u",
+                 (unsigned)s_a.turn, mic ? "mic" : "inject", s_a.rec_side, (unsigned)max_ms,
+                 mic ? (unsigned)preroll_ms : 0u);
     ui_state(UI_ST_REC);
     set_state(APP_LISTENING);
 }
@@ -810,16 +814,31 @@ static void on_result(app_result_t *r)
         side = !strcmp(r->src_lang, a) ? UI_SIDE_A : UI_SIDE_B;    // "other" is translated into A
     }
     if (s_a.placeholder) {
-        ui_post_text(UI_USER_MSG, side, r->transcript[0] ? r->transcript : ELLIPSIS);
+        ui_post_text(UI_USER_MSG, side, r->transcript[0] ? r->transcript : TXT_ELLIPSIS);
         s_a.placeholder = false;
     }
     if (s_a.hints > 0) {
         ui_i(UI_SET_HINTS, --s_a.hints);
     }
+    bool ignore = false;
     if (s_a.mode == 1 && r->other_lang) {
         ui_post_text(UI_STATUS, 0, loc("Другой язык", "Other language"));
+        ignore = app_cfg_int("tr_other", 0) == 1;     // 1 = show the transcript only
+    } else if (s_a.mode == 1) {
+        // ui.md 5.5: the direction ("EN → RU") is shown for 2 s
+        char dir[24], s1[4] = "", s2[4] = "";
+        for (int i = 0; i < 3 && r->src_lang[i]; i++) {
+            s1[i] = (char)toupper((unsigned char)r->src_lang[i]);
+            s1[i + 1] = 0;
+        }
+        for (int i = 0; i < 3 && r->lang[i]; i++) {
+            s2[i] = (char)toupper((unsigned char)r->lang[i]);
+            s2[i + 1] = 0;
+        }
+        snprintf(dir, sizeof(dir), "%s " TXT_ARROW " %s", s1, s2);
+        ui_post_text(UI_STATUS, 0, dir);
     }
-    if (!r->text[0]) {
+    if (!r->text[0] || ignore) {
         finish_turn(UI_ST_ANSWERED);
         return;
     }
@@ -961,7 +980,8 @@ void app_ptt_down(int8_t side, app_src_t src)
     switch (s_a.st) {
     case APP_IDLE:
     case APP_ERROR:
-        start_recording(side);
+        // 250 ms before the press; a chip reports its press only after the 400 ms hold: 500 ms
+        start_recording(side, src == APP_SRC_CHIP ? 500 : 250);
         break;
     case APP_LISTENING:
         if (s_a.latched) {
@@ -971,11 +991,21 @@ void app_ptt_down(int8_t side, app_src_t src)
         break;
     case APP_UPLOADING:
     case APP_THINKING:
+        if (src == APP_SRC_CHIP) {
+            // the chip has already been held 400 ms: barge-in now
+            devcon_event("barge", "\"turn\":%u", (unsigned)s_a.turn);
+            cancel_turn();
+            set_state(APP_IDLE);
+            start_recording(side, 500);
+            break;
+        }
         s_a.pending = true;         // a tap is ignored (the orb pulses); a hold aborts and records
+        s_a.pending_preroll = 500;  // from the press, 400 ms before the recording starts
         break;
     case APP_SPEAKING:
         stop_speaking();            // any press stops speech; still held at 400 ms = barge-in
         s_a.pending = true;
+        s_a.pending_preroll = 0;    // no pre-roll: it would hold the tail of the speech
         break;
     default:
         break;
@@ -1259,7 +1289,7 @@ static void fsm_tick(uint32_t now)
             set_state(APP_IDLE);
         }
         if (s_a.st == APP_IDLE || s_a.st == APP_ERROR) {
-            start_recording(s_a.press_side);
+            start_recording(s_a.press_side, s_a.pending_preroll);
         }
     }
     switch (s_a.st) {
