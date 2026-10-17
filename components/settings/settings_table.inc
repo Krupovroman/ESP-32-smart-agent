@@ -18,7 +18,7 @@ S("ai_model_fb", ST_STR, 0,   "google/gemini-3.5-flash-lite",      0, 0,     96,
 S("ai_effort",   ST_STR, 0,   "minimal",                           0, 0,     12,   0)
 S("ai_stream",   ST_U8,  1,   NULL,                                0, 1,     0,    0)
 S("ai_json",     ST_U8,  1,   NULL,                                0, 1,     0,    0)
-S("ai_maxtok",   ST_U16, 400, NULL,                                50, 4000, 0,    0)
+S("ai_maxtok",   ST_U16, 1024, NULL,                               50, 4000, 0,    0)
 S("ai_temp",     ST_U8,  40,  NULL,                                0, 200,   0,    0)
 S("ai_hist",     ST_U8,  6,   NULL,                                0, 20,    0,    0)
 S("ai_sys",      ST_STR, 0,   "",                                  0, 0,     2000, 0)
