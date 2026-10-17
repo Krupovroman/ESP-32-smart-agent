@@ -167,7 +167,7 @@ def run_one(con, text):
 
 
 def main():
-    sys.stdout.reconfigure(line_buffering=True)
+    sys.stdout.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", default=os.environ.get("RA_PORT", "COM7"))
     ap.add_argument("command", nargs="+")
