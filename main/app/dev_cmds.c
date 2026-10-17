@@ -1,5 +1,5 @@
 // App dev-console commands (architecture 7.3): the whole push-to-talk flow without touching the device.
-//   app state | say <text> | wait [state] [ms] | vad [snr_db min_ms heard_ms] | dir 0|1|2
+//   app state | say <text> | wait [state] [ms] | vad [snr_db min_ms heard_ms] | dir 0|1|2 | wake
 //   ptt down [a|b] | up [held_ms] | tap      cancel      mode assistant|translator      textonly 0|1
 //   btn boot|pwr click|long|down|up          (simulated keys, through the button driver's debounce)
 // With injected audio: "mic load ..." + "mic src inject fast", then "ptt tap" (latched; the end of the
@@ -203,7 +203,12 @@ static int cmd_app(int argc, char **argv)
     if (!strcmp(sub, "dir") && argc > 2) {
         return done(post_wait(EV_SET_DIR, atoi(argv[2]), 0, NULL));
     }
-    return dc_fail("usage: app state | say <text> | wait [state] [ms] | vad [snr_db min_ms heard_ms] | dir 0|1|2");
+    if (!strcmp(sub, "wake")) {
+        // scripted UI taps after a pause: the first touch on a dimmed screen would only wake it
+        return done(post_wait(EV_WAKE, 0, 0, NULL));
+    }
+    return dc_fail("usage: app state | say <text> | wait [state] [ms] | vad [snr_db min_ms heard_ms] | dir 0|1|2 | "
+                   "wake");
 }
 
 static int cmd_ptt(int argc, char **argv)
@@ -303,7 +308,8 @@ static int cmd_btn(int argc, char **argv)
 
 void app_console_register(void)
 {
-    devconsole_register("app", "app state | say <text> | wait [state] [ms] | vad [snr min_ms heard_ms] | dir 0|1|2",
+    devconsole_register("app",
+                        "app state | say <text> | wait [state] [ms] | vad [snr min_ms heard_ms] | dir 0|1|2 | wake",
                         cmd_app);
     devconsole_register("ptt", "ptt down [a|b] | up [held_ms] | tap - push-to-talk as the orb / BOOT", cmd_ptt);
     devconsole_register("cancel", "cancel - stop the recording, turn or speech", cmd_cancel);
