@@ -69,7 +69,7 @@ typedef struct {
 
 // One row of the protocol §9.1 table, filled by or_classify().
 typedef struct {
-    char id[8];                       // "N2", "429", "400ctx", "P2", ...
+    char id[8];                       // "N2", "429", "400ctx", "P2", ...; "H<code>" = status without a row
     int http;                         // HTTP status or error.code, 0 for transport errors
     bool retry;                       // the row allows automatic retries
     uint8_t max_retries;

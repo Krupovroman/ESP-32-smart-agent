@@ -197,6 +197,21 @@ or_conn_t *or_conn_get(const char *base_url)
             found = c;
         }
     }
+    if (!found) {
+        // Pool full (base URLs changed in the settings): take over the least recently used idle
+        // slot. Its handle follows the new host by itself: set_url() closes on a host change.
+        or_conn_t *lru = NULL;
+        for (int i = 0; i < s_n_conns; i++) {
+            if (!lru || s_conns[i].last_used_us < lru->last_used_us) {
+                lru = &s_conns[i];
+            }
+        }
+        if (lru && or_conn_lock(lru, 0)) {
+            strlcpy(lru->key, origin, sizeof(lru->key));
+            or_conn_unlock(lru);
+            found = lru;
+        }
+    }
     xSemaphoreGive(s_pool_lock);
     if (!found) {
         ESP_LOGE(TAG, "no connection slot for %s", origin);
@@ -537,10 +552,11 @@ esp_err_t or_start(or_conn_t *c, const or_req_t *q, or_resp_t *r)
         if (err == ESP_OK) {
             return ESP_OK;
         }
-        // A kept-alive socket the server already closed fails on the first write or with an
+        // A kept-alive socket the server already closed fails on the first writes (the RST comes
+        // back after one round trip, while the send buffer still accepts data) or with an
         // immediate FIN: reconnect once without reporting a retry (protocol §1.3).
         bool dead_reuse = r->reused && !r->aborted && !r->deadline &&
-                          (r->phase == OR_PH_WRITE ||
+                          ((r->phase == OR_PH_WRITE && r->bytes_sent <= 2 * WRITE_PIECE) ||
                            (r->phase == OR_PH_FIRST_BYTE && r->err == ESP_ERR_HTTP_FETCH_HEADER));
         esp_http_client_close(c->h);
         c->live = false;

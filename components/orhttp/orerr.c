@@ -306,7 +306,7 @@ static void classify_http(or_kind_t kind, const or_resp_t *r, const char *body, 
     apply_row(e, id);
     if (!strcmp(id, "HTTP")) {
         snprintf(e->msg_ru, sizeof(e->msg_ru), "Сервер вернул ошибку %d.", code);
-        snprintf(e->id, sizeof(e->id), "%u", (unsigned)code % 1000u);
+        snprintf(e->id, sizeof(e->id), "H%u", (unsigned)code % 1000u);   // no row of its own
     }
     if (!strcmp(id, "403b")) {
         char date[16];

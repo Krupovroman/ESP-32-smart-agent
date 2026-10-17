@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "esp_heap_caps.h"
+#include "esp_rom_crc.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -313,6 +314,60 @@ static int cmd_say(int argc, char **argv)
     return rc;
 }
 
+// Test fixtures: synthesise into memory and print a WAV blob in the devconsole BLOB format.
+static int cmd_fetch(int argc, char **argv)
+{
+    int from = 2;
+    char lang[8];
+    cfg_str("ui_lang", lang, sizeof(lang), "ru");
+    if (argc > from + 1 && !strcmp(argv[from], "-l")) {
+        strlcpy(lang, argv[from + 1], sizeof(lang));
+        from += 2;
+    }
+    if (argc <= from) {
+        return dc_fail("usage: ai fetch [-l <lang>] <text...>");
+    }
+    char *text = join_args(argc, argv, from);
+    if (!text) {
+        return dc_fail("no memory");
+    }
+    int16_t *pcm = NULL;
+    size_t samples = 0;
+    uint32_t rate = 0;
+    esp_err_t e = tts_client_fetch(text, lang, &pcm, &samples, &rate);
+    free(text);
+    if (e != ESP_OK) {
+        tts_stats_t t;
+        tts_client_last_stats(&t);
+        print_tts(&t);
+        return dc_fail("fetch: %s", esp_err_to_name(e));
+    }
+    size_t len = 44 + samples * 2;
+    uint8_t *wav = ai_malloc(len);
+    if (!wav) {
+        free(pcm);
+        return dc_fail("no memory");
+    }
+    or_wav_header(wav, rate, samples);
+    memcpy(wav + 44, pcm, samples * 2);
+    free(pcm);
+    printf("BLOB:BEGIN wav %u %08lx %u 1 s16le\n", (unsigned)len, (unsigned long)esp_rom_crc32_le(0, wav, len),
+           (unsigned)rate);
+    char line[8 + 128 + 2];
+    for (size_t i = 0; i < len; i += 96) {
+        size_t n = len - i < 96 ? len - i : 96;
+        memcpy(line, "BLOB:", 5);
+        size_t o = 5 + or_b64_encode(wav + i, n, line + 5);
+        line[o++] = '\n';
+        line[o] = 0;
+        fputs(line, stdout);
+    }
+    printf("BLOB:END\n");
+    fflush(stdout);
+    free(wav);
+    return 0;
+}
+
 static int cmd_models(int argc, char **argv)
 {
     bool tts = argc > 2 && !strcmp(argv[2], "tts");
@@ -563,6 +618,9 @@ static int cmd_ai(int argc, char **argv)
     if (!strcmp(sub, "models")) {
         return cmd_models(argc, argv);
     }
+    if (!strcmp(sub, "fetch")) {
+        return cmd_fetch(argc, argv);
+    }
     if (!strcmp(sub, "voices")) {
         return cmd_voices(argc, argv);
     }
@@ -602,9 +660,9 @@ static int cmd_ai(int argc, char **argv)
         printf("event log %s\n", s_log ? "on" : "off");
         return 0;
     }
-    return dc_fail("usage: ai ask|tr [-a] <text...> | voice|trvoice [-a] | say [-l xx] <text...> | models [tts] | "
-                   "voices <model> [locale] | check [model] | key | last | req | stt [lang] | hist [clear] | cancel | "
-                   "prewarm | log 0|1");
+    return dc_fail("usage: ai ask|tr [-a] <text...> | voice|trvoice [-a] | say|fetch [-l xx] <text...> | "
+                   "models [tts] | voices <model> [locale] | check [model] | key | last | req | stt [lang] | "
+                   "hist [clear] | cancel | prewarm | log 0|1");
 }
 
 void ai_console_register(void)
@@ -616,7 +674,7 @@ void ai_console_register(void)
     s_eg = xEventGroupCreate();
     ai_add_listener(listener, NULL);
     devconsole_register("ai",
-                        "ai ask|tr [-a] <text> | voice|trvoice [-a] | say [-l xx] <text> | models [tts] | "
+                        "ai ask|tr [-a] <text> | voice|trvoice [-a] | say|fetch [-l xx] <text> | models [tts] | "
                         "voices <m> [loc] | check [m] | key | last | req | stt [lang] | hist [clear] | cancel | "
                         "prewarm | log 0|1",
                         cmd_ai);

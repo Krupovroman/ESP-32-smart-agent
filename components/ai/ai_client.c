@@ -475,17 +475,17 @@ static void trim_clip(const int16_t *pcm, size_t n, uint32_t rate, size_t *first
     }
     int *sorted = db + nf;
     for (size_t f = 0; f < nf; f++) {
-        double s = 0;
+        uint64_t s = 0;                        // integer maths: the S3 FPU has no double
         for (size_t k = 0; k < frame; k++) {
-            double v = pcm[f * frame + k];
-            s += v * v;
+            int32_t v = pcm[f * frame + k];
+            s += (uint64_t)(v * v);
         }
-        double ms = s / (double)frame;
-        // dBFS x10 without libm: count halvings of the power (3.01 dB each)
+        uint64_t ms = s / frame;
+        // dBFS x10 with 3 dB steps: count halvings of the power below full scale (2^30)
         int d = 0;
-        double ref = 32768.0 * 32768.0;
+        uint64_t ref = 1ull << 30;
         while (ms < ref && d > -960) {
-            ref /= 2;
+            ref >>= 1;
             d -= 30;
         }
         db[f] = d;
@@ -608,15 +608,24 @@ static esp_err_t parse_chat(const chat_t *ch, const char *body, parsed_t *out, c
             // P3: salvage what was generated; it is not stored in the history
             out->text = ai_json_salvage(cj, k_text);
             out->transcript = ai_json_salvage(cj, "transcript");
+            char *sl = ch->mode == AI_MODE_TRANSLATOR ? ai_json_salvage(cj, "src_lang") : NULL;
             free(cj);
             if (out->text && out->text[0]) {
                 if (!out->transcript) {
                     out->transcript = ai_strdup("");
                 }
                 out->truncated = true;
-                strlcpy(out->lang, ch->mode == AI_MODE_ASSISTANT ? "ru" : "", sizeof(out->lang));
+                if (ch->mode == AI_MODE_ASSISTANT) {
+                    strlcpy(out->lang, "ru", sizeof(out->lang));   // "lang" comes last and is cut off
+                } else if (sl) {
+                    lower_ascii(sl);
+                    strlcpy(out->src_lang, (!strcmp(sl, ch->lang_a) || !strcmp(sl, ch->lang_b)) ? sl : "other",
+                            sizeof(out->src_lang));
+                }
+                free(sl);
                 return ESP_OK;
             }
+            free(sl);
             parsed_free(out);
             return ESP_FAIL;
         }
