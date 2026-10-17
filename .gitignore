@@ -1,0 +1,19 @@
+# build outputs
+build/
+.pio/
+managed_components/
+sdkconfig.old
+dependencies.lock.bak
+
+# secrets (API keys, Wi-Fi passwords) never go to git
+secrets.h
+secrets.json
+*.secret
+
+# flash dumps are large binaries; kept locally in backups/
+backups/*.bin
+
+# editor / OS
+.vscode/
+*.swp
+Thumbs.db
