@@ -1,6 +1,6 @@
 idf_component_register(
-    SRC_DIRS "." "ui" "ui/fonts"
-    INCLUDE_DIRS "." "ui"
+    SRC_DIRS "." "app" "ui" "ui/fonts"
+    INCLUDE_DIRS "." "app" "ui"
     PRIV_REQUIRES board display touch audio settings net orhttp devconsole ota ai
                   app_update esp_timer lvgl__lvgl espressif__esp_lvgl_port
 )

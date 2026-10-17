@@ -226,6 +226,18 @@ esp_err_t audio_in_stop(audio_clip_t *out)
 
 bool audio_in_recording(void) { return s_recording; }
 
+size_t audio_in_peek(const int16_t **pcm)
+{
+    *pcm = s_rec;
+    if (!s_running) {
+        return 0;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    size_t n = s_rec_len;
+    xSemaphoreGive(s_lock);
+    return n;
+}
+
 const audio_clip_t *audio_in_last(void)
 {
     if (!s_have_last && !s_recording && s_rec_len > 0) {

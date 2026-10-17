@@ -20,6 +20,7 @@ typedef struct {
     uint32_t rate;                    // 16000
     const char *text;                 // typed input, used when pcm is NULL
     const char *lang_a, *lang_b;      // translator languages, NULL = settings tr_lang_a / tr_lang_b
+    const char *src_lang;             // translator voice: source forced to lang_a or lang_b, NULL = detect
 } ai_request_t;
 
 typedef struct {

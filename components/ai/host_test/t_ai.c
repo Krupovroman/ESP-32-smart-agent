@@ -471,6 +471,25 @@ static void t_translator(void)
     run(&j);
     r = find_ev(AI_EV_RESULT);
     CHECK(r && !strcmp(r->text, "Hello") && !strcmp(r->tts_lang, "en"));
+
+    // source forced by a held chip / "wrong language": one-value enum and a hint in the voice message
+    setup();
+    mock_push_json(200, ok_body("{\\\"src_lang\\\":\\\"en\\\",\\\"transcript\\\":\\\"Hi\\\",\\\"translation\\\":\\\"Привет\\\"}",
+                                "stop"));
+    j = mkjob(AI_MODE_TRANSLATOR, NULL, s_pcm, s_npcm);
+    strlcpy(j.src, "en", sizeof(j.src));
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(r && !strcmp(r->src_lang, "en") && !strcmp(r->tts_lang, "ru"));
+    root = cJSON_Parse(g_reqs[0].body);
+    js = cJSON_GetObjectItem(cJSON_GetObjectItem(root, "response_format"), "json_schema");
+    en = cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(js, "schema"), "properties"),
+                                                 "src_lang"), "enum");
+    CHECK(cJSON_GetArraySize(en) == 1 && !strcmp(cJSON_GetArrayItem(en, 0)->valuestring, "en"));
+    cJSON *msgs = cJSON_GetObjectItem(root, "messages");
+    cJSON *parts = cJSON_GetObjectItem(cJSON_GetArrayItem(msgs, cJSON_GetArraySize(msgs) - 1), "content");
+    CHECK(!strcmp(cJSON_GetObjectItem(cJSON_GetArrayItem(parts, 0), "text")->valuestring, "Utterance in English:"));
+    cJSON_Delete(root);
 }
 
 static void t_stt(void)
