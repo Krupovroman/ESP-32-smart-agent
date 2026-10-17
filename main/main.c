@@ -11,7 +11,7 @@
 #include "selftest.h"
 #include "settings.h"
 #include "touch.h"
-#include "ui_test.h"
+#include "ui.h"
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -70,7 +70,12 @@ void app_main(void)
     }
 
     if (have_ui) {
-        ui_test_create();
+        // Home screen; the bring-up screen stays reachable with "ui goto test"
+        if (ui_init(display_get()) == ESP_OK) {
+            ui_console_register();
+        } else {
+            ESP_LOGE(TAG, "ui unavailable");
+        }
         vTaskDelay(pdMS_TO_TICKS(80));   // let the first frame reach the panel before lighting it
         board_backlight_set((uint8_t)settings_get_int("bright"));
     }

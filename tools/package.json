@@ -1,0 +1,8 @@
+{
+  "name": "round-assistant-tools",
+  "private": true,
+  "description": "PC-side helpers. mkfonts.ps1 runs the pinned lv_font_conv through npx.",
+  "devDependencies": {
+    "lv_font_conv": "1.5.3"
+  }
+}
