@@ -148,10 +148,11 @@ SemaphoreHandle_t xSemaphoreCreateRecursiveMutex(void)
     return &m;
 }
 
+uint32_t g_last_lock_wait;
 BaseType_t xSemaphoreTakeRecursive(SemaphoreHandle_t s, TickType_t t)
 {
     (void)s;
-    (void)t;
+    g_last_lock_wait = t;
     g_lock_depth++;
     return pdTRUE;
 }

@@ -17,12 +17,13 @@ void bootloader_hooks_include(void)
 {
 }
 
-// No BSS, flash or logging yet: ROM calls and registers only. Level first, then the driver
-// is enabled, so the pin never drives low.
+// No BSS, flash or logging yet: ROM calls and registers only. The level is set first:
+// esp_rom_gpio_connect_out_signal() already enables the output driver, which would otherwise
+// drive the reset value 0 for a moment.
 void bootloader_before_init(void)
 {
+    REG_WRITE(GPIO_OUT_W1TS_REG, BIT(PWR_LATCH_GPIO));
     esp_rom_gpio_pad_select_gpio(PWR_LATCH_GPIO);
     esp_rom_gpio_connect_out_signal(PWR_LATCH_GPIO, SIG_GPIO_OUT_IDX, false, false);
-    REG_WRITE(GPIO_OUT_W1TS_REG, BIT(PWR_LATCH_GPIO));
     REG_WRITE(GPIO_ENABLE_W1TS_REG, BIT(PWR_LATCH_GPIO));
 }

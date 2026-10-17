@@ -156,7 +156,9 @@ void ota_get_info(ota_info_t *o)
     sys_get_str("rb_reason", o->rb_reason, sizeof(o->rb_reason));
     o->rb_cnt = sys_get_u16("rb_cnt");
     o->boot_cnt = s_boot_cnt;
-    o->rollback_possible = esp_ota_check_rollback_is_possible();
+    // IDF judges rollback from the otadata entry selected for the next boot: while another
+    // slot is selected (push with noreboot, ota boot) it would describe that slot, not this one
+    o->rollback_possible = run && boot == run && esp_ota_check_rollback_is_possible();
     o->selftest = s_selftest;
     strlcpy(o->selftest_reason, s_selftest_reason, sizeof(o->selftest_reason));
     o->busy = s_streaming || s_https_busy;
@@ -352,16 +354,40 @@ esp_err_t ota_set_boot(const char *label)
     const esp_partition_t *p = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
     ESP_RETURN_ON_FALSE(p && p->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MIN && p->subtype < ESP_PARTITION_SUBTYPE_APP_OTA_MAX,
                         ESP_ERR_NOT_FOUND, TAG, "no OTA slot %s", label);
+    ESP_RETURN_ON_FALSE(!s_streaming && !s_https_busy, ESP_ERR_INVALID_STATE, TAG, "update running");
+    // the slot switched to boots PENDING_VERIFY: give the running one an entry to fall back to
+    if (p != esp_ota_get_running_partition()) {
+        ESP_RETURN_ON_ERROR(anchor_running_slot(), TAG, "otadata");
+    }
     return esp_ota_set_boot_partition(p);   // refuses a slot without a valid image
+}
+
+// esp_ota_mark_app_* change the otadata entry selected for the next boot, which is not the
+// running image after "ota push ... noreboot" or "ota boot": refuse instead of marking the
+// other slot (a pushed image marked VALID before it ever ran would skip its self-test).
+static esp_err_t check_running_is_selected(void)
+{
+    const esp_partition_t *run = esp_ota_get_running_partition();
+    const esp_partition_t *boot = esp_ota_get_boot_partition();
+    ESP_RETURN_ON_FALSE(run && boot == run, ESP_ERR_INVALID_STATE, TAG, "%s is selected for the next boot, not %s",
+                        boot ? boot->label : "?", run ? run->label : "?");
+    return ESP_OK;
 }
 
 esp_err_t ota_rollback_now(void)
 {
+    ESP_RETURN_ON_ERROR(check_running_is_selected(), TAG, "rollback");
     ESP_RETURN_ON_FALSE(esp_ota_check_rollback_is_possible(), ESP_ERR_NOT_FOUND, TAG, "no valid previous image");
     return esp_ota_mark_app_invalid_rollback_and_reboot();
 }
 
 esp_err_t ota_mark(bool valid)
 {
-    return valid ? esp_ota_mark_app_valid_cancel_rollback() : esp_ota_mark_app_invalid_rollback();
+    ESP_RETURN_ON_ERROR(check_running_is_selected(), TAG, "mark");
+    if (valid) {
+        // a USB-flashed image has no otadata entry yet: record it (as VALID)
+        ESP_RETURN_ON_ERROR(anchor_running_slot(), TAG, "otadata");
+        return esp_ota_mark_app_valid_cancel_rollback();
+    }
+    return esp_ota_mark_app_invalid_rollback();
 }

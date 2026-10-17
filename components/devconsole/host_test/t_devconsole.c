@@ -277,6 +277,17 @@ static void t_logs_and_events(void)
     EXPECT(got, "@! EVT {\"t\":12345,\"ev\":\"ota\",\"pct\":5}\n@! EVT {\"t\":12345,\"ev\":\"ready\"}\n");
     free(got);
     CHECK(g_lock_depth == 0);
+
+    // other tasks wait only briefly for the writer (the holder may be stuck on a stalled host);
+    // the console's own result lines wait longer
+    CHECK(g_last_lock_wait == LOCK_WAIT_LOG_MS);
+    host_log('I', "x", "short wait");
+    CHECK(g_last_lock_wait == LOCK_WAIT_LOG_MS);
+    P("other task\n");
+    CHECK(g_last_lock_wait == LOCK_WAIT_LOG_MS);
+    free(tx_take());
+    free(exec("#21 echo q\n"));
+    CHECK(g_last_lock_wait == LOCK_WAIT_MS);
 }
 
 static void t_ready_gate(void)

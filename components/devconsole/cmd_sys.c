@@ -191,7 +191,10 @@ static int cmd_log(int argc, char **argv)
     for (int i = 0; i < (int)(sizeof(names) / sizeof(names[0])); i++) {
         if (!strcmp(argv[2], names[i])) {
             esp_log_level_set(argv[1], (esp_log_level_t)i);
-            printf("{\"tag\":\"%s\",\"level\":\"%s\"}\n", argv[1], names[i]);
+            // levels above CONFIG_LOG_MAXIMUM_LEVEL are compiled out: "max" tells why
+            // "log wifi debug" prints nothing in this build
+            printf("{\"tag\":\"%s\",\"level\":\"%s\",\"max\":\"%s\"}\n", argv[1], names[i],
+                   names[CONFIG_LOG_MAXIMUM_LEVEL]);
             return 0;
         }
     }

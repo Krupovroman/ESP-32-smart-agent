@@ -19,6 +19,7 @@ static const char *TAG = "audio_in";
 
 static i2s_chan_handle_t s_rx;
 static SemaphoreHandle_t s_lock;
+static bool s_running;                           // init completed: the capture task runs
 static int16_t *s_rec;                           // PSRAM, REC_CAP samples
 static size_t s_rec_len, s_rec_max;
 static volatile bool s_recording;
@@ -165,13 +166,17 @@ esp_err_t audio_in_init(void)
     ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(s_rx, &std), TAG, "std");
     ESP_RETURN_ON_ERROR(i2s_channel_enable(s_rx), TAG, "enable");
 
-    xTaskCreatePinnedToCore(capture_task, "audio_in", 4096, NULL, 7, NULL, 0);
+    ESP_RETURN_ON_FALSE(xTaskCreatePinnedToCore(capture_task, "audio_in", 4096, NULL, 7, NULL, 0) == pdPASS,
+                        ESP_ERR_NO_MEM, TAG, "task");
+    s_running = true;
     ESP_LOGI(TAG, "mic ready (slot %s, shift %d)", s_right_slot ? "right" : "left", s_shift);
     return ESP_OK;
 }
 
 esp_err_t audio_in_start(uint32_t max_ms)
 {
+    // without the capture task nothing would ever end the recording (console "mic rec" waits)
+    ESP_RETURN_ON_FALSE(s_running, ESP_ERR_INVALID_STATE, TAG, "not initialised");
     if (max_ms == 0 || max_ms > AUDIO_IN_MAX_MS) {
         max_ms = AUDIO_IN_MAX_MS;
     }
@@ -203,6 +208,12 @@ static void finish_clip(void)
 
 esp_err_t audio_in_stop(audio_clip_t *out)
 {
+    if (!s_running) {
+        if (out) {
+            memset(out, 0, sizeof(*out));
+        }
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_recording = false;
     finish_clip();
@@ -229,7 +240,8 @@ int audio_in_level(void) { return s_level; }
 
 void audio_in_set_rate(uint32_t rate)
 {
-    if (rate >= 8000 && rate <= 48000 && rate != s_rate) {
+    // the capture task applies the rate; without it this would wait forever
+    if (s_running && rate >= 8000 && rate <= 48000 && rate != s_rate) {
         s_pending_rate = rate;
         while (s_pending_rate) {
             vTaskDelay(pdMS_TO_TICKS(5));
@@ -252,6 +264,7 @@ void audio_in_set_format(bool right_slot, int shift)
 
 esp_err_t audio_in_probe(uint32_t ms, audio_probe_t *out)
 {
+    ESP_RETURN_ON_FALSE(s_running, ESP_ERR_INVALID_STATE, TAG, "not initialised");
     ESP_RETURN_ON_FALSE(!s_recording, ESP_ERR_INVALID_STATE, TAG, "recording");
     ESP_RETURN_ON_FALSE(!audio_inject_active(), ESP_ERR_INVALID_STATE, TAG, "source is inject");
     bool orig = s_right_slot;

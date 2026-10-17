@@ -81,6 +81,16 @@ static void progress(int pct, size_t bytes, size_t total, bool done, esp_err_t e
     }
 }
 
+// mark/rollback act on the slot selected for the next boot: refuse while that is not this one
+static bool selected_is_running(const ota_info_t *o)
+{
+    if (strcmp(o->boot, o->running)) {
+        dc_fail("%s is selected for the next boot: reboot first, or ota boot %s", o->boot, o->running);
+        return false;
+    }
+    return true;
+}
+
 static int cmd_ota(int argc, char **argv)
 {
     const char *sub = argc > 1 ? argv[1] : "info";
@@ -92,12 +102,12 @@ static int cmd_ota(int argc, char **argv)
         return ota_push(argc, argv);
     }
     if (!strcmp(sub, "url")) {
-        char url[204];
-        if (argc > 2) {
-            strlcpy(url, argv[2], sizeof(url));
-        } else {
-            settings_get_str("ota_url", url, sizeof(url));
+        // a typed URL is passed on as it is (ota_start_https copies it), so it is never cut
+        char saved[204] = "";
+        if (argc <= 2) {
+            settings_get_str("ota_url", saved, sizeof(saved));
         }
+        const char *url = argc > 2 ? argv[2] : saved;
         if (!url[0]) {
             return dc_fail("usage: ota url <https-url> (or set ota_url)");
         }
@@ -123,6 +133,9 @@ static int cmd_ota(int argc, char **argv)
     if (!strcmp(sub, "rollback")) {
         ota_info_t o;
         ota_get_info(&o);
+        if (!selected_is_running(&o)) {
+            return ESP_ERR_INVALID_STATE;
+        }
         if (!o.rollback_possible) {
             return dc_fail("no valid previous image");
         }
@@ -140,6 +153,11 @@ static int cmd_ota(int argc, char **argv)
         bool valid = !strcmp(argv[2], "valid");
         if (!valid && strcmp(argv[2], "invalid")) {
             return dc_fail("usage: ota mark valid|invalid");
+        }
+        ota_info_t o;
+        ota_get_info(&o);
+        if (!selected_is_running(&o)) {
+            return ESP_ERR_INVALID_STATE;
         }
         esp_err_t e = ota_mark(valid);
         if (e != ESP_OK) {
