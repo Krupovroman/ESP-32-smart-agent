@@ -70,7 +70,9 @@ typedef enum { UI_NET_OFF, UI_NET_CONNECTING, UI_NET_UP, UI_NET_FAILED } ui_net_
 
 typedef enum { UI_SIDE_AUTO = -1, UI_SIDE_A = 0, UI_SIDE_B = 1 } ui_side_t;
 
-// Screens that exist in this build. Settings, lists, keyboard, QR, dialog, steps and ambient come later.
+// Screens that exist in this build. Settings, lists, keyboard, QR, dialog, steps and ambient come later:
+// each gets an id here and a { name, builder, context } row in s_screens (ui.c); the builder returns a new
+// screen built with ui_chrome_screen() and is deleted by the navigation stack when the user leaves it.
 typedef enum { UI_SCR_HOME, UI_SCR_HIST, UI_SCR_READER, UI_SCR_TOUCH, UI_SCR_TEST, UI_SCR__N } ui_screen_t;
 
 // ---- User intent out of the UI. The callback runs in taskLVGL and must only post (never block).
