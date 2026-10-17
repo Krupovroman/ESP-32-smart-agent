@@ -19,23 +19,45 @@ static const char *TAG = "tts";
 #define FAIL_N      8
 #define NOSPEED_N   4
 
+// Full ids (constant strings: no shared buffer between the tts task and the console).
 static const struct {
     const char *lang, *voice;
 } MAI_VOICES[] = {
-    { "ru", "ru-RU-Masha" }, { "en", "en-US-Harper" }, { "de", "de-DE-Mia" }, { "fr", "fr-FR-Soleil" },
-    { "es", "es-ES-Marta" }, { "it", "it-IT-Rosa" }, { "pt", "pt-BR-Luana" }, { "pl", "pl-PL-Harper" },
-    { "tr", "tr-TR-Elif" }, { "zh", "zh-CN-Mei" }, { "ko", "ko-KR-Haena" },
+    { "ru", "ru-RU-Masha" MAI_SUFFIX }, { "en", "en-US-Harper" MAI_SUFFIX }, { "de", "de-DE-Mia" MAI_SUFFIX },
+    { "fr", "fr-FR-Soleil" MAI_SUFFIX }, { "es", "es-ES-Marta" MAI_SUFFIX }, { "it", "it-IT-Rosa" MAI_SUFFIX },
+    { "pt", "pt-BR-Luana" MAI_SUFFIX }, { "pl", "pl-PL-Harper" MAI_SUFFIX }, { "tr", "tr-TR-Elif" MAI_SUFFIX },
+    { "zh", "zh-CN-Mei" MAI_SUFFIX }, { "ko", "ko-KR-Haena" MAI_SUFFIX },
 };
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
-static struct {
-    char model[97];
-    char lang[8];             // "*" = every language (e.g. a region block)
-    int64_t until_ms;
-} s_fail[FAIL_N];
-static int s_fail_next;
-static char s_nospeed[NOSPEED_N][97];
-static int s_nospeed_next;
+// Route failures and models without speed control: 1.3 KB in PSRAM, created on the first entry.
+typedef struct {
+    struct {
+        char model[97];
+        char lang[8];         // "*" = every language (e.g. a region block)
+        int64_t until_ms;
+    } fail[FAIL_N];
+    int fail_next;
+    char nospeed[NOSPEED_N][97];
+    int nospeed_next;
+} route_mem_t;
+static route_mem_t *s_mem;
+
+static route_mem_t *mem_get(bool create)
+{
+    route_mem_t *m = __atomic_load_n(&s_mem, __ATOMIC_ACQUIRE);
+    if (!m && create) {
+        route_mem_t *n = ai_calloc(1, sizeof(route_mem_t));
+        route_mem_t *expect = NULL;
+        if (n && __atomic_compare_exchange_n(&s_mem, &expect, n, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            m = n;
+        } else {
+            free(n);
+            m = expect;
+        }
+    }
+    return m;
+}
 
 static const char *mai_voice(const char *lang)
 {
@@ -54,11 +76,9 @@ static bool is_gemini_tts(const char *model)
 
 const char *tts_model_default_voice(const char *model, const char *lang)
 {
-    static char buf[64];
     if (!strcmp(model, MAI_FLASH)) {
         const char *v = mai_voice(lang);
-        snprintf(buf, sizeof(buf), "%s%s", v ? v : "ru-RU-Masha", MAI_SUFFIX);
-        return buf;
+        return v ? v : MAI_VOICES[0].voice;
     }
     if (is_gemini_tts(model)) {
         return "Kore";
@@ -99,12 +119,16 @@ static void voice_lang(const char *voice, char out[4])
 
 bool tts_route_failed(const char *model, const char *lang)
 {
+    route_mem_t *m = mem_get(false);
+    if (!m) {
+        return false;
+    }
     bool f = false;
     int64_t now = ai_now_ms();
     taskENTER_CRITICAL(&s_mux);
     for (int i = 0; i < FAIL_N; i++) {
-        if (s_fail[i].until_ms > now && !strcmp(s_fail[i].model, model) &&
-            (!strcmp(s_fail[i].lang, "*") || !strcmp(s_fail[i].lang, lang))) {
+        if (m->fail[i].until_ms > now && !strcmp(m->fail[i].model, model) &&
+            (!strcmp(m->fail[i].lang, "*") || !strcmp(m->fail[i].lang, lang))) {
             f = true;
         }
     }
@@ -115,21 +139,29 @@ bool tts_route_failed(const char *model, const char *lang)
 void tts_route_fail(const char *model, const char *lang, bool all_langs)
 {
     ESP_LOGW(TAG, "route %s (%s) failed, skipped for 1 h", model, all_langs ? "*" : lang);
+    route_mem_t *m = mem_get(true);
+    if (!m) {
+        return;
+    }
     taskENTER_CRITICAL(&s_mux);
-    int i = s_fail_next;
-    s_fail_next = (s_fail_next + 1) % FAIL_N;
-    strlcpy(s_fail[i].model, model, sizeof(s_fail[i].model));
-    strlcpy(s_fail[i].lang, all_langs ? "*" : lang, sizeof(s_fail[i].lang));
-    s_fail[i].until_ms = ai_now_ms() + FAIL_TTL_MS;
+    int i = m->fail_next;
+    m->fail_next = (m->fail_next + 1) % FAIL_N;
+    strlcpy(m->fail[i].model, model, sizeof(m->fail[i].model));
+    strlcpy(m->fail[i].lang, all_langs ? "*" : lang, sizeof(m->fail[i].lang));
+    m->fail[i].until_ms = ai_now_ms() + FAIL_TTL_MS;
     taskEXIT_CRITICAL(&s_mux);
 }
 
 bool tts_speed_unsupported(const char *model)
 {
+    route_mem_t *m = mem_get(false);
+    if (!m) {
+        return false;
+    }
     bool f = false;
     taskENTER_CRITICAL(&s_mux);
     for (int i = 0; i < NOSPEED_N; i++) {
-        if (!strcmp(s_nospeed[i], model)) {
+        if (!strcmp(m->nospeed[i], model)) {
             f = true;
         }
     }
@@ -139,9 +171,13 @@ bool tts_speed_unsupported(const char *model)
 
 void tts_speed_mark_unsupported(const char *model)
 {
+    route_mem_t *m = mem_get(true);
+    if (!m) {
+        return;
+    }
     taskENTER_CRITICAL(&s_mux);
-    strlcpy(s_nospeed[s_nospeed_next], model, sizeof(s_nospeed[0]));
-    s_nospeed_next = (s_nospeed_next + 1) % NOSPEED_N;
+    strlcpy(m->nospeed[m->nospeed_next], model, sizeof(m->nospeed[0]));
+    m->nospeed_next = (m->nospeed_next + 1) % NOSPEED_N;
     taskEXIT_CRITICAL(&s_mux);
 }
 

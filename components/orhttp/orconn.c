@@ -51,6 +51,8 @@ static void pool_init(void)
     int expect = 0;
     if (__atomic_compare_exchange_n(&s_pool_state, &expect, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
         s_pool_lock = xSemaphoreCreateMutexStatic(&s_pool_lock_buf);
+        // fetch_headers() logs a warning on every 1 s wait tick; real errors stay visible
+        esp_log_level_set("HTTP_CLIENT", ESP_LOG_ERROR);
         __atomic_store_n(&s_pool_state, 2, __ATOMIC_RELEASE);
     }
     while (__atomic_load_n(&s_pool_state, __ATOMIC_ACQUIRE) != 2) {
@@ -207,6 +209,8 @@ or_conn_t *or_conn_get(const char *base_url)
             }
         }
         if (lru && or_conn_lock(lru, 0)) {
+            esp_http_client_close(lru->h);   // the old host's socket must not count as reusable
+            lru->live = false;
             strlcpy(lru->key, origin, sizeof(lru->key));
             or_conn_unlock(lru);
             found = lru;
@@ -319,6 +323,7 @@ esp_err_t or_begin(or_conn_t *c, const or_req_t *q, or_resp_t *r)
 
     esp_err_t err = esp_http_client_set_url(c->h, q->url);
     if (err != ESP_OK) {
+        esp_http_client_close(c->h);   // a socket left open here would be reused unannounced
         r->phase = OR_PH_CONNECT;
         r->err = err;
         return err;
@@ -552,11 +557,11 @@ esp_err_t or_start(or_conn_t *c, const or_req_t *q, or_resp_t *r)
         if (err == ESP_OK) {
             return ESP_OK;
         }
-        // A kept-alive socket the server already closed fails on the first writes (the RST comes
-        // back after one round trip, while the send buffer still accepts data) or with an
-        // immediate FIN: reconnect once without reporting a retry (protocol §1.3).
+        // A kept-alive socket the server already closed fails during the upload (the RST comes
+        // back after one round trip, while the send buffer, up to 23 KB, still accepts data) or
+        // with an immediate FIN: reconnect once without reporting a retry (protocol §1.3, N5).
         bool dead_reuse = r->reused && !r->aborted && !r->deadline &&
-                          ((r->phase == OR_PH_WRITE && r->bytes_sent <= 2 * WRITE_PIECE) ||
+                          (r->phase == OR_PH_WRITE ||
                            (r->phase == OR_PH_FIRST_BYTE && r->err == ESP_ERR_HTTP_FETCH_HEADER));
         esp_http_client_close(c->h);
         c->live = false;

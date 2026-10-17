@@ -32,6 +32,7 @@ void vSemaphoreDelete(SemaphoreHandle_t s);
 QueueHandle_t xQueueCreate(UBaseType_t n, UBaseType_t sz);
 BaseType_t xQueueSend(QueueHandle_t q, const void *item, TickType_t t);
 BaseType_t xQueueReceive(QueueHandle_t q, void *item, TickType_t t);
+#define uxQueueMessagesWaiting(q) ((void)(q), 0u)
 BaseType_t xTaskCreatePinnedToCoreWithCaps(void (*fn)(void *), const char *name, uint32_t stack, void *arg,
                                            UBaseType_t prio, TaskHandle_t *h, BaseType_t core, uint32_t caps);
 TaskHandle_t xTaskGetCurrentTaskHandle(void);

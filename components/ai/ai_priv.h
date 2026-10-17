@@ -72,8 +72,13 @@ void hist_append_messages(cJSON *messages, int max_n, int max_cp);
 void ai_model_from_json(const cJSON *m, ai_model_t *out);
 bool ai_model_cache_get(const char *id, ai_model_t *out);
 void ai_model_cache_put(const ai_model_t *m);
-// Common GET in the ai task: JSON body (PSRAM) of base_url + path, silent background retries.
-esp_err_t ai_get_json(const char *base_url, const char *path, size_t cap, char **body, int *status, or_err_t *err);
+// Common GET in the ai task: JSON body (PSRAM) of base_url + path; silent background retries
+// unless once is set.
+esp_err_t ai_get_json(const char *base_url, const char *path, size_t cap, bool once, char **body, int *status,
+                      or_err_t *err);
+// TLS pre-warm in the ai task: GET /key, then GET /model/{model} when it is not cached; single
+// attempts that stop as soon as a turn is waiting in the queue (pending() true).
+void ai_prewarm_gets(const char *model, bool (*pending)(void));
 
 // ---- stt_client.c -----------------------------------------------------------------------------
 // Whisper call for a turn: text (PSRAM) and cost of the transcription.
