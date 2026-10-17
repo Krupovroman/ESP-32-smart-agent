@@ -1,0 +1,4 @@
+# Rollback test build (docs/architecture.md §10 test 6.2): the boot self-test always fails, so an
+# image pushed with "dev.py ota push" is marked invalid and the previous slot boots again.
+#   .\tools\idf.ps1 -B build-ff -D SDKCONFIG=build-ff/sdkconfig -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;tests/sdkconfig.forcefail" build
+CONFIG_RA_SELFTEST_FORCE_FAIL=y

@@ -1,0 +1,17 @@
+menu "Round Assistant OTA and self-test"
+
+    config RA_SELFTEST_FORCE_FAIL
+        bool "Force the boot self-test to fail (rollback test build)"
+        default n
+        help
+            Test hook for docs/architecture.md §10 test 6.2: the self-test reports a failure,
+            so an image pushed over OTA is marked invalid and the previous slot boots again.
+
+    config RA_SELFTEST_FORCE_PANIC
+        bool "Panic inside the boot self-test (bootloader rollback test build)"
+        default n
+        help
+            Test hook for test 6.3: the image crashes before it is confirmed, so the bootloader
+            marks it ABORTED on the next boot and returns to the previous slot.
+
+endmenu

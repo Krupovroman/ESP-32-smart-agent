@@ -5,58 +5,72 @@
 #include "display.h"
 #include "inject.h"
 #include "net.h"
+#include "ota.h"
+#include "selftest.h"
 #include "settings.h"
 #include "touch.h"
 #include "ui_test.h"
 
 #include "esp_log.h"
-#include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 static const char *TAG = "main";
 
-// Rollback guard: a freshly OTA-updated image stays "pending" until it proves it can
-// bring up the display and the LVGL loop; otherwise the bootloader returns to the old slot.
-static void confirm_running_image(void)
-{
-    const esp_partition_t *running = esp_ota_get_running_partition();
-    esp_ota_img_states_t state;
-    if (esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_PENDING_VERIFY) {
-        ESP_LOGI(TAG, "self-test passed, confirming image in %s", running->label);
-        esp_ota_mark_app_valid_cancel_rollback();
-    }
-}
-
 void app_main(void)
 {
     board_power_latch_on();
+    // after repeated crashes during boot only the console and the display come up
+    bool safe = selftest_boot_begin();
     ESP_ERROR_CHECK(settings_init());
-    ESP_ERROR_CHECK(board_init());
-    ESP_ERROR_CHECK(display_init());
-    if (touch_init(display_get()) != ESP_OK) {
+    // the console comes this early so a board that fails later is still reachable
+    ESP_ERROR_CHECK(devconsole_start());
+
+    selftest_inputs_t st = {
+        .audio_in = ESP_ERR_INVALID_STATE, .audio_out = ESP_ERR_INVALID_STATE, .wifi = ESP_ERR_INVALID_STATE,
+    };
+    st.board = board_init();
+    ESP_ERROR_CHECK(st.board);
+    devconsole_heap_stage("after_board");
+    st.display = display_init();
+    ESP_ERROR_CHECK(st.display);
+    devconsole_heap_stage("after_display");
+    st.touch = touch_init(display_get());
+    if (st.touch != ESP_OK) {
         ESP_LOGE(TAG, "touch unavailable");
     }
     inject_init(display_get());
-    if (audio_in_init() != ESP_OK) {
-        ESP_LOGE(TAG, "microphone unavailable");
+    if (!safe) {
+        st.audio_in = audio_in_init();
+        if (st.audio_in != ESP_OK) {
+            ESP_LOGE(TAG, "microphone unavailable");
+        }
+        st.audio_out = audio_out_init();
+        if (st.audio_out != ESP_OK) {
+            ESP_LOGE(TAG, "speaker output unavailable");
+        }
+        audio_out_set_volume((uint8_t)settings_get_int("volume"));
+        audio_in_set_format(settings_get_int("mic_slot") == 0, settings_get_int("mic_shift"));
+        devconsole_heap_stage("after_audio");
     }
-    if (audio_out_init() != ESP_OK) {
-        ESP_LOGE(TAG, "speaker output unavailable");
-    }
-    audio_out_set_volume((uint8_t)settings_get_int("volume"));
-    audio_in_set_format(settings_get_int("mic_slot") == 0, settings_get_int("mic_shift"));
 
     ui_test_create();
     vTaskDelay(pdMS_TO_TICKS(80));   // let the first frame reach the panel before lighting it
     board_backlight_set((uint8_t)settings_get_int("bright"));
 
-    ESP_ERROR_CHECK(devconsole_start());
-    confirm_running_image();
-
-    if (net_init() == ESP_OK) {
-        net_start();
+    if (!safe) {
+        st.wifi = net_init();
+        if (st.wifi != ESP_OK) {
+            ESP_LOGE(TAG, "wifi unavailable");
+        }
+        devconsole_heap_stage("after_wifi_init");
+        // a pending OTA image is confirmed here, or rolled back (no return)
+        selftest_run(&st);
+        if (st.wifi == ESP_OK) {
+            net_start();
+        }
     } else {
-        ESP_LOGE(TAG, "wifi unavailable");
+        ota_selftest_skipped("safe mode");
     }
+    selftest_ready();
 }

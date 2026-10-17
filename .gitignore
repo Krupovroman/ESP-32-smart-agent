@@ -1,5 +1,7 @@
 # build outputs
 build/
+build-*/
+build.log
 .pio/
 managed_components/
 sdkconfig.old
@@ -12,6 +14,14 @@ secrets.json
 
 # flash dumps are large binaries; kept locally in backups/
 backups/*.bin
+
+# release archives (tools/release.ps1): binaries stay local, the manifest, checksums and
+# flash_args are committed
+releases/**
+!releases/*/
+!releases/*/manifest.json
+!releases/*/SHA256SUMS.txt
+!releases/*/flash_args
 
 # editor / OS
 .vscode/

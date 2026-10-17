@@ -44,3 +44,19 @@ esp_err_t audio_in_probe(uint32_t ms, audio_probe_t *out);
 
 // Wraps the PCM of a clip into a WAV file image in PSRAM (caller frees with free()).
 uint8_t *audio_clip_to_wav(const audio_clip_t *clip, size_t *len);
+
+// ---- Injected source (tests without speaking; docs/architecture.md §1.5) ----
+typedef enum { AUDIO_SRC_MIC, AUDIO_SRC_INJECT } audio_src_t;
+
+// Loads a WAV (RIFF, PCM 16 kHz mono s16, at most AUDIO_IN_MAX_MS) as the injection source;
+// the samples are copied to PSRAM, so wav may be freed afterwards.
+esp_err_t audio_in_inject_load(const uint8_t *wav, size_t len);
+// Where recordings take samples from. With INJECT every audio_in_start() replays the loaded WAV
+// from its start, bit-exact (no shift, no DC blocker), and the recording stops at its end.
+// realtime paces it at 20 ms per chunk like the mic; otherwise the recording is filled at once.
+// INJECT needs a loaded WAV and the 16 kHz capture rate (ESP_ERR_INVALID_STATE otherwise).
+esp_err_t audio_in_set_source(audio_src_t src, bool realtime);
+audio_src_t audio_in_get_source(void);
+bool audio_in_inject_realtime(void);
+// Number of loaded injection samples (0 = none).
+size_t audio_in_inject_samples(void);

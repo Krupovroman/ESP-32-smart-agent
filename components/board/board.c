@@ -22,6 +22,8 @@ static uint8_t s_backlight = 0;
 
 void board_power_latch_on(void)
 {
+    // level before direction: the bootloader hook already drives it high, never let it dip
+    gpio_set_level(BOARD_PIN_PWR_LATCH, 1);
     gpio_config_t cfg = {
         .pin_bit_mask = 1ULL << BOARD_PIN_PWR_LATCH,
         .mode = GPIO_MODE_OUTPUT,
