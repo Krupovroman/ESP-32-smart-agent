@@ -10,6 +10,7 @@
 typedef struct {
     const int16_t *pcm;     // 16 kHz mono s16, owned by audio_in (valid until the next start)
     size_t samples;
+    uint32_t rate;
     uint32_t ms;
     int16_t peak;
     int rms_dbfs_x10;       // e.g. -423 = -42.3 dBFS
@@ -35,6 +36,9 @@ int audio_in_level(void);
 
 // Which I2S slot carries the mic (true = right) and how far 32-bit samples are shifted down.
 void audio_in_set_format(bool right_slot, int shift);
+// Capture sample rate (default 16 kHz). The clip keeps the rate it was recorded at.
+void audio_in_set_rate(uint32_t rate);
+uint32_t audio_in_get_rate(void);
 // Measures both slots for ms each (blocks; not while recording).
 esp_err_t audio_in_probe(uint32_t ms, audio_probe_t *out);
 

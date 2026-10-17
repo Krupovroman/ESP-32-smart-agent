@@ -25,6 +25,8 @@ static volatile int s_level;
 static volatile bool s_right_slot = true;
 static volatile int s_shift = 12;
 static volatile bool s_reconfig;
+static volatile uint32_t s_rate = AUDIO_IN_RATE;
+static volatile uint32_t s_pending_rate;
 static audio_clip_t s_last;
 static bool s_have_last;
 static int16_t s_peak;
@@ -55,6 +57,16 @@ static void capture_task(void *arg)
     int16_t pcm[FRAME_SAMPLES];
     float dc_x1 = 0, dc_y1 = 0;
     for (;;) {
+        if (s_pending_rate) {
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            i2s_std_clk_config_t clk = I2S_STD_CLK_DEFAULT_CONFIG(s_pending_rate);
+            i2s_channel_disable(s_rx);
+            i2s_channel_reconfig_std_clock(s_rx, &clk);
+            i2s_channel_enable(s_rx);
+            s_rate = s_pending_rate;
+            s_pending_rate = 0;
+            xSemaphoreGive(s_lock);
+        }
         if (s_reconfig) {
             xSemaphoreTake(s_lock, portMAX_DELAY);
             apply_slot(s_right_slot);
@@ -141,7 +153,10 @@ esp_err_t audio_in_start(uint32_t max_ms)
     }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     s_rec_len = 0;
-    s_rec_max = (size_t)AUDIO_IN_RATE * max_ms / 1000;
+    s_rec_max = (size_t)s_rate * max_ms / 1000;
+    if (s_rec_max > REC_CAP) {
+        s_rec_max = REC_CAP;
+    }
     s_sum_sq = 0;
     s_peak = 0;
     s_have_last = false;
@@ -154,7 +169,8 @@ static void finish_clip(void)
 {
     s_last.pcm = s_rec;
     s_last.samples = s_rec_len;
-    s_last.ms = (uint32_t)(s_rec_len * 1000 / AUDIO_IN_RATE);
+    s_last.ms = (uint32_t)(s_rec_len * 1000 / s_rate);
+    s_last.rate = s_rate;
     s_last.peak = s_peak;
     s_last.rms_dbfs_x10 = dbfs_x10(s_sum_sq, s_rec_len);
     s_have_last = true;
@@ -185,6 +201,18 @@ const audio_clip_t *audio_in_last(void)
 }
 
 int audio_in_level(void) { return s_level; }
+
+void audio_in_set_rate(uint32_t rate)
+{
+    if (rate >= 8000 && rate <= 48000 && rate != s_rate) {
+        s_pending_rate = rate;
+        while (s_pending_rate) {
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
+}
+
+uint32_t audio_in_get_rate(void) { return s_rate; }
 
 void audio_in_set_format(bool right_slot, int shift)
 {
@@ -227,7 +255,7 @@ uint8_t *audio_clip_to_wav(const audio_clip_t *clip, size_t *len)
     if (!w) {
         return NULL;
     }
-    uint32_t rate = AUDIO_IN_RATE, byte_rate = AUDIO_IN_RATE * 2, riff = 36 + data, d32 = data, fmt_len = 16;
+    uint32_t rate = clip->rate, byte_rate = clip->rate * 2, riff = 36 + data, d32 = data, fmt_len = 16;
     uint16_t pcm = 1, ch = 1, align = 2, bits = 16;
     memcpy(w, "RIFF", 4);           memcpy(w + 4, &riff, 4);
     memcpy(w + 8, "WAVEfmt ", 8);   memcpy(w + 16, &fmt_len, 4);

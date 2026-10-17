@@ -169,8 +169,17 @@ static int cmd_mic(int argc, char **argv)
         if (!wav) {
             return err("no memory");
         }
-        dump_blob("wav", wav, len, "16000 1 s16le");
+        char meta[32];
+        snprintf(meta, sizeof(meta), "%u 1 s16le", (unsigned)c->rate);
+        dump_blob("wav", wav, len, meta);
         free(wav);
+        return ok();
+    }
+    if (!strcmp(sub, "rate")) {
+        if (argc > 2) {
+            audio_in_set_rate((uint32_t)atoi(argv[2]));
+        }
+        printf("rate %u\n", (unsigned)audio_in_get_rate());
         return ok();
     }
     if (!strcmp(sub, "level")) {
