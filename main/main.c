@@ -23,8 +23,12 @@ void app_main(void)
     // after repeated crashes during boot only the console and the display come up
     bool safe = selftest_boot_begin();
     ESP_ERROR_CHECK(settings_init());
-    // the console comes this early so a board that fails later is still reachable
-    ESP_ERROR_CHECK(devconsole_start());
+    // the console comes this early so a board that fails later is still reachable. Its own
+    // failure is not fatal (an abort here would boot-loop even in safe mode); the self-test
+    // rejects a pending OTA image without a console.
+    if (devconsole_start() != ESP_OK) {
+        ESP_LOGE(TAG, "dev console unavailable");
+    }
 
     selftest_inputs_t st = {
         .audio_in = ESP_ERR_INVALID_STATE, .audio_out = ESP_ERR_INVALID_STATE, .wifi = ESP_ERR_INVALID_STATE,

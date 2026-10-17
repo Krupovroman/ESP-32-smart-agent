@@ -8,6 +8,7 @@ The fake transport answers like the firmware (components/devconsole): "#id" requ
 log lines, and hands its output back in random fragments so line reassembly is exercised.
 """
 import base64
+import io
 import json
 import math
 import os
@@ -420,6 +421,19 @@ class TransportTests(unittest.TestCase):
         self.t._drop(old)                     # the other thread reports the old failure late
         self.assertIs(self.t.s, new)
         self.assertFalse(new.closed)
+
+    def test_cli_reports_unopenable_port(self):
+        def busy():
+            raise OSError("access denied")
+        sys.modules["serial"] = types.SimpleNamespace(Serial=busy, SerialException=OSError)
+        saved_argv, saved_err = sys.argv, sys.stderr
+        # wait-ready 0.1 also bounds the open retries, so the test does not wait 5 s
+        sys.argv, sys.stderr = ["dev.py", "--port", "COMX", "wait-ready", "0.1"], io.StringIO()
+        try:
+            self.assertEqual(dev.main(), 2)
+            self.assertIn("cannot open COMX", sys.stderr.getvalue())
+        finally:
+            sys.argv, sys.stderr = saved_argv, saved_err
 
     def test_write_reopens_after_failure(self):
         self.t.s.closed = True                # the board re-enumerated
