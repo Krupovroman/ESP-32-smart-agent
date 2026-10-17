@@ -199,11 +199,28 @@ void ota_selftest_skipped(const char *reason)
     strlcpy(s_selftest_reason, reason ? reason : "", sizeof(s_selftest_reason));
 }
 
+// After "idf.py flash" otadata is blank, so the running slot has no entry. An update would then
+// write only the new slot's entry and leave no previous image: a failed self-test could not
+// roll back (the bad image keeps running) and "ota rollback" is refused. Before the first update
+// the running image therefore gets a valid entry of its own.
+static esp_err_t anchor_running_slot(void)
+{
+    const esp_partition_t *run = esp_ota_get_running_partition();
+    esp_ota_img_states_t st;
+    if (!run || esp_ota_get_state_partition(run, &st) != ESP_ERR_NOT_FOUND) {
+        return ESP_OK;
+    }
+    ESP_LOGI(TAG, "%s has no otadata entry: recording it as the valid previous image", run->label);
+    ESP_RETURN_ON_ERROR(esp_ota_set_boot_partition(run), TAG, "anchor %s", run->label);
+    return esp_ota_mark_app_valid_cancel_rollback();   // set_boot leaves it NEW
+}
+
 // ---------------------------------------------------------------- console push
 
 esp_err_t ota_stream_begin(size_t size)
 {
     ESP_RETURN_ON_FALSE(!s_streaming && !s_https_busy, ESP_ERR_INVALID_STATE, TAG, "update already running");
+    ESP_RETURN_ON_ERROR(anchor_running_slot(), TAG, "otadata");
     s_part = esp_ota_get_next_update_partition(NULL);
     ESP_RETURN_ON_FALSE(s_part, ESP_ERR_NOT_FOUND, TAG, "no OTA slot");
     ESP_RETURN_ON_FALSE(size > 0 && size <= s_part->size, ESP_ERR_INVALID_SIZE, TAG, "image %u > slot %u",
