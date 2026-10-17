@@ -14,7 +14,7 @@ typedef struct {
 
 static const str_def_t s_tab[S__N] = {
     E(S_MODE_ASSISTANT, "Ассистент", "Assistant", SLOT_PILL),
-    E(S_MODE_TRANSLATOR, "Переводчик", "Translator", SLOT_PILL),
+    E(S_MODE_TRANSLATOR, "Переводчик", "Translator", SLOT_NONE),     // list row title (M), not the pill
 
     E(S_ST_LISTENING, "Слушаю" TXT_ELLIPSIS, "Listening" TXT_ELLIPSIS, SLOT_STATUS),
     E(S_ST_LISTENING_LANG, "Слушаю" TXT_ELLIPSIS " (%s)", "Listening" TXT_ELLIPSIS " (%s)", SLOT_STATUS),
@@ -24,7 +24,8 @@ static const str_def_t s_tab[S__N] = {
     E(S_ST_UPLOAD, "Отправляю %d %%", "Sending %d %%", SLOT_STATUS),
     E(S_ST_THINK, "Думаю" TXT_ELLIPSIS, "Thinking" TXT_ELLIPSIS, SLOT_STATUS),
     E(S_ST_THINK2, "Ещё немного" TXT_ELLIPSIS, "Almost there" TXT_ELLIPSIS, SLOT_STATUS),
-    E(S_ST_THINK3, "Долго" TXT_ELLIPSIS " PWR " TXT_EMDASH " отмена", "Slow" TXT_ELLIPSIS " PWR cancels", SLOT_STATUS),
+    // ui.md "Долго… PWR — отмена" is 186 px in ui_16, over the 180 px conversation status slot
+    E(S_ST_THINK3, "Долго" TXT_ELLIPSIS " PWR: отмена", "Slow" TXT_ELLIPSIS " PWR cancels", SLOT_STATUS),
     E(S_ST_SPEAK_HINT, "Нажмите " TXT_EMDASH " стоп", "Tap to stop", SLOT_STATUS),
     E(S_ST_NOT_HEARD, "Не расслышал", "Didn't catch that", SLOT_STATUS),
     E(S_ST_TOO_SHORT, "Слишком коротко", "Too short", SLOT_STATUS),
@@ -32,20 +33,21 @@ static const str_def_t s_tab[S__N] = {
     E(S_ST_RETRY, "Повтор %d/2" TXT_ELLIPSIS, "Retry %d/2" TXT_ELLIPSIS, SLOT_STATUS),
     E(S_ST_BUSY_HINT, "PWR " TXT_EMDASH " отмена", "PWR cancels", SLOT_STATUS),
 
-    E(S_HINT1, "Держите шар", "Hold the orb", SLOT_HINT),
-    E(S_HINT2, "или BOOT", "or BOOT", SLOT_HINT),
+    // "Держите шар" is 108 px: line 1 (between the side buttons) holds <= 100, line 2 (below them) <= 124
+    E(S_HINT1, "Держите", "Hold the orb", SLOT_HINT),
+    E(S_HINT2, "шар или BOOT", "or BOOT", SLOT_HINT2),
     E(S_HINT1_TR, "Говорите", "Speak", SLOT_HINT),
-    E(S_HINT2_TR, "%s или %s", "%s or %s", SLOT_HINT),
+    E(S_HINT2_TR, "%s или %s", "%s or %s", SLOT_HINT2),
 
     E(S_TITLE_HISTORY, "История", "History", SLOT_TITLE),
-    E(S_NEW_CHAT, "Новый разговор", "New chat", SLOT_BTN),
+    E(S_NEW_CHAT, "Новый разговор", "New chat", SLOT_BTN_WIDE),
     E(S_DIVIDER, TXT_EMDASH " новый разговор " TXT_MIDDOT " %s " TXT_EMDASH,
       TXT_EMDASH " new conversation " TXT_MIDDOT " %s " TXT_EMDASH, SLOT_NONE),
     E(S_TTS_NOTE, "голос недоступен", "voice unavailable", SLOT_NONE),
 
     E(S_VOICE_OFF, "Голос выкл.", "Voice off", SLOT_TOAST),
     E(S_VOICE_ON, "Голос вкл.", "Voice on", SLOT_TOAST),
-    E(S_FINISH_INPUT, "Сначала завершите ввод", "Finish typing first", SLOT_TOAST),
+    E(S_FINISH_INPUT, "Сначала завершите ввод", "Finish typing first", SLOT_TOAST_WIDE),   // shown in K
     E(S_USB_POWER, "Питание от USB", "Powered by USB", SLOT_TOAST),
     E(S_DONE, "Готово", "Done", SLOT_TOAST),
     E(S_NOT_YET, "Пока недоступно", "Not available yet", SLOT_TOAST),
@@ -54,7 +56,8 @@ static const str_def_t s_tab[S__N] = {
       SLOT_TOAST),
     E(S_TOUCH_HELP, "Коснитесь экрана", "Touch the screen", SLOT_TOAST),
 
-    // "Модель недоступна ›" / "Модель скоро отключат ›" of ui.md 5.6 exceed the 160 px fault pill in ui_20
+    // fault texts use ui_16 in the <= 160 px pill: "Ключ не принят ›" is 171 px in ui_20;
+    // "Модель недоступна ›" / "Модель скоро отключат ›" of ui.md 5.6 do not fit even in ui_16
     E(S_F_NO_WIFI, "Нет Wi-Fi", "No Wi-Fi", SLOT_FAULT),
     E(S_F_BAD_KEY, "Ключ не принят", "Key rejected", SLOT_FAULT),
     E(S_F_NO_CREDIT, "Нет средств", "No credit", SLOT_FAULT),
@@ -64,30 +67,38 @@ static const str_def_t s_tab[S__N] = {
     E(S_F_MODEL_EXP, "Модель истекает", "Model expiring", SLOT_FAULT),
     E(S_F_MIC, "Микрофон", "Microphone", SLOT_FAULT),
 
-    E(S_C_WIFI_T, "Нет подключения к Wi-Fi", "Not connected to Wi-Fi", SLOT_CARD_T),
+    E(S_C_WIFI_T, "Нет подключения к Wi-Fi", "Not connected to Wi-Fi", SLOT_NONE),
     E(S_C_WIFI_B, "Подключаюсь снова" TXT_ELLIPSIS, "Reconnecting" TXT_ELLIPSIS, SLOT_NONE),
     E(S_C_WIFI_A, "Настроить", "Set up", SLOT_BTN),
-    E(S_C_KEY_T, "Ключ API не подошёл (401)", "API key rejected (401)", SLOT_CARD_T),
+    E(S_C_KEY_T, "Ключ API не подошёл (401)", "API key rejected (401)", SLOT_NONE),
     E(S_C_KEY_A, "Заменить ключ", "Replace key", SLOT_BTN),
-    E(S_C_CREDIT_T, "Закончились средства", "Out of credit", SLOT_CARD_T),
+    E(S_C_CREDIT_T, "Закончились средства", "Out of credit", SLOT_NONE),
     E(S_C_CREDIT_B, "Пополните баланс на openrouter.ai", "Top up at openrouter.ai", SLOT_NONE),
     E(S_C_CREDIT_A, "Подробнее", "Details", SLOT_BTN),
-    E(S_C_REGION_T, "Сервис недоступен", "Not available", SLOT_CARD_T),
+    E(S_C_REGION_T, "Сервис недоступен", "Not available", SLOT_NONE),
     E(S_C_REGION_B, "для этого региона или аккаунта. Укажите другого провайдера",
       "in your region or for this account. Choose another provider", SLOT_NONE),
     E(S_C_REGION_A, "Провайдер", "Provider", SLOT_BTN),
-    E(S_C_MODEL_T, "Модель недоступна", "Model unavailable", SLOT_CARD_T),
+    E(S_C_MODEL_T, "Модель недоступна", "Model unavailable", SLOT_NONE),
     E(S_C_MODEL_A, "Выбрать", "Choose", SLOT_BTN),
     E(S_C_RATE_T, "Слишком часто " TXT_EMDASH " подождите", "Too many requests " TXT_EMDASH " wait", SLOT_NONE),
-    E(S_C_SERVER_T, "Сервер не ответил", "Server didn't respond", SLOT_CARD_T),
+    E(S_C_SERVER_T, "Сервер не ответил", "Server didn't respond", SLOT_NONE),
     E(S_C_RETRY_A, "Повторить", "Retry", SLOT_BTN),
     E(S_C_TLS_T, "Не удаётся связаться с сервером", "Can't reach the server", SLOT_NONE),
     E(S_C_DIAG_A, "Диагностика", "Diagnostics", SLOT_BTN),
-    E(S_C_MIC_T, "Микрофон молчит", "Microphone is silent", SLOT_CARD_T),
-    E(S_C_SPK_T, "Динамик не подключён", "No speaker connected", SLOT_CARD_T),
+    E(S_C_MIC_T, "Микрофон молчит", "Microphone is silent", SLOT_NONE),
+    E(S_C_SPK_T, "Динамик не подключён", "No speaker connected", SLOT_NONE),
     E(S_C_SPK_B, "Отвечаю текстом", "Replying in text", SLOT_NONE),
     E(S_C_SPK_A, "Проверить звук", "Test sound", SLOT_BTN),
-    E(S_C_ERROR_T, "Ошибка", "Error", SLOT_CARD_T),
+    E(S_C_ERROR_T, "Ошибка", "Error", SLOT_NONE),
+
+    // short error for the coral status line while the orb shows ERROR (card titles wrap, these must not)
+    E(S_E_GENERIC, "Ошибка", "Error", SLOT_STATUS),
+    E(S_E_SERVER, "Сервер не ответил", "No server reply", SLOT_STATUS),
+    E(S_E_RATE, "Слишком часто", "Too many requests", SLOT_STATUS),
+    E(S_E_TLS, "Нет связи с сервером", "Server unreachable", SLOT_STATUS),
+    E(S_E_MIC, "Микрофон молчит", "Mic is silent", SLOT_STATUS),
+    E(S_E_SPK, "Нет динамика", "No speaker", SLOT_STATUS),
 };
 
 static int s_lang;
@@ -200,8 +211,8 @@ size_t ui_str_sanitize(const char *in, char *out, size_t out_len, const lv_font_
         if (font && c != ' ' && !font_has(font, c)) {
             continue;
         }
-        if (line_start && c == ' ') {
-            continue;           // indentation left by stripped markdown
+        if (c == ' ' && (line_start || (o > 0 && out[o - 1] == ' '))) {
+            continue;           // indentation and double spaces left by stripped markdown / emoji
         }
         char enc[4];
         size_t n = utf8_put(c, enc);
@@ -252,14 +263,16 @@ typedef struct {
 static slot_def_t slot_of(uint8_t slot)
 {
     switch (slot) {
-    case SLOT_PILL: return (slot_def_t){ &ui_20, 124, " " SYM_DOWN };   // pill text + chevron
-    case SLOT_FAULT: return (slot_def_t){ &ui_20, 156, " " TXT_RSAQUO };  // fault pill (<= 160 wide)
+    case SLOT_PILL: return (slot_def_t){ &ui_20, 132, " " SYM_DOWN };   // 140 px pill, 4 px each side
+    case SLOT_FAULT: return (slot_def_t){ &ui_16, 152, " " TXT_RSAQUO };  // fault pill (<= 160 wide), ui_16
     case SLOT_STATUS: return (slot_def_t){ &ui_16, 180, "" };           // conversation width (empty is 200)
     case SLOT_TITLE: return (slot_def_t){ &ui_20, 147, "" };            // arc title after the chevron
-    case SLOT_HINT: return (slot_def_t){ &ui_16, 100, "" };
+    case SLOT_HINT: return (slot_def_t){ &ui_16, 100, "" };             // H hint line 1, between the buttons
+    case SLOT_HINT2: return (slot_def_t){ &ui_16, 124, "" };            // H hint line 2, below the buttons
     case SLOT_TOAST: return (slot_def_t){ &ui_16, 180, "" };            // Home status slot (conversation)
-    case SLOT_CARD_T: return (slot_def_t){ &ui_20, 190, "" };           // card row 1 after the icon
-    case SLOT_BTN: return (slot_def_t){ &ui_20, 136, "" };              // 160 px action stadium minus padding
+    case SLOT_TOAST_WIDE: return (slot_def_t){ &ui_16, 200, "" };       // top-layer toast on other screens
+    case SLOT_BTN: return (slot_def_t){ &ui_20, 184, "" };              // card action stadium (<= 224 wide)
+    case SLOT_BTN_WIDE: return (slot_def_t){ &ui_20, 176, "" };         // 200 px stadium
     default: return (slot_def_t){ NULL, 0, "" };
     }
 }
@@ -274,7 +287,7 @@ static void expand_sample(const char *fmt, char *out, size_t len)
             o += 3;
             i++;
         } else if (fmt[i] == '%' && fmt[i + 1] == 's') {
-            memcpy(out + o, "WW", 2);
+            memcpy(out + o, "EN", 2);   // %s is a language code everywhere
             o += 2;
             i++;
         } else if (fmt[i] == '%' && fmt[i + 1] == '%') {

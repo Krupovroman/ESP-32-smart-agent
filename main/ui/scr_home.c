@@ -32,10 +32,12 @@
 #define SIDE_L_CX       100
 #define SIDE_R_CX       260
 #define SIDE_CY         292
-#define HINT_W          100     // lines centred at (180,306) / (180,326): corners 144.9 / 163.8
-#define HINT_X          130
+#define HINT_W1         100     // line 1 x 130-230, y 296-316 (between the buttons, 4 px gaps): 144.9
+#define HINT_W2         124     // line 2 x 118-242, y 316-336 (below the buttons, they end at y 318):
+                                // |(62,156)| = 167.9
 #define HINT_Y1         296
 #define HINT_Y2         316
+#define HINT_H          20
 #define CHAT_X          54      // viewport x 54-306, y 80-244: top corners |(126,100)| = 160.9
 #define CHAT_Y          80
 #define CHAT_W          252
@@ -119,6 +121,10 @@ static void hide_done(lv_anim_t *a)
 static void fade(lv_obj_t *o, bool show, uint32_t ms)
 {
     bool hidden = lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN);
+    lv_anim_t *running = lv_anim_get(o, opa_exec);
+    if (running && running->end_value == (show ? LV_OPA_COVER : LV_OPA_TRANSP)) {
+        return;     // already heading there: restarting every refresh would never finish the fade
+    }
     lv_anim_delete(o, opa_exec);
     if (show && hidden) {
         lv_obj_set_style_opa(o, 0, 0);
@@ -210,6 +216,8 @@ static void pill_refresh(void)
         snprintf(buf, sizeof(buf), "%s " SYM_DOWN, ui_s(S_MODE_ASSISTANT));
     }
     lv_label_set_text(s_pill_lbl, buf);
+    // fault texts are longer than mode names: ui_16 keeps "Ключ не принят ›" inside the 160 px pill
+    lv_obj_set_style_text_font(s_pill_lbl, fault ? &ui_16 : &ui_20, 0);
     lv_obj_set_x(s_pill, fault ? PILL_FAULT_X : PILL_X);
     lv_obj_set_width(s_pill, fault ? PILL_FAULT_W : PILL_W);
 }
@@ -426,14 +434,19 @@ static void scroll_bottom(void)
     }
 }
 
-static void msg_click_cb(lv_event_t *e)
+static void chat_click_cb(lv_event_t *e)
 {
+    (void)e;
     if (lv_tick_elaps(s_scroll_end_t) < 300) {
         return;     // the tap stopped a fling
     }
-    uint32_t id = ui_msg_id(lv_event_get_current_target(e));
     lv_point_t p;
     lv_indev_get_point(lv_indev_active(), &p);
+    lv_obj_t *w = ui_msg_at(s_chat, p);
+    if (!w) {
+        return;
+    }
+    uint32_t id = ui_msg_id(w);
     ui_orb_look_at(s_orb, p, 900);
     const cm_entry_t *en = cm_find(id);
     if (en && en->kind == CM_TURN && en->text2) {
@@ -458,7 +471,7 @@ static lv_obj_t *add_widget(const cm_entry_t *e, uint32_t delay)
     if (!s_conv) {
         set_layout(true, true);
     }
-    lv_obj_t *w = ui_msg_create(s_chat, e, true, delay, msg_click_cb);
+    lv_obj_t *w = ui_msg_create(s_chat, e, true, delay, NULL);
     while (lv_obj_get_child_count(s_chat) > CM_LIVE_MAX) {
         lv_obj_delete(lv_obj_get_child(s_chat, 0));
     }
@@ -474,7 +487,7 @@ static void rebuild_chat(void)
     int m = mode();
     int n = cm_count(m);
     for (int i = n > CM_LIVE_MAX ? n - CM_LIVE_MAX : 0; i < n; i++) {
-        ui_msg_create(s_chat, cm_at(m, i), false, 0, msg_click_cb);
+        ui_msg_create(s_chat, cm_at(m, i), false, 0, NULL);
     }
     set_layout(n > 0, false);
     s_autoscroll = true;
@@ -914,12 +927,11 @@ static void state_obs(lv_observer_t *o, lv_subject_t *s)
         lv_timer_set_repeat_count(s_err_timer, 1);
         lv_timer_reset(s_err_timer);
         lv_timer_resume(s_err_timer);
-        // short error in coral: the title of the last card
+        // short error in coral for the card just added (one line; the card title itself may wrap)
         const cm_entry_t *c = cm_last_of(mode(), CM_CARD);
-        static const ui_sid_t titles[UI_CARD__N] = { S_C_ERROR_T, S_C_WIFI_T, S_C_KEY_T, S_C_CREDIT_T, S_C_REGION_T,
-                                                     S_C_MODEL_T, S_C_RATE_T, S_C_SERVER_T, S_C_TLS_T, S_C_MIC_T,
-                                                     S_C_SPK_T };
-        transient(ui_s(c && c->card < UI_CARD__N ? titles[c->card] : S_C_ERROR_T), 2400, true);
+        static const ui_sid_t shorts[UI_CARD__N] = { S_E_GENERIC, S_F_NO_WIFI, S_F_BAD_KEY, S_F_NO_CREDIT, S_F_REGION,
+                                                     S_F_MODEL, S_E_RATE, S_E_SERVER, S_E_TLS, S_E_MIC, S_E_SPK };
+        transient(ui_s(c && c->card < UI_CARD__N ? shorts[c->card] : S_E_GENERIC), 2400, true);
     }
     if (st == UI_ST_ANSWERED || (st == UI_ST_IDLE && prev != UI_ST_IDLE)) {
         close_open_reply(mode());
@@ -1033,7 +1045,8 @@ lv_obj_t *scr_home_create(void)
     ui_theme_plain(s_chat);
     lv_obj_set_name_static(s_chat, "home_chat");
     lv_obj_add_flag(s_chat, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_ELASTIC);
-    lv_obj_remove_flag(s_chat, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_chat, LV_OBJ_FLAG_CLICKABLE);     // tap target for the messages (2.4, 5.4 item 8)
+    lv_obj_add_event_cb(s_chat, chat_click_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_set_scroll_dir(s_chat, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(s_chat, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_pos(s_chat, CHAT_X, CHAT_Y);
@@ -1094,14 +1107,15 @@ lv_obj_t *scr_home_create(void)
     s_right_lbl = centred_label(s_right, "home_settings_icon", NULL);
     lv_obj_center(s_right_lbl);
 
+    // fixed one-line boxes: DOTS only truncates when the height is fixed too
     s_hint1 = centred_label(s_scr, "home_hint1", &st_text16);
-    lv_obj_set_pos(s_hint1, HINT_X, HINT_Y1);
-    lv_obj_set_width(s_hint1, HINT_W);
     lv_label_set_long_mode(s_hint1, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_pos(s_hint1, UI_CX - HINT_W1 / 2, HINT_Y1);
+    lv_obj_set_size(s_hint1, HINT_W1, HINT_H);
     s_hint2 = centred_label(s_scr, "home_hint2", &st_text16);
-    lv_obj_set_pos(s_hint2, HINT_X, HINT_Y2);
-    lv_obj_set_width(s_hint2, HINT_W);
     lv_label_set_long_mode(s_hint2, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_pos(s_hint2, UI_CX - HINT_W2 / 2, HINT_Y2);
+    lv_obj_set_size(s_hint2, HINT_W2, HINT_H);
 
     if (!s_tick) {
         s_tick = lv_timer_create(tick_cb, 100, NULL);   // file-level timers survive a Home rebuild

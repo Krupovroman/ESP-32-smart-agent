@@ -33,12 +33,15 @@ typedef enum {
     S_C_MIC_T,
     S_C_SPK_T, S_C_SPK_B, S_C_SPK_A,
     S_C_ERROR_T,
+    // short errors for the status line
+    S_E_GENERIC, S_E_SERVER, S_E_RATE, S_E_TLS, S_E_MIC, S_E_SPK,
     S__N
 } ui_sid_t;
 
 // Measured string slots for the fit test (docs/ui.md 7.9).
 typedef enum {
-    SLOT_NONE, SLOT_PILL, SLOT_FAULT, SLOT_STATUS, SLOT_TITLE, SLOT_HINT, SLOT_TOAST, SLOT_CARD_T, SLOT_BTN
+    SLOT_NONE, SLOT_PILL, SLOT_FAULT, SLOT_STATUS, SLOT_TITLE, SLOT_HINT, SLOT_HINT2, SLOT_TOAST, SLOT_TOAST_WIDE,
+    SLOT_BTN, SLOT_BTN_WIDE
 } ui_slot_t;
 
 // Text of id in the current UI language.

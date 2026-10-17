@@ -5,6 +5,7 @@
 #include "ui_sym.h"
 #include "ui_theme.h"
 
+#include <assert.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
@@ -196,6 +197,21 @@ lv_obj_t *ui_msg_find(lv_obj_t *list, uint32_t id)
     for (uint32_t i = 0; i < n; i++) {
         lv_obj_t *c = lv_obj_get_child(list, (int32_t)i);
         if ((uint32_t)(uintptr_t)lv_obj_get_user_data(c) == id) {
+            return c;
+        }
+    }
+    return NULL;
+}
+
+lv_obj_t *ui_msg_at(lv_obj_t *list, lv_point_t p)
+{
+    uint32_t n = lv_obj_get_child_count(list);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *c = lv_obj_get_child(list, (int32_t)i);
+        lv_area_t a;
+        lv_obj_get_coords(c, &a);
+        // the 6 px list gap above a wrapper counts as part of it
+        if (p.y >= a.y1 - 6 && p.y <= a.y2 && lv_obj_get_user_data(c)) {
             return c;
         }
     }
@@ -529,7 +545,10 @@ static void build_card(lv_obj_t *w, const cm_entry_t *e)
         lv_obj_add_style(btn, &st_card_btn, 0);
         lv_obj_set_style_bg_color(btn, ui_col(acc->top), 0);
         lv_obj_set_style_bg_color(btn, ui_col(acc->mid), LV_STATE_PRESSED);
-        lv_obj_set_size(btn, 160, 50);
+        // 160x50 stadium (3.14), wider for long labels such as "Проверить звук"
+        lv_obj_set_size(btn, LV_SIZE_CONTENT, 50);
+        lv_obj_set_style_min_width(btn, 160, 0);
+        lv_obj_set_style_pad_hor(btn, 20, 0);
         lv_obj_set_style_margin_top(btn, 4, 0);
         lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(btn, card_btn_cb, LV_EVENT_CLICKED, (void *)(intptr_t)e->card);

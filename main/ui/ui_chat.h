@@ -51,5 +51,8 @@ lv_obj_t *ui_msg_create(lv_obj_t *list, const cm_entry_t *e, bool animate, uint3
 void ui_msg_refresh(lv_obj_t *wrap, const cm_entry_t *e, bool animate);
 // Wrapper of entry id inside list, or NULL.
 lv_obj_t *ui_msg_find(lv_obj_t *list, uint32_t id);
+// Wrapper under the absolute point p, or NULL. The list (>= 50 px) is the touch target, not the
+// messages: a one-line bubble is only 36 px tall.
+lv_obj_t *ui_msg_at(lv_obj_t *list, lv_point_t p);
 // Entry id of a wrapper (or of any object inside it).
 uint32_t ui_msg_id(lv_obj_t *obj);

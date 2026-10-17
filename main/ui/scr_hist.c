@@ -21,12 +21,15 @@ static void scroll_end_cb(lv_event_t *e)
     s_scroll_end_t = lv_tick_get();
 }
 
-static void msg_click_cb(lv_event_t *e)
+static void list_click_cb(lv_event_t *e)
 {
     if (lv_tick_elaps(s_scroll_end_t) < 300) {
         return;
     }
-    const cm_entry_t *en = cm_find(ui_msg_id(lv_event_get_current_target(e)));
+    lv_point_t p;
+    lv_indev_get_point(lv_indev_active(), &p);
+    lv_obj_t *w = ui_msg_at(lv_event_get_current_target(e), p);
+    const cm_entry_t *en = w ? cm_find(ui_msg_id(w)) : NULL;
     if (en && en->kind == CM_TURN && en->text2) {
         ui_nav_push(UI_SCR_READER, en->id);     // translator bubbles open the reader
     }
@@ -50,7 +53,8 @@ lv_obj_t *scr_hist_build(uint32_t entry_id)
     ui_theme_plain(list);
     lv_obj_set_name_static(list, "hist_list");
     lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM | LV_OBJ_FLAG_SCROLL_ELASTIC);
-    lv_obj_remove_flag(list, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(list, LV_OBJ_FLAG_CLICKABLE);       // the list is the tap target of its messages
+    lv_obj_add_event_cb(list, list_click_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_set_scroll_dir(list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_pos(list, VP_X, VP_Y);
@@ -82,7 +86,7 @@ lv_obj_t *scr_hist_build(uint32_t entry_id)
 
     int m = ui_get(g_s_mode);
     for (int i = 0; i < cm_count(m); i++) {
-        ui_msg_create(list, cm_at(m, i), false, 0, msg_click_cb);
+        ui_msg_create(list, cm_at(m, i), false, 0, NULL);
     }
     ui_chrome_fades(scr, VP_X, VP_Y, VP_W, VP_H, FADE_T, FADE_B);
     ui_chrome_title(scr, ui_s(S_TITLE_HISTORY));

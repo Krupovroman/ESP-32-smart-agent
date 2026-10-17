@@ -3,16 +3,94 @@
 #include "ui_sym.h"
 #include "ui_theme.h"
 
+#include <math.h>
 #include <stdio.h>
+#include <string.h>
 
-// ---- Arc title (ui.md 3.1): lv_arclabel at (80,14) 200x58, centre offset +137 -> (180,180), r 148,
-// 64 deg centred at 12 o'clock. The API takes unsigned offsets, so the object sits above the centre.
+// ---- Arc title (ui.md 3.1): text along the top rim, centred at 12 o'clock, in a 200x58 box at (80,14).
+// lv_arclabel places glyphs on whole degrees without LV_USE_FLOAT (2.6 px steps at r 148, visibly uneven
+// spacing), so the title draws its own glyphs: baseline centres at exact float positions on r 144,
+// each rotated in 0.1 deg steps. Caps reach r ~159, Й/Ё r ~162 (<= 162 per 3.1). Static: drawn only when
+// the screen is built or the area is redrawn.
 #define TITLE_X     80
 #define TITLE_Y     14
 #define TITLE_W     200
 #define TITLE_H     58
-#define TITLE_R     148
-#define TITLE_OFS_Y (UI_CY - (TITLE_Y + TITLE_H / 2))     // 137
+#define TITLE_RB    144.0f      // baseline radius
+#define TITLE_MAX   165         // arc length available (64 deg at r 148): chevron + text
+
+static void title_draw_cb(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_current_target(e);
+    const char *txt = lv_obj_get_user_data(obj);
+    if (!txt) {
+        return;
+    }
+    const lv_font_t *f = lv_obj_get_style_text_font(obj, LV_PART_MAIN);
+    lv_draw_letter_dsc_t d;
+    lv_draw_letter_dsc_init(&d);
+    d.font = f;
+    d.color = lv_obj_get_style_text_color(obj, LV_PART_MAIN);
+    d.opa = lv_obj_get_style_opa_recursive(obj, LV_PART_MAIN);
+
+    // code points and advances (with kerning), truncated with "…" to the available arc length
+    uint32_t cps[48];
+    int32_t adv[48];
+    int n = 0;
+    int32_t total = 0;
+    uint32_t ell = 0x2026;
+    int32_t ell_w = lv_font_get_glyph_width(f, ell, 0);
+    for (const unsigned char *s = (const unsigned char *)txt; *s && n < 47;) {
+        uint32_t c = *s++;
+        if (c >= 0xF0 && s[0] && s[1] && s[2]) {
+            c = ((c & 7u) << 18) | ((s[0] & 0x3Fu) << 12) | ((s[1] & 0x3Fu) << 6) | (s[2] & 0x3Fu);
+            s += 3;
+        } else if (c >= 0xE0 && s[0] && s[1]) {
+            c = ((c & 0xFu) << 12) | ((s[0] & 0x3Fu) << 6) | (s[1] & 0x3Fu);
+            s += 2;
+        } else if (c >= 0xC0 && s[0]) {
+            c = ((c & 0x1Fu) << 6) | (s[0] & 0x3Fu);
+            s += 1;
+        }
+        cps[n++] = c;
+    }
+    for (int i = 0; i < n; i++) {
+        adv[i] = lv_font_get_glyph_width(f, cps[i], i + 1 < n ? cps[i + 1] : 0);
+        if (total + adv[i] > TITLE_MAX - (i + 1 < n ? ell_w : 0)) {
+            cps[i] = ell;
+            adv[i] = ell_w;
+            total += ell_w;
+            n = i + 1;
+            break;
+        }
+        total += adv[i];
+    }
+
+    lv_layer_t *layer = lv_event_get_layer(e);
+    int32_t lh = lv_font_get_line_height(f), bl = f->base_line;
+    float s = -(float)total / 2.0f;     // arc length from 12 o'clock, clockwise positive
+    for (int i = 0; i < n; i++) {
+        float mid = s + (float)adv[i] / 2.0f;
+        float th = -1.5707963f + mid / TITLE_RB;          // 12 o'clock is -90 deg
+        float px = (float)UI_CX + TITLE_RB * cosf(th);
+        float py = (float)UI_CY + TITLE_RB * sinf(th);
+        // lv_draw_letter rotates around the baseline centre of the glyph box placed at `point`
+        lv_point_t p = { (int32_t)lroundf(px - (float)adv[i] / 2.0f), (int32_t)lroundf(py - (float)(lh - bl)) };
+        d.unicode = cps[i];
+        d.rotation = (int32_t)lroundf((th * 57.29578f + 90.0f) * 10.0f);
+        if (cps[i] != ' ') {
+            lv_draw_letter(layer, &d, &p);
+        }
+        s += (float)adv[i];
+    }
+}
+
+static void title_free_cb(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_current_target(e);
+    lv_free(lv_obj_get_user_data(obj));
+    lv_obj_set_user_data(obj, NULL);
+}
 
 static void back_zone_cb(lv_event_t *e)
 {
@@ -29,23 +107,21 @@ static void back_zone_cb(lv_event_t *e)
 
 lv_obj_t *ui_chrome_title(lv_obj_t *scr, const char *text)
 {
-    lv_obj_t *t = lv_arclabel_create(scr);
+    lv_obj_t *t = lv_obj_create(scr);
+    ui_theme_plain(t);
     lv_obj_set_name_static(t, "title");
     lv_obj_add_style(t, &st_arc_title, 0);
     lv_obj_add_style(t, &st_arc_title_pr, LV_STATE_PRESSED);
     lv_obj_set_pos(t, TITLE_X, TITLE_Y);
     lv_obj_set_size(t, TITLE_W, TITLE_H);
-    lv_arclabel_set_center_offset_y(t, TITLE_OFS_Y);
-    lv_arclabel_set_radius(t, TITLE_R);
-    lv_arclabel_set_angle_start(t, 238);
-    lv_arclabel_set_angle_size(t, 64);
-    lv_arclabel_set_dir(t, LV_ARCLABEL_DIR_CLOCKWISE);
-    lv_arclabel_set_text_horizontal_align(t, LV_ARCLABEL_TEXT_ALIGN_CENTER);
-    lv_arclabel_set_text_vertical_align(t, LV_ARCLABEL_TEXT_ALIGN_CENTER);
-    lv_arclabel_set_overflow(t, LV_ARCLABEL_OVERFLOW_ELLIPSIS);
-    char buf[96];
-    snprintf(buf, sizeof(buf), SYM_LEFT " %s", text);
-    lv_arclabel_set_text(t, buf);
+    lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
+    size_t n = strlen(text) + sizeof(SYM_LEFT) + 2;
+    char *buf = lv_malloc(n);
+    LV_ASSERT_MALLOC(buf);
+    snprintf(buf, n, SYM_LEFT " %s", text);
+    lv_obj_set_user_data(t, buf);
+    lv_obj_add_event_cb(t, title_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
+    lv_obj_add_event_cb(t, title_free_cb, LV_EVENT_DELETE, NULL);
 
     // Invisible back zone x 96-264, y 10-68, created after the title so it is on top
     lv_obj_t *z = lv_obj_create(scr);
