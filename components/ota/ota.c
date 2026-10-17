@@ -331,6 +331,7 @@ esp_err_t ota_start_https(const char *url)
 {
     ESP_RETURN_ON_FALSE(url && !strncmp(url, "https://", 8), ESP_ERR_INVALID_ARG, TAG, "https:// URL required");
     ESP_RETURN_ON_FALSE(!s_streaming && !s_https_busy, ESP_ERR_INVALID_STATE, TAG, "update already running");
+    ESP_RETURN_ON_ERROR(anchor_running_slot(), TAG, "otadata");
     size_t n = strlen(url) + 1;
     char *copy = heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
     ESP_RETURN_ON_FALSE(copy, ESP_ERR_NO_MEM, TAG, "url");
