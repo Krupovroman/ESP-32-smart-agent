@@ -79,6 +79,7 @@ lv_obj_t *scr_hist_build(uint32_t entry_id)
     lv_obj_set_size(btn, 200, 50);
     lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    ui_theme_chain_ver(btn);    // a vertical drag that starts on the button still scrolls the list
     lv_obj_add_event_cb(btn, new_chat_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *bl = lv_label_create(btn);
     lv_label_set_text_static(bl, ui_s(S_NEW_CHAT));

@@ -16,6 +16,8 @@ extern ui_subj_t g_s_net;       // ui_net_t
 extern ui_subj_t g_s_upload;    // 0..100
 extern ui_subj_t g_s_hints;     // 0..3 first-use hints left
 extern ui_subj_t g_s_portal;    // portal state for the QR screen
+extern ui_subj_t g_s_tr_dir;    // translator direction: 0 auto, 1 A -> B, 2 B -> A
+extern ui_subj_t g_s_face;      // 1 = face on the orb
 
 // Translator language pair (ISO 639-1, lower case)
 extern char g_lang_a[4], g_lang_b[4];

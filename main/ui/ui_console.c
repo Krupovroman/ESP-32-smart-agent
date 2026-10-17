@@ -3,6 +3,7 @@
 #include "ui.h"
 #include "ui_internal.h"
 #include "ui_orb.h"
+#include "ui_rim.h"
 #include "ui_str.h"
 #include "devconsole.h"
 #include "inject.h"
@@ -392,14 +393,31 @@ static int cmd_ui(int argc, char **argv)
     if (!strcmp(sub, "hints")) {
         return post(UI_SET_HINTS, atoi(arg), NULL);
     }
+    if (!strcmp(sub, "face")) {
+        return post(UI_SET_FACE, atoi(arg), NULL);
+    }
+    if (!strcmp(sub, "dir")) {
+        return post(UI_SET_TR_DIR, atoi(arg), NULL);    // 0 auto, 1 A->B, 2 B->A
+    }
     if (!strcmp(sub, "back")) {
         return post(UI_BACK, 0, NULL);
+    }
+    if (!strcmp(sub, "busy")) {
+        // rim BUSY comet (A30); the scan / portal screens that use it come later
+        if (!ui_lock(LOCK_MS)) {
+            return dc_fail("lvgl busy");
+        }
+        ui_rim_busy(atoi(arg) != 0);
+        ui_unlock();
+        return 0;
     }
     return dc_fail("usage: ui screens | goto <name> | state <s> | mood <m> | expr <e> [ms] | intro | "
                    "user [-a|-b] <text> | bot <text> | append <text> | wave | clear | divider [hh:mm] | tree | "
                    "tap <name> [ms] | audit | fit | mode 0|1 | "
                    "error <card> [body] | fault <f> | net <n> | toast <text> | upload <pct> | retry <n> | "
-                   "lang ru|en | langs a|b | speaker 0|1 | textonly 0|1 | hints <n> | back | btn boot|pwr [short|down|up]");
+                   "lang ru|en | langs a|b | speaker 0|1 | textonly 0|1 | hints <n> | face 0|1 | dir 0|1|2 | "
+                   "back | busy 0|1 | "
+                   "btn boot|pwr [short|down|up]");
 }
 
 void ui_console_register(void)

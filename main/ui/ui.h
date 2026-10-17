@@ -36,6 +36,8 @@ typedef enum {
     UI_SET_LANGS,       // s = "ru|en": translator language A | B (ISO 639-1)
     UI_SET_HINTS,       // i = 0..3 remaining first-use hints
     UI_DIVIDER,         // s = "15:10": "— новый разговор · 15:10 —" line (model context reset after 15 min idle)
+    UI_SET_FACE,        // i = 1 eyes and mouth on the orb ("Лицо шара", default), 0 plain orb
+    UI_SET_TR_DIR,      // i = 0 auto (pill "RU ⇄ EN"), 1 A -> B, 2 B -> A (pill "RU → EN" / "EN → RU")
     UI_MSG__N
 } ui_msg_type_t;
 

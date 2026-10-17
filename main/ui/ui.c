@@ -30,6 +30,7 @@ static const char *TAG = "ui";
 #define PUMP_BATCH      16
 
 ui_subj_t g_s_state, g_s_mode, g_s_text_only, g_s_speaker, g_s_fault, g_s_net, g_s_upload, g_s_hints, g_s_portal;
+ui_subj_t g_s_tr_dir, g_s_face;
 char g_lang_a[4] = "ru", g_lang_b[4] = "en";
 
 static QueueHandle_t s_q;
@@ -302,6 +303,8 @@ static void dispatch(const ui_msg_t *m)
     case UI_SET_LANGS: set_langs(m->s); break;
     case UI_SET_HINTS: ui_set(g_s_hints, LV_CLAMP(0, m->i, 3)); break;
     case UI_DIVIDER: scr_home_divider(m->s); break;
+    case UI_SET_FACE: ui_set(g_s_face, m->i ? 1 : 0); break;
+    case UI_SET_TR_DIR: ui_set(g_s_tr_dir, LV_CLAMP(0, m->i, 2)); break;
     default: break;
     }
 }
@@ -445,6 +448,8 @@ esp_err_t ui_init(lv_display_t *disp)
     g_s_upload = ui_subj_int(0, 0, 100);
     g_s_hints = ui_subj_int(3, 0, 3);
     g_s_portal = ui_subj_int(0, 0, 255);
+    g_s_tr_dir = ui_subj_int(0, 0, 2);
+    g_s_face = ui_subj_int(1, 0, 1);            // "Лицо шара: Вкл" by default (ui.md open question 3)
 
     lv_obj_t *home = scr_home_create();
     s_nav[0] = (nav_t){ .scr = home, .scroller = NULL, .id = UI_SCR_HOME };

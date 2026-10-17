@@ -190,3 +190,11 @@ void ui_theme_plain(lv_obj_t *obj)
     lv_obj_remove_flag(obj, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_CHAIN_HOR | LV_OBJ_FLAG_SCROLL_CHAIN_VER |
                                 LV_OBJ_FLAG_CLICK_FOCUSABLE);
 }
+
+void ui_theme_chain_ver(lv_obj_t *obj)
+{
+    // lv_indev_find_scroll_obj() stops at the first non-scrollable object without the chain flag
+    for (; obj && !lv_obj_has_flag(obj, LV_OBJ_FLAG_SCROLLABLE); obj = lv_obj_get_parent(obj)) {
+        lv_obj_add_flag(obj, LV_OBJ_FLAG_SCROLL_CHAIN_VER);
+    }
+}

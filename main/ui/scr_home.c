@@ -72,10 +72,16 @@ static char s_status_txt[96];
 static int mode(void) { return ui_get(g_s_mode); }
 static int32_t state(void) { return ui_get(g_s_state); }
 
-static bool offline(void)
+static bool net_down(void)
 {
     int32_t n = ui_get(g_s_net);
     return n == UI_NET_OFF || n == UI_NET_FAILED;
+}
+
+// No network, or the app put the orb into OFFLINE: hollow orb and the "Нет Wi-Fi ›" pill together (5.3)
+static bool offline(void)
+{
+    return net_down() || ui_get(g_s_state) == UI_ST_OFFLINE;
 }
 
 static bool idle_like(int32_t st)
@@ -208,10 +214,14 @@ static void pill_refresh(void)
         const ui_accent_t *acc = ui_accent(warn ? UI_ACC_WARNING : UI_ACC_ERROR);
         snprintf(buf, sizeof(buf), "#%06lX %s " TXT_RSAQUO "#", (unsigned long)acc->top, ui_s(ids[f]));
     } else if (mode() == 1) {
-        upper(g_lang_a, a);
-        upper(g_lang_b, b);
-        snprintf(buf, sizeof(buf), "#%06lX %s# " SYM_EXCHANGE " #%06lX %s# " SYM_DOWN,
-                 (unsigned long)ui_accent(UI_ACC_LANG_A)->top, a, (unsigned long)ui_accent(UI_ACC_LANG_B)->top, b);
+        // auto "RU ⇄ EN"; a forced direction shows "RU → EN" / "EN → RU" so it is never hidden (5.5)
+        int32_t dir = ui_get(g_s_tr_dir);
+        bool b_first = dir == 2;
+        upper(b_first ? g_lang_b : g_lang_a, a);
+        upper(b_first ? g_lang_a : g_lang_b, b);
+        unsigned long ca = (unsigned long)ui_accent(b_first ? UI_ACC_LANG_B : UI_ACC_LANG_A)->top;
+        unsigned long cb = (unsigned long)ui_accent(b_first ? UI_ACC_LANG_A : UI_ACC_LANG_B)->top;
+        snprintf(buf, sizeof(buf), "#%06lX %s# %s #%06lX %s# " SYM_DOWN, ca, a, dir ? TXT_ARROW : SYM_EXCHANGE, cb, b);
     } else {
         snprintf(buf, sizeof(buf), "%s " SYM_DOWN, ui_s(S_MODE_ASSISTANT));
     }
@@ -442,6 +452,22 @@ static void scroll_bottom(void)
     }
 }
 
+// A card taller than the unfaded window (y 104-228, 124 px; two-line titles make it about 166) shows its
+// title first instead of sitting at the bottom with the title under the top fade.
+static void scroll_reveal(lv_obj_t *w)
+{
+    if (!s_autoscroll || !s_conv) {
+        return;
+    }
+    lv_obj_update_layout(s_chat);
+    int32_t pad = lv_obj_get_style_pad_top(w, LV_PART_MAIN);
+    if (lv_obj_get_height(w) - pad <= CHAT_H - FADE_TOP_H - FADE_BOT_H) {
+        scroll_bottom();
+        return;
+    }
+    lv_obj_scroll_to_y(s_chat, lv_obj_get_y(w) + pad, LV_ANIM_ON);
+}
+
 static void chat_click_cb(lv_event_t *e)
 {
     (void)e;
@@ -485,7 +511,11 @@ static lv_obj_t *add_widget(const cm_entry_t *e, uint32_t delay)
     }
     // new message: the face glances down for 1 s
     ui_orb_look_at(s_orb, (lv_point_t){ 180, 360 }, 1000);
-    scroll_bottom();
+    if (e->kind == CM_CARD) {
+        scroll_reveal(w);
+    } else {
+        scroll_bottom();
+    }
     return w;
 }
 
@@ -964,6 +994,9 @@ static void state_obs(lv_observer_t *o, lv_subject_t *s)
     target_pulse(mode() == 1 && st == UI_ST_SPEAK ? s_target_side : -1);
     s_prev_state = st;
     ui_orb_set_state(s_orb, orb_state());
+    if ((st == UI_ST_OFFLINE) != (prev == UI_ST_OFFLINE)) {
+        pill_refresh();         // "Нет Wi-Fi ›" follows the hollow orb
+    }
     lv_timer_resume(s_tick);
     status_refresh();
     hint_refresh();
@@ -1009,6 +1042,9 @@ static void misc_obs(lv_observer_t *o, lv_subject_t *s)
         return;
     }
     if (s == g_s_net || s == g_s_fault) {
+        if (s == g_s_net && !net_down() && state() == UI_ST_OFFLINE) {
+            ui_set(g_s_state, UI_ST_IDLE);      // back online: the hollow orb fills again
+        }
         ui_orb_set_state(s_orb, orb_state());
         pill_refresh();
         status_refresh();
@@ -1016,6 +1052,14 @@ static void misc_obs(lv_observer_t *o, lv_subject_t *s)
     }
     if (s == g_s_hints) {
         hint_refresh();
+        return;
+    }
+    if (s == g_s_face) {
+        ui_orb_set_face(s_orb, lv_subject_get_int(s) != 0);
+        return;
+    }
+    if (s == g_s_tr_dir) {
+        pill_refresh();
         return;
     }
     side_refresh();     // text_only, speaker
@@ -1154,6 +1198,8 @@ lv_obj_t *scr_home_create(void)
     ui_watch(g_s_fault, misc_obs, s_scr, NULL);
     ui_watch(g_s_upload, misc_obs, s_scr, NULL);
     ui_watch(g_s_hints, misc_obs, s_scr, NULL);
+    ui_watch(g_s_face, misc_obs, s_scr, NULL);
+    ui_watch(g_s_tr_dir, misc_obs, s_scr, NULL);
     ui_watch(g_s_state, state_obs, s_scr, NULL);
     rebuild_chat();
     return s_scr;

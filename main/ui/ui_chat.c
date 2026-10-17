@@ -178,6 +178,7 @@ void cm_append(char **dst, const char *chunk)
 #define PENDING_H   44
 #define USER_MAX_W  220
 #define TURN_MAX_W  236
+#define TURN_TEXT_W (TURN_MAX_W - 24 - 3)  // minus padding 12/12 and the 3 px language stripe
 
 uint32_t ui_msg_id(lv_obj_t *obj)
 {
@@ -421,10 +422,10 @@ static void build_turn(lv_obj_t *w, const cm_entry_t *e)
     lv_label_set_recolor(l1, true);
     lv_obj_t *l2 = label(col, &st_text16, "line2");
     lv_obj_set_width(l2, LV_SIZE_CONTENT);
-    lv_obj_set_style_max_width(l2, TURN_MAX_W - 24, 0);
+    lv_obj_set_style_max_width(l2, TURN_TEXT_W, 0);
     lv_obj_t *l3 = label(col, &st_text28, "line3");
     lv_obj_set_width(l3, LV_SIZE_CONTENT);
-    lv_obj_set_style_max_width(l3, TURN_MAX_W - 24, 0);
+    lv_obj_set_style_max_width(l3, TURN_TEXT_W, 0);
     (void)e;
 }
 
@@ -554,6 +555,7 @@ static void build_card(lv_obj_t *w, const cm_entry_t *e)
         lv_obj_set_style_pad_hor(btn, 20, 0);
         lv_obj_set_style_margin_top(btn, 4, 0);
         lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+        ui_theme_chain_ver(btn);    // a vertical drag that starts on the button still scrolls the chat
         lv_obj_add_event_cb(btn, card_btn_cb, LV_EVENT_CLICKED, (void *)(intptr_t)e->card);
         lv_obj_t *bl = lv_label_create(btn);
         lv_label_set_text_static(bl, ui_s(cd->action));

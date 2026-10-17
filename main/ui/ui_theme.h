@@ -84,3 +84,5 @@ void ui_theme_init(void);
 void ui_theme_set_mode(int mode);
 // Removes every style and the scroll / focus flags a plain (non-scrolling) object must not have.
 void ui_theme_plain(lv_obj_t *obj);
+// Re-enables vertical scroll chaining from obj up to its scrolling ancestor (clickable children of lists).
+void ui_theme_chain_ver(lv_obj_t *obj);
