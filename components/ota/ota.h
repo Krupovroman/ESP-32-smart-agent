@@ -56,9 +56,12 @@ void ota_set_progress_cb(ota_progress_cb_t cb);
 // Downloads url (https, CA bundle) into the next slot in task "ota", then boots it.
 esp_err_t ota_start_https(const char *url);
 
-// Selects "ota_0"/"ota_1" for the next boot (no restart; the caller restarts).
+// Selects "ota_0"/"ota_1" for the next boot (no restart; the caller restarts). Switching away
+// from a USB-flashed image first records it in otadata, so the other slot can roll back to it.
 esp_err_t ota_set_boot(const char *label);
 // Marks the running image invalid and reboots into the previous one, if that one is valid.
 esp_err_t ota_rollback_now(void);
-// valid: esp_ota_mark_app_valid_cancel_rollback(); !valid: mark invalid, rolls back on the next boot.
+// valid: esp_ota_mark_app_valid_cancel_rollback() (a USB-flashed image gets its otadata entry);
+// !valid: mark invalid, rolls back on the next boot. Both refuse with ESP_ERR_INVALID_STATE
+// while another slot is selected for the next boot (IDF would mark that slot instead).
 esp_err_t ota_mark(bool valid);

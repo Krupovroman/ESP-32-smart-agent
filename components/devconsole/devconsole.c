@@ -36,7 +36,10 @@ static const char *TAG = "devcon";
 #define CAPLINE_BYTES   512      // captured line held back until it is known not to be "BLOB:"
 #define WAIT_CMD_MS     1000     // command output: the host is reading, allow it to lag
 #define WAIT_LOG_MS     100
-#define LOCK_WAIT_MS    2000
+#define LOCK_WAIT_MS    2000     // command output (devcon task)
+// logs, events and printf of other tasks: the lock holder may sit in a WAIT_CMD_MS write to a
+// stalled host, and the UI, audio and Wi-Fi tasks must not stall that long for a log line
+#define LOCK_WAIT_LOG_MS 200
 
 // ---------------------------------------------------------------- state
 
@@ -168,7 +171,7 @@ static void stage_flush(void)
     s_stage_len = 0;
 }
 
-static bool wr_lock(void)
+static bool wr_lock(uint32_t wait_ms)
 {
     if (!s_wr || xPortInIsrContext()) {
         return false;
@@ -179,7 +182,7 @@ static bool wr_lock(void)
         s_dropped++;
         return false;
     }
-    if (xSemaphoreTakeRecursive(s_wr, pdMS_TO_TICKS(LOCK_WAIT_MS)) != pdTRUE) {
+    if (xSemaphoreTakeRecursive(s_wr, pdMS_TO_TICKS(wait_ms)) != pdTRUE) {
         s_dropped++;
         return false;
     }
@@ -193,7 +196,7 @@ static void wr_unlock(void)
 
 bool dc_line_begin(bool important)
 {
-    if (!wr_lock()) {
+    if (!wr_lock(important ? LOCK_WAIT_MS : LOCK_WAIT_LOG_MS)) {
         return false;
     }
     if (s_wr_depth++ == 0) {
@@ -296,7 +299,7 @@ static bool s_log_busy;
 
 static int log_vprintf(const char *fmt, va_list ap)
 {
-    if (!wr_lock()) {
+    if (!wr_lock(LOCK_WAIT_LOG_MS)) {
         return 0;
     }
     if (s_log_busy || s_wr_depth > 0) {   // raised by the writer itself (mid-line): drop it
@@ -444,7 +447,7 @@ static int out_putc(char c, FILE *f)
         return 0;
     }
     // s_ob is shared by every task that prints: only touch it under the writer lock
-    if (!wr_lock()) {
+    if (!wr_lock(mine ? LOCK_WAIT_MS : LOCK_WAIT_LOG_MS)) {
         return 0;
     }
     if (c == '\n' || s_ob_len >= OUT_LINE_BYTES) {

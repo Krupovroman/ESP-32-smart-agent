@@ -90,7 +90,7 @@ static int cmd_mic(int argc, char **argv)
         audio_probe_t pr;
         uint32_t ms = argc > 2 ? (uint32_t)atoi(argv[2]) : 600;
         if (audio_in_probe(ms, &pr) != ESP_OK) {
-            return dc_fail("busy (recording, or source is inject)");
+            return dc_fail("busy (recording, or source is inject), or no microphone");
         }
         printf("{\"right\":{\"rms_dbfs\":%.1f,\"zero\":%.3f},\"left\":{\"rms_dbfs\":%.1f,\"zero\":%.3f}}\n",
                pr.rms_dbfs_x10[0] / 10.0, pr.zero_permille[0] / 1000.0, pr.rms_dbfs_x10[1] / 10.0,
@@ -99,7 +99,11 @@ static int cmd_mic(int argc, char **argv)
     }
     if (!strcmp(sub, "rec")) {
         uint32_t ms = argc > 2 ? (uint32_t)atoi(argv[2]) : 3000;
-        audio_in_start(ms);
+        esp_err_t e = audio_in_start(ms);
+        if (e != ESP_OK) {
+            dc_fail("microphone not available");
+            return e;
+        }
         while (audio_in_recording()) {
             vTaskDelay(pdMS_TO_TICKS(20));
         }

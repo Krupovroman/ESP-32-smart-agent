@@ -397,6 +397,24 @@ class DevTests(unittest.TestCase):
             dev.parse_until("novalue")
         self.assertFalse(dev.event_matches({"ok": False}, {"ok": "true"}))
         self.assertFalse(dev.event_matches({}, {"ok": "None"}))
+        # "state=idle": the key names the event, the value is its "to"
+        self.assertTrue(dev.event_matches({"ev": "state", "to": "idle"}, {"state": "idle"}))
+        self.assertFalse(dev.event_matches({"ev": "state", "to": "thinking"}, {"state": "idle"}))
+        self.assertFalse(dev.event_matches({"ev": "net", "to": "idle"}, {"state": "idle"}))
+
+    def test_trailing_dev_options_after_local_commands(self):
+        ns = types.SimpleNamespace(until=None, no_mask=False, mask=False)
+        self.assertEqual(dev.take_trailing_options(["events", "--until", "state=idle", "30"], ns), ["events", "30"])
+        self.assertEqual(ns.until, "state=idle")
+        self.assertEqual(dev.take_trailing_options(["shot", "a.png", "--no-mask"], ns), ["shot", "a.png"])
+        self.assertTrue(ns.no_mask)
+        # device commands keep their words, even ones that look like dev.py options
+        ns = types.SimpleNamespace(until=None, no_mask=False, mask=False)
+        for words in (["ai", "fetch", "-l", "ru", "--until"], ["shot", "snap", "--mask"], ["set", "x", "--no-mask"]):
+            self.assertEqual(dev.take_trailing_options(list(words), ns), words)
+        self.assertFalse(ns.no_mask or ns.mask)
+        with self.assertRaises(ValueError):
+            dev.take_trailing_options(["events", "--until"], ns)
 
     def test_mic_dump_alias(self):
         path = os.path.join(self.tmp, "alias.wav")

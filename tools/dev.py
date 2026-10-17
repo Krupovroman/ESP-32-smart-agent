@@ -10,6 +10,8 @@
     python tools/dev.py wait-ready 10              # wait for "@! READY" (or a booted device)
     python tools/dev.py events 10                  # print events for 10 s
     python tools/dev.py --until ev=selftest events 15   # ... or until a matching one arrives
+    python tools/dev.py events 30 --until state=idle    # (short for ev=state,to=idle; options may
+                                                   #  follow shot/events/log/wait-ready/mic-dump/wav)
     python tools/dev.py cmd "settings reset"       # one device line as typed
     python tools/dev.py log 10                     # print everything the device prints for 10 s
     python tools/dev.py run "tap 180 260" "sleep 0.5" "shot shots/after.png"
@@ -676,10 +678,45 @@ def parse_until(spec):
 
 
 def event_matches(ev, want):
-    """Values compare as text, so 'turn=7' and 'ok=true' match JSON numbers and booleans."""
+    """Values compare as text, so 'turn=7' and 'ok=true' match JSON numbers and booleans.
+    A key that names the event rather than a member matches its "to" value, so the short form
+    'state=idle' (architecture §9.4) means ev=state,to=idle."""
     def text(v):
         return json.dumps(v) if isinstance(v, bool) or v is None else str(v)
-    return all(k in ev and text(ev[k]) == v for k, v in want.items())
+
+    def one(k, v):
+        if k in ev:
+            return text(ev[k]) == v
+        return ev.get("ev") == k and "to" in ev and text(ev["to"]) == v
+    return all(one(k, v) for k, v in want.items())
+
+
+# dev.py options that may also follow a command dev.py runs itself, as architecture §9.4 writes
+# them ("shot out.png --mask", "events --until state=idle"). Device commands keep every word.
+_TRAILING_FLAGS = {"--mask": "mask", "--no-mask": "no_mask"}
+_TRAILING_VALUES = {"--until": "until"}
+_LOCAL_HEADS = ("shot", "events", "log", "wait-ready", "mic-dump", "wav", "ota-push")
+
+
+def take_trailing_options(words, ns):
+    """Moves dev.py options that follow a local command into ns; returns the remaining words."""
+    if not words or words[0] not in _LOCAL_HEADS or (words[0] == "shot" and words[1:2] == ["snap"]):
+        return words
+    out, i = [words[0]], 1
+    while i < len(words):
+        w = words[i]
+        if w in _TRAILING_FLAGS:
+            setattr(ns, _TRAILING_FLAGS[w], True)
+            i += 1
+        elif w in _TRAILING_VALUES:
+            if i + 1 >= len(words):
+                raise ValueError(f"{w} needs a value")
+            setattr(ns, _TRAILING_VALUES[w], words[i + 1])
+            i += 2
+        else:
+            out.append(w)
+            i += 1
+    return out
 
 
 def join_argv(args):
@@ -700,6 +737,7 @@ def esptool_reset(port):
 
 
 def main():
+    # UTF-8 whatever the console code page (Russian answers, logs), as on main
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -718,6 +756,7 @@ def main():
     if not a.command:
         ap.error("a command is required")
     try:
+        a.command = take_trailing_options(a.command, a)
         parse_until(a.until)
     except ValueError as e:
         ap.error(str(e))

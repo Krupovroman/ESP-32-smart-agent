@@ -12,6 +12,7 @@ int host_fail(const char *file, int line, const char *what);
 extern bool g_usb_connected;
 extern size_t g_tx_room;            // bytes the TX ring still takes (SIZE_MAX = unlimited)
 extern int g_lock_depth;            // writer lock nesting (0 between commands)
+extern uint32_t g_last_lock_wait;   // timeout (ms) of the last writer lock request
 extern void *g_cur_task;            // what xTaskGetCurrentTaskHandle() returns
 extern void *g_created_task;        // handle handed out by xTaskCreatePinnedToCore()
 extern int64_t g_now_us;
