@@ -255,6 +255,22 @@ esp_err_t net_connect(const char *ssid, const char *pass, bool save)
     return up ? ESP_OK : ESP_FAIL;
 }
 
+esp_err_t net_connect_saved(const char *ssid)
+{
+    char pass[65] = "";
+    bool found = false;
+    for (int i = 0; i < s_n_saved && !found; i++) {
+        if (!strcmp(s_saved[i].ssid, ssid)) {
+            strlcpy(pass, s_saved[i].pass, sizeof(pass));
+            found = true;
+        }
+    }
+    ESP_RETURN_ON_FALSE(found, ESP_ERR_NOT_FOUND, TAG, "not saved");
+    esp_err_t err = net_connect(ssid, pass, true);
+    memset(pass, 0, sizeof(pass));
+    return err;
+}
+
 esp_err_t net_disconnect(void)
 {
     s_auto = false;

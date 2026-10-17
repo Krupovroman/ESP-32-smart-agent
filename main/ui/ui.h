@@ -38,6 +38,10 @@ typedef enum {
     UI_DIVIDER,         // s = "15:10": "— новый разговор · 15:10 —" line (model context reset after 15 min idle)
     UI_SET_FACE,        // i = 1 eyes and mouth on the orb ("Лицо шара", default), 0 plain orb
     UI_SET_TR_DIR,      // i = 0 auto (pill "RU ⇄ EN"), 1 A -> B, 2 B -> A (pill "RU → EN" / "EN → RU")
+
+    UI_WAKE,            // leave dim / ambient / screen off (ui.md 5.8); also posted by ui_boot_down / ui_pwr_short
+    UI_SCREEN_OFF,      // screen off now (PWR at H idle): backlight 0 until the next touch or button
+    UI_WORK_DONE,       // internal (ui_work.c): s = finished background job, its done callback runs in taskLVGL
     UI_MSG__N
 } ui_msg_type_t;
 
@@ -70,10 +74,37 @@ typedef enum { UI_NET_OFF, UI_NET_CONNECTING, UI_NET_UP, UI_NET_FAILED } ui_net_
 
 typedef enum { UI_SIDE_AUTO = -1, UI_SIDE_A = 0, UI_SIDE_B = 1 } ui_side_t;
 
-// Screens that exist in this build. Settings, lists, keyboard, QR, dialog, steps and ambient come later:
-// each gets an id here and a { name, builder, context } row in s_screens (ui.c); the builder returns a new
+// Screens (ui.md 2.1). Each has a { name, builder, context } row in s_screens (ui.c); the builder returns a new
 // screen built with ui_chrome_screen() and is deleted by the navigation stack when the user leaves it.
-typedef enum { UI_SCR_HOME, UI_SCR_HIST, UI_SCR_READER, UI_SCR_TOUCH, UI_SCR_TEST, UI_SCR__N } ui_screen_t;
+// UI_GOTO takes the id in i and an optional decimal screen argument in s (e.g. "1" = brightness for ADJUST).
+typedef enum {
+    UI_SCR_HOME, UI_SCR_HIST, UI_SCR_READER, UI_SCR_TOUCH, UI_SCR_TEST,
+    UI_SCR_MODE,        // M: mode sheet (pill)
+    UI_SCR_SETTINGS,    // S
+    UI_SCR_WIFI,        // W: scan list, saved networks
+    UI_SCR_WIFI_NET,    // one network: connect / forget (opened from W)
+    UI_SCR_WIFI_CONN,   // WC: connecting (T_STEP, opened from W / K)
+    UI_SCR_TEXT,        // K: text entry with the round keyboard (arg = ui_field_t for console tests)
+    UI_SCR_QR,          // Q: phone setup through the SoftAP portal
+    UI_SCR_PROVIDER,    // P: base URL, API key, model, key check
+    UI_SCR_MODELS,      // AI: chat model picker
+    UI_SCR_KEYINFO,     // GET /key: remaining credit and spend
+    UI_SCR_VOICE,       // V: voice replies, TTS model, voice, speed
+    UI_SCR_TTS_MODELS,  // TTS model picker
+    UI_SCR_VOICES,      // voice picker of the selected TTS model
+    UI_SCR_SPEED,       // speech speed
+    UI_SCR_LANGS,       // L: translator languages
+    UI_SCR_LANG_PICK,   // LP (arg 0 = language A, 1 = language B)
+    UI_SCR_DIR,         // translator direction
+    UI_SCR_ADJUST,      // A (arg 0 = volume, 1 = brightness)
+    UI_SCR_DISPLAY,     // screen and sleep timers
+    UI_SCR_ABOUT,       // D: about / diagnostics
+    UI_SCR_LICENSES,
+    UI_SCR_DIALOG,      // C: confirm dialog
+    UI_SCR_ONBOARD,     // O1-O5 first boot (arg = step 1..5)
+    UI_SCR_AMBIENT,     // Z: clock and dot orb
+    UI_SCR__N
+} ui_screen_t;
 
 // ---- User intent out of the UI. The callback runs in taskLVGL and must only post (never block).
 typedef enum {
@@ -85,11 +116,18 @@ typedef enum {
     UI_IN_CARD_ACTION,  // i = ui_card_t whose action stadium was tapped
     UI_IN_WRONG_LANG,   // reader: re-send the cached clip, i = forced source side
     UI_IN_REPLAY,       // reader: speak the translation again
-    UI_IN_OPEN,         // i = ui_open_t: a screen this build cannot show yet
+    UI_IN_OPEN,         // no longer emitted: the UI opens these screens itself (ui_open_t kept for ui_open())
     UI_IN_DISMISS,      // error orb tapped
+
+    UI_IN_SET_MODE,     // mode sheet: i = 0 assistant, 1 translator (the UI already switched and saves "mode")
+    UI_IN_TEXT,         // typed question (M -> "Написать текстом"): i = byte length, text from ui_typed_text()
+    UI_IN_TR_DIR,       // translator direction: i = 0 auto, 1 A -> B, 2 B -> A (RAM only)
+    UI_IN_LANGS,        // translator languages changed (tr_lang_a / tr_lang_b saved)
+    UI_IN_SPEAKER,      // Settings -> "Динамик": i = 1 connected, 0 none (RAM only)
+    UI_IN_SLEEP,        // i = 0 awake, 1 dimmed, 2 ambient, 3 screen off (the app may stop the mic at 3)
 } ui_input_t;
 
-// Screens requested through UI_IN_OPEN (extension points for the later screens)
+// Screens the UI opens on its own (pill, settings button, chips, offline orb, fault pill, card actions)
 typedef enum {
     UI_OPEN_MODE_SHEET,     // pill (M)
     UI_OPEN_SETTINGS,       // settings button (S)
@@ -104,7 +142,7 @@ typedef void (*ui_input_cb_t)(ui_input_t ev, int32_t i, void *ctx);
 // Where the user is, for routing the physical buttons (ui.md 2.3)
 typedef enum {
     UI_CTX_HOME, UI_CTX_READ, UI_CTX_LIST, UI_CTX_QR, UI_CTX_ADJUST, UI_CTX_TEXT, UI_CTX_DIALOG, UI_CTX_STEP,
-    UI_CTX_TOUCH, UI_CTX_TEST
+    UI_CTX_TOUCH, UI_CTX_TEST, UI_CTX_AMBIENT
 } ui_ctx_t;
 
 // Theme, fonts, subjects, rim, Home screen, ui_pump (20 ms) timer. Call once after display_init().
@@ -139,6 +177,15 @@ bool ui_pwr_short(void);
 // PWR pressed / released: the rim POWER ring appears at 600 ms and fills until 3000 ms; release retracts it.
 void ui_pwr_down(void);
 void ui_pwr_up(void);
+
+// ---- Sleep (ui.md 5.8). Thread-safe.
+// Screen off now (PWR at H idle); the next touch, BOOT or PWR wakes it.
+void ui_screen_off(void);
+// True while dimmed, ambient or off (a BOOT / PWR press is then a wake first).
+bool ui_asleep(void);
+
+// Copies the last typed question (UI_IN_TEXT) into out; returns its length. Thread-safe.
+size_t ui_typed_text(char *out, size_t len);
 
 // Registers the "ui" dev-console command (call before devconsole_start()).
 void ui_console_register(void);

@@ -77,6 +77,12 @@ extern lv_style_t st_stadium_primary, st_stadium_primary_pr, st_stadium_secondar
 extern lv_style_t st_arc_title, st_arc_title_pr;
 extern lv_style_t st_toast;
 extern lv_style_t st_dot;
+// Second half of ui.md 7.5: list rows, keyboard items, text field, arc adjuster, QR panel
+extern lv_style_t st_row, st_row_pr;                    // 252x64 surface-1 r20, surface-3 pressed
+extern lv_style_t st_kb_main, st_key, st_key_pr, st_key_dis;   // pad 0 / row 3 / column 4; LV_PART_ITEMS
+extern lv_style_t st_field, st_field_cursor;            // textarea surface-2 r14; LV_PART_CURSOR 2 px bar
+extern lv_style_t st_arc_main, st_arc_ind, st_arc_knob; // 16 px track / indicator, Ø32 knob
+extern lv_style_t st_qr_panel;                          // white r16 panel behind the QR code
 
 // Builds every style above; call once in taskLVGL before any screen is built.
 void ui_theme_init(void);

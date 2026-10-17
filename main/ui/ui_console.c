@@ -2,8 +2,11 @@
 // UI queue and wait until it is pumped, so scripted sequences see the result of the previous line.
 #include "ui.h"
 #include "ui_internal.h"
+#include "ui_kb.h"
+#include "ui_list.h"
 #include "ui_orb.h"
 #include "ui_rim.h"
+#include "ui_scr.h"
 #include "ui_str.h"
 #include "devconsole.h"
 #include "inject.h"
@@ -147,19 +150,46 @@ static int cmd_tree(void)
     return 0;
 }
 
+// One injected tap; never under the LVGL lock: taskLVGL must run to read the samples
+static void tap_at(lv_point_t c, int hold_ms, int after_ms)
+{
+    inject_set(c.x, c.y, true);
+    vTaskDelay(pdMS_TO_TICKS(hold_ms));
+    inject_set(c.x, c.y, false);
+    vTaskDelay(pdMS_TO_TICKS(after_ms));
+}
+
 static int cmd_tap(int argc, char **argv)
 {
     if (argc < 3) {
-        return dc_fail("usage: ui tap <name> [hold_ms]");
+        return dc_fail("usage: ui tap <name> | key:<ok|bksp|space|lang|digits|symbols|letters|back|label> [hold_ms]");
     }
     int hold = argc > 3 ? atoi(argv[3]) : 120;
+    if (ui_asleep() && post(UI_WAKE, 0, NULL) != 0) {
+        return 1;       // a dimmed screen would swallow the tap
+    }
     if (!ui_lock(LOCK_MS)) {
         return dc_fail("lvgl busy");
     }
+    lv_point_t c = { 0, 0 };
+    if (!strncmp(argv[2], "key:", 4)) {
+        // a key of the round keyboard (keys are buttonmatrix areas, not objects)
+        bool found = ui_kb_key_point(argv[2] + 4, &c);
+        ui_unlock();
+        if (!found) {
+            return dc_fail("no key '%s' on the current layout (ui keys)", argv[2] + 4);
+        }
+        tap_at(c, hold > 0 ? hold : 120, 80);
+        printf("tap %s at %d,%d\n", argv[2], (int)c.x, (int)c.y);
+        return 0;
+    }
     lv_obj_t *o = ui_find(argv[2]);
+    if (o && ui_list_is_row(o)) {
+        ui_list_focus(o);           // rows scroll to the centre line first (they fade towards the rim)
+    }
     lv_area_t a = { 0 };
     bool vis = o && ui_obj_visible(o) && ui_obj_visible_area(o, &a);
-    lv_point_t c = { (a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2 };
+    c = (lv_point_t){ (a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2 };
     if (o && lv_obj_has_flag(o, LV_OBJ_FLAG_ADV_HITTEST)) {
         ui_orb_center(o, &c);      // the orb's hit test is a circle around its centre
     }
@@ -170,12 +200,165 @@ static int cmd_tap(int argc, char **argv)
     if (!vis) {
         return dc_fail("'%s' is not visible", argv[2]);
     }
-    // never hold the LVGL lock here: taskLVGL must run to read the injected samples
-    inject_set(c.x, c.y, true);
-    vTaskDelay(pdMS_TO_TICKS(hold > 0 ? hold : 120));
-    inject_set(c.x, c.y, false);
-    vTaskDelay(pdMS_TO_TICKS(80));
+    tap_at(c, hold > 0 ? hold : 120, 80);
     printf("tap %s at %d,%d\n", argv[2], (int)c.x, (int)c.y);
+    return 0;
+}
+
+static uint32_t next_cp(const char **s)
+{
+    const unsigned char *p = (const unsigned char *)*s;
+    uint32_t c = p[0];
+    int n = 1;
+    if (c >= 0xF0 && p[1] && p[2] && p[3]) {
+        c = ((c & 7u) << 18) | ((p[1] & 0x3Fu) << 12) | ((p[2] & 0x3Fu) << 6) | (p[3] & 0x3Fu);
+        n = 4;
+    } else if (c >= 0xE0 && p[1] && p[2]) {
+        c = ((c & 0xFu) << 12) | ((p[1] & 0x3Fu) << 6) | (p[2] & 0x3Fu);
+        n = 3;
+    } else if (c >= 0xC0 && p[1]) {
+        c = ((c & 0x1Fu) << 6) | (p[1] & 0x3Fu);
+        n = 2;
+    }
+    *s += n;
+    return c;
+}
+
+// ui kb [-ok] <utf8 text>: types through real taps on the key areas, including group -> letter steps, page and
+// language switches and the "Aa" button of the hex keypad; -ok taps ✓ at the end
+static int cmd_kb(int argc, char **argv)
+{
+    int first = 2;
+    bool ok = false;
+    if (argc > 2 && !strcmp(argv[2], "-ok")) {
+        ok = true;
+        first = 3;
+    }
+    char *text = join(argc, argv, first);
+    const char *p = text ? text : "";
+    if (ui_asleep() && post(UI_WAKE, 0, NULL) != 0) {
+        heap_caps_free(text);
+        return 1;
+    }
+    if (!ui_lock(LOCK_MS)) {
+        heap_caps_free(text);
+        return dc_fail("lvgl busy");
+    }
+    lv_obj_t *ta = ui_find("text_field");
+    // the hex field already holds the protected prefix: a full key may be typed as it is
+    if (ta && !strncmp(p, UI_KEY_PREFIX, strlen(UI_KEY_PREFIX)) && ui_kb_hex() &&
+        !strncmp(lv_textarea_get_text(ta), UI_KEY_PREFIX, strlen(UI_KEY_PREFIX))) {
+        p += strlen(UI_KEY_PREFIX);
+    }
+    ui_unlock();
+    if (!ta) {
+        heap_caps_free(text);
+        return dc_fail("no keyboard on screen %s (ui goto text)", ui_screen_name(ui_nav_current()));
+    }
+    int typed = 0, taps = 0;
+    while (*p) {
+        const char *at = p;
+        uint32_t cp = next_cp(&p);
+        bool done = false;
+        for (int step = 0; step < 8 && !done; step++) {
+            lv_point_t pt = { 0, 0 };
+            if (!ui_lock(LOCK_MS)) {
+                heap_caps_free(text);
+                return dc_fail("lvgl busy");
+            }
+            ui_kb_plan_t pl = ui_kb_plan(cp, &pt);
+            if (pl == UI_KB_AA) {
+                lv_obj_t *aa = ui_find("text_aa");
+                lv_area_t a;
+                if (aa && ui_obj_visible_area(aa, &a)) {
+                    pt = (lv_point_t){ (a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2 };
+                } else {
+                    pl = UI_KB_NONE;
+                }
+            }
+            ui_unlock();
+            if (pl == UI_KB_NONE) {
+                int off = (int)(at - (text ? text : ""));
+                heap_caps_free(text);
+                return dc_fail("cannot type U+%04X (byte %d) on this field; typed %d", (unsigned)cp, off, typed);
+            }
+            tap_at(pt, 70, 110);
+            taps++;
+            done = pl == UI_KB_TYPES;
+        }
+        if (!done) {
+            heap_caps_free(text);
+            return dc_fail("no path to U+%04X; typed %d", (unsigned)cp, typed);
+        }
+        typed++;
+    }
+    heap_caps_free(text);
+    if (ok) {
+        lv_point_t pt;
+        if (!ui_lock(LOCK_MS)) {
+            return dc_fail("lvgl busy");
+        }
+        bool found = ui_kb_key_point("ok", &pt);
+        ui_unlock();
+        if (!found) {
+            return dc_fail("no OK key (typed %d)", typed);
+        }
+        tap_at(pt, 70, 150);
+        taps++;
+    }
+    // report what the field holds (secrets only by length)
+    char shown[96] = "", esc[200];
+    unsigned len = 0;
+    if (ui_lock(LOCK_MS)) {
+        lv_obj_t *t = ui_find("text_field");
+        if (t) {
+            const char *v = lv_textarea_get_text(t);
+            len = (unsigned)strlen(v);
+            if (!lv_textarea_get_password_mode(t)) {
+                ui_str_copy(shown, sizeof(shown), v);
+            }
+        }
+        ui_unlock();
+    }
+    size_t o = 0;
+    for (const char *s = shown; *s && o + 7 < sizeof(esc); s++) {
+        unsigned char ch = (unsigned char)*s;
+        if (ch == '"' || ch == '\\') {
+            esc[o++] = '\\';
+            esc[o++] = (char)ch;
+        } else if (ch < 0x20) {
+            o += (size_t)snprintf(esc + o, sizeof(esc) - o, "\\u%04x", ch);
+        } else {
+            esc[o++] = (char)ch;
+        }
+    }
+    esc[o] = 0;
+    printf("{\"typed\":%d,\"taps\":%d,\"bytes\":%u,\"screen\":\"%s\",\"text\":\"%s\"}\n", typed, taps, len,
+           ui_screen_name(ui_nav_current()), esc);
+    return 0;
+}
+
+static int cmd_keys(void)
+{
+    char *buf = heap_caps_malloc(2048, MALLOC_CAP_SPIRAM);
+    if (!buf) {
+        return dc_fail("no memory");
+    }
+    if (!ui_lock(LOCK_MS)) {
+        heap_caps_free(buf);
+        return dc_fail("lvgl busy");
+    }
+    ui_kb_dump(buf, 2048);
+    ui_unlock();
+    for (char *line = buf, *nl; *line; line = nl + 1) {
+        nl = strchr(line, '\n');
+        if (!nl) {
+            printf("%s\n", line);
+            break;
+        }
+        printf("%.*s\n", (int)(nl - line), line);
+    }
+    heap_caps_free(buf);
     return 0;
 }
 
@@ -251,11 +434,30 @@ static int cmd_ui(int argc, char **argv)
         if ((v = lookup(arg, names, UI_SCR__N)) < 0) {
             return dc_fail("unknown screen '%s' (ui screens)", arg);
         }
-        int rc = post(UI_GOTO, v, NULL);
+        // optional screen argument: adjust 1 = brightness, langpick 1 = slot B, text <field>, onboard <step>
+        char *sarg = argc > 3 ? join(argc, argv, 3) : NULL;
+        int rc = post(UI_GOTO, v, sarg);
         if (rc == 0 && ui_nav_current() != (ui_screen_t)v) {
-            return dc_fail("screen %s did not open (reader needs a translated bubble)", arg);
+            return dc_fail("screen %s did not open (reader needs a translated bubble; wifinet / wificonn are "
+                           "reached from wifi)", arg);
         }
         return rc;
+    }
+    if (!strcmp(sub, "kb")) {
+        return cmd_kb(argc, argv);
+    }
+    if (!strcmp(sub, "keys")) {
+        return cmd_keys();
+    }
+    if (!strcmp(sub, "wake")) {
+        return post(UI_WAKE, 0, NULL);
+    }
+    if (!strcmp(sub, "off")) {
+        return post(UI_SCREEN_OFF, 0, NULL);
+    }
+    if (!strcmp(sub, "sleep")) {
+        printf("{\"level\":%d,\"screen\":\"%s\"}\n", ui_sleep_level(), ui_screen_name(ui_nav_current()));
+        return 0;
     }
     if (!strcmp(sub, "state")) {
         if (!strcmp(arg, "rec")) {
@@ -436,9 +638,10 @@ static int cmd_ui(int argc, char **argv)
         ui_unlock();
         return 0;
     }
-    return dc_fail("usage: ui screens | goto <name> | state <s> | mood <m> | expr <e> [ms] | intro | "
+    return dc_fail("usage: ui screens | goto <name> [arg] | kb [-ok] <text> | keys | wake | off | sleep | "
+                   "state <s> | mood <m> | expr <e> [ms] | intro | "
                    "user [-a|-b] <text> | bot <text> | append <text> | wave | clear | divider [hh:mm] | tree | "
-                   "tap <name> [ms] | audit | fit | mode 0|1 | "
+                   "tap <name>|key:<k> [ms] | audit | fit | mode 0|1 | "
                    "error <card> [body] | fault <f> | net <n> | toast <text> | upload <pct> | retry <n> | "
                    "lang ru|en | langs a|b | speaker 0|1 | textonly 0|1 | hints <n> | face 0|1 | dir 0|1|2 | "
                    "back | busy 0|1 | fps on|off | "
@@ -447,6 +650,6 @@ static int cmd_ui(int argc, char **argv)
 
 void ui_console_register(void)
 {
-    devconsole_register("ui", "UI test hooks: ui screens | goto | state | mood | user | bot | clear | tree | tap ...",
+    devconsole_register("ui", "UI test hooks: ui screens | goto | kb | keys | state | mood | user | bot | tree | tap ...",
                         cmd_ui);
 }

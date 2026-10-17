@@ -23,12 +23,27 @@ extern ui_subj_t g_s_face;      // 1 = face on the orb
 extern char g_lang_a[4], g_lang_b[4];
 
 // ---- Navigation (ui.md 7.8): H is permanent, other screens are built on entry and deleted on exit
-#define UI_NAV_MAX 5
+#define UI_NAV_MAX 8        // deepest path: H -> S -> W -> network -> K -> WC
 void ui_nav_push(ui_screen_t id, uint32_t arg);   // arg: screen-specific (chat entry id for HIST / RD)
+// One level back (PWR, title zone, swipe). A back handler of the current screen may take it over.
 void ui_nav_back(void);
 void ui_nav_home(void);
+// Replaces the current screen (onboarding steps, WC retries) without growing the stack.
+void ui_nav_replace(ui_screen_t id, uint32_t arg);
+// Back handler of the current screen (cleared when it is left); return true when the screen handled back.
+void ui_nav_set_back(bool (*fn)(void));
 ui_screen_t ui_nav_current(void);
+// True when screen id is anywhere on the navigation stack.
+bool ui_nav_has(ui_screen_t id);
 const char *ui_screen_name(ui_screen_t id);
+// Opens the screen for a UI_IN_OPEN reason (pill, settings button, chips, offline orb, fault pill).
+void ui_open(ui_open_t what);
+// Card action stadium: opens the fixing screen; false when the action belongs to the app (retry).
+bool ui_open_card(int32_t card);
+// Switches the UI language now: H is rebuilt (its chat survives) and the stack is dropped.
+void ui_apply_lang(int lang);
+// Stores the typed question for ui_typed_text() and emits UI_IN_TEXT; false without an app.
+bool ui_send_typed(const char *text);
 
 // Sends user intent to the app (input callback); returns false when no app is registered.
 bool ui_emit(ui_input_t ev, int32_t i);
@@ -38,6 +53,9 @@ bool ui_emit(ui_input_t ev, int32_t i);
 bool ui_wait_pumped(uint32_t timeout_ms);
 // Messages dropped because the queue was full or out of memory.
 unsigned ui_dropped(void);
+// ui_post() that waits up to ms for room instead of dropping (background tasks only); false = dropped, and
+// then m->s is NOT freed (the caller still owns it).
+bool ui_post_wait(const ui_msg_t *m, uint32_t ms);
 
 // ---- Inspection helpers for the console (call under ui_lock)
 #define UI_NAME_MAX 48

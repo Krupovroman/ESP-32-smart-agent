@@ -23,6 +23,11 @@ lv_style_t st_stadium_primary, st_stadium_primary_pr, st_stadium_secondary, st_s
 lv_style_t st_arc_title, st_arc_title_pr;
 lv_style_t st_toast;
 lv_style_t st_dot;
+lv_style_t st_row, st_row_pr;
+lv_style_t st_kb_main, st_key, st_key_pr, st_key_dis;
+lv_style_t st_field, st_field_cursor;
+lv_style_t st_arc_main, st_arc_ind, st_arc_knob;
+lv_style_t st_qr_panel;
 
 // One shared press transition (A26): only the background colour moves, 80 ms linear.
 static const lv_style_prop_t s_trans_props[] = { LV_STYLE_BG_COLOR, LV_STYLE_PROP_INV };
@@ -173,6 +178,57 @@ void ui_theme_init(void)
     lv_style_set_pad_ver(&st_toast, 10);
 
     fill_style(&st_dot, UI_COL_TEXT1, LV_RADIUS_CIRCLE);
+
+    // List rows (3.7): surface-1 r20, pressed surface-3 through the shared 80 ms transition
+    fill_style(&st_row, UI_COL_SURFACE1, 20);
+    lv_style_set_text_font(&st_row, &ui_20);
+    lv_style_set_text_color(&st_row, ui_col(UI_COL_TEXT1));
+    pressed_style(&st_row_pr, UI_COL_SURFACE3);
+
+    // Keyboard (4.2): no background or border, pad_all 0, pad_row 3, pad_column 4; keys r10 surface-2 / text-1,
+    // pressed surface-3, disabled text-3 (function keys and OK are recoloured per key in ui_kb.c)
+    lv_style_init(&st_kb_main);
+    lv_style_set_bg_opa(&st_kb_main, LV_OPA_TRANSP);
+    lv_style_set_border_width(&st_kb_main, 0);
+    lv_style_set_pad_all(&st_kb_main, 0);
+    lv_style_set_pad_row(&st_kb_main, 3);
+    lv_style_set_pad_column(&st_kb_main, 4);
+    fill_style(&st_key, UI_COL_SURFACE2, 10);
+    lv_style_set_text_color(&st_key, ui_col(UI_COL_TEXT1));
+    lv_style_set_border_width(&st_key, 0);
+    pressed_style(&st_key_pr, UI_COL_SURFACE3);
+    lv_style_init(&st_key_dis);
+    lv_style_set_text_color(&st_key_dis, ui_col(UI_COL_TEXT3));
+
+    // Text field (3.8): surface-2 r14, ui_20, pad 12/14; cursor = 2 px left border in the accent, 500 ms blink
+    fill_style(&st_field, UI_COL_SURFACE2, 14);
+    lv_style_set_pad_ver(&st_field, 12);
+    lv_style_set_pad_hor(&st_field, 14);
+    lv_style_set_text_font(&st_field, &ui_20);
+    lv_style_set_text_color(&st_field, ui_col(UI_COL_TEXT1));
+    lv_style_set_border_width(&st_field, 0);
+    lv_style_init(&st_field_cursor);
+    lv_style_set_bg_opa(&st_field_cursor, LV_OPA_TRANSP);
+    lv_style_set_border_side(&st_field_cursor, LV_BORDER_SIDE_LEFT);
+    lv_style_set_border_width(&st_field_cursor, 2);
+    lv_style_set_border_color(&st_field_cursor, ui_col(s_accents[UI_ACC_ASSISTANT].top));
+    lv_style_set_anim_duration(&st_field_cursor, 500);
+
+    // Arc adjuster (3.9): 16 px surface-2 track, accent indicator (rounded), text-1 knob Ø32 (pad 8)
+    lv_style_init(&st_arc_main);
+    lv_style_set_arc_width(&st_arc_main, 16);
+    lv_style_set_arc_color(&st_arc_main, ui_col(UI_COL_SURFACE2));
+    lv_style_set_arc_rounded(&st_arc_main, true);
+    lv_style_set_bg_opa(&st_arc_main, LV_OPA_TRANSP);
+    lv_style_init(&st_arc_ind);
+    lv_style_set_arc_width(&st_arc_ind, 16);
+    lv_style_set_arc_color(&st_arc_ind, ui_col(s_accents[UI_ACC_ASSISTANT].top));
+    lv_style_set_arc_rounded(&st_arc_ind, true);
+    fill_style(&st_arc_knob, UI_COL_TEXT1, LV_RADIUS_CIRCLE);
+    lv_style_set_pad_all(&st_arc_knob, 8);
+
+    // QR panel (3.10): white rounded rectangle, radius 16
+    fill_style(&st_qr_panel, 0xFFFFFF, 16);
 }
 
 void ui_theme_set_mode(int mode)
@@ -180,8 +236,12 @@ void ui_theme_set_mode(int mode)
     const ui_accent_t *a = ui_accent(ui_mode_accent(mode));
     lv_style_set_bg_color(&st_stadium_primary, ui_col(a->top));
     lv_style_set_bg_color(&st_stadium_primary_pr, ui_col(a->mid));
+    lv_style_set_border_color(&st_field_cursor, ui_col(a->top));
+    lv_style_set_arc_color(&st_arc_ind, ui_col(a->top));
     lv_obj_report_style_change(&st_stadium_primary);
     lv_obj_report_style_change(&st_stadium_primary_pr);
+    lv_obj_report_style_change(&st_field_cursor);
+    lv_obj_report_style_change(&st_arc_ind);
 }
 
 void ui_theme_plain(lv_obj_t *obj)

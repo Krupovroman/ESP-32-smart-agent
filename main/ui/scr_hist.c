@@ -2,6 +2,7 @@
 #include "ui_chat.h"
 #include "ui_internal.h"
 #include "ui_rim.h"
+#include "ui_scr.h"
 #include "ui_str.h"
 #include "ui_theme.h"
 
@@ -35,13 +36,20 @@ static void list_click_cb(lv_event_t *e)
     }
 }
 
+static void new_chat_confirm(void *ctx)
+{
+    (void)ctx;
+    ui_emit(UI_IN_NEW_CHAT, 0);
+    ui_nav_home();
+    scr_home_clear(true);
+}
+
 static void new_chat_cb(lv_event_t *e)
 {
     (void)e;
-    // the confirm dialog (C) comes with T_DIALOG; until then the action applies directly
-    ui_emit(UI_IN_NEW_CHAT, 0);
-    ui_nav_back();
-    scr_home_clear(true);
+    // 3.5: "Новый разговор" -> C "Начать новый разговор?" -> H empty
+    ui_dialog_open(&(ui_dialog_t){ .title = ui_s(S_NEW_CHAT_Q), .body = ui_s(S_M_NEW_SUB),
+                                   .confirm = ui_s(S_O5_P), .on_confirm = new_chat_confirm });
 }
 
 lv_obj_t *scr_hist_build(uint32_t entry_id)
