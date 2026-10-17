@@ -161,8 +161,13 @@ static void fade(lv_obj_t *o, bool show, uint32_t ms)
 
 static void status_in(lv_anim_t *a)
 {
-    // A22 second half: swap the text while invisible, then fade the new one in
+    // A22 second half: swap the text while invisible, then fade the new one in (or stay hidden when the
+    // status was cleared during the fade-out)
     (void)a;
+    if (!s_status_txt[0]) {
+        lv_obj_add_flag(s_status, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
     lv_label_set_text(s_status, s_status_txt);
     fade(s_status, true, 160);
 }
@@ -243,6 +248,9 @@ static void side_refresh(void)
     lv_obj_remove_style(s_right, &st_chip_b, 0);
     lv_obj_remove_style(s_right, &st_chip_b_pr, LV_STATE_PRESSED);
     lv_obj_remove_style(s_right, &st_chip_hold, LV_STATE_CHECKED);
+    // the same two objects; names follow their role so "ui tap home_chip_a" works in translator mode
+    lv_obj_set_name_static(s_left, mode() == 1 ? "home_chip_a" : "home_voice");
+    lv_obj_set_name_static(s_right, mode() == 1 ? "home_chip_b" : "home_settings");
     if (mode() == 1) {
         lv_obj_add_style(s_left, &st_chip, 0);
         lv_obj_add_style(s_left, &st_chip_a, 0);
@@ -333,9 +341,9 @@ static void status_refresh(void)
     }
     bool pill = idle_like(st) && !txt;
     fade(s_pill, pill, pill ? 200 : UI_T_FAST);
-    if (mode() == 0) {
-        fade(s_right, idle_like(st), idle_like(st) ? 200 : UI_T_FAST);   // settings hides while busy (A5)
-    }
+    // settings hides while busy (A5); chip B always stays (hold to talk, tap to stop speech)
+    bool right = mode() == 1 || idle_like(st);
+    fade(s_right, right, right ? 200 : UI_T_FAST);
     status_set(txt, err);
 }
 
@@ -1007,6 +1015,7 @@ static void swap_cb(lv_timer_t *t)
     (void)t;
     side_refresh();
     pill_refresh();
+    status_refresh();       // chip B is never hidden; the settings button follows the state
 }
 
 static void mode_obs(lv_observer_t *o, lv_subject_t *s)

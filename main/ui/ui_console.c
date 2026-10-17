@@ -402,6 +402,23 @@ static int cmd_ui(int argc, char **argv)
     if (!strcmp(sub, "back")) {
         return post(UI_BACK, 0, NULL);
     }
+    if (!strcmp(sub, "fps")) {
+#if LV_USE_PERF_MONITOR
+        // lv_sysmon in log mode: one "LVGL" log line per second, no overlay in the screenshots
+        if (!ui_lock(LOCK_MS)) {
+            return dc_fail("lvgl busy");
+        }
+        if (!strcmp(arg, "on")) {
+            lv_sysmon_performance_resume(NULL);
+        } else {
+            lv_sysmon_performance_pause(NULL);
+        }
+        ui_unlock();
+        return 0;
+#else
+        return dc_fail("built without LV_USE_PERF_MONITOR");
+#endif
+    }
     if (!strcmp(sub, "busy")) {
         // rim BUSY comet (A30); the scan / portal screens that use it come later
         if (!ui_lock(LOCK_MS)) {
@@ -416,7 +433,7 @@ static int cmd_ui(int argc, char **argv)
                    "tap <name> [ms] | audit | fit | mode 0|1 | "
                    "error <card> [body] | fault <f> | net <n> | toast <text> | upload <pct> | retry <n> | "
                    "lang ru|en | langs a|b | speaker 0|1 | textonly 0|1 | hints <n> | face 0|1 | dir 0|1|2 | "
-                   "back | busy 0|1 | "
+                   "back | busy 0|1 | fps on|off | "
                    "btn boot|pwr [short|down|up]");
 }
 
