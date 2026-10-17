@@ -7,6 +7,7 @@
 #include "ui_str.h"
 #include "ui_sym.h"
 #include "ui_work.h"
+#include "devconsole.h"
 #include "net.h"
 
 #include <stdio.h>
@@ -71,7 +72,8 @@ typedef struct {
 static void scan_job(void *arg)
 {
     scan_job_t *j = arg;
-    j->err = net_scan(5000, j->aps, SCAN_MAX, &j->n);
+    // the driver exists only once the boot finished (never in safe mode): net_scan would assert without it
+    j->err = devconsole_is_ready() ? net_scan(5000, j->aps, SCAN_MAX, &j->n) : ESP_ERR_INVALID_STATE;
     j->n_saved = net_saved_list(j->saved, NET_MAX_SAVED);
     net_status(&j->st);
 }
@@ -394,6 +396,11 @@ typedef struct {
 static void conn_job(void *arg)
 {
     conn_job_t *j = arg;
+    if (!devconsole_is_ready()) {
+        j->err = ESP_ERR_INVALID_STATE;     // no Wi-Fi driver yet (or safe mode)
+        memset(j->pass, 0, sizeof(j->pass));
+        return;
+    }
     if (!s_reason_hooked) {
         // the default event loop exists once net_init() ran; registering twice is harmless but avoided
         s_reason_hooked = esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, reason_cb, NULL) ==

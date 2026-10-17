@@ -301,10 +301,18 @@ void ui_nav_back(void)
 
 void ui_nav_home(void)
 {
-    // never through the back handlers: an onboarding step would refuse to leave
-    while (s_depth > 1) {
-        nav_pop();
+    // never through the back handlers (an onboarding step would refuse to leave), and without loading the
+    // screens in between: their SCREEN_LOADED refreshes (scans, status jobs) would run for nothing
+    if (s_depth <= 1) {
+        return;
     }
+    ui_rim_attach_scroll(NULL);
+    lv_screen_load(s_nav[0].scr);
+    while (s_depth > 1) {
+        lv_obj_delete_async(s_nav[--s_depth].scr);
+    }
+    scr_home_resume();
+    ctx_update();
 }
 
 static void nav_goto(int32_t id, const char *arg)

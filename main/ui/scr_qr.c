@@ -7,6 +7,7 @@
 #include "ui_sym.h"
 #include "ui_work.h"
 #include "board.h"
+#include "devconsole.h"
 #include "net.h"
 #include "portal.h"
 #include "settings.h"
@@ -88,7 +89,8 @@ typedef struct {
 static void start_job(void *arg)
 {
     start_job_t *j = arg;
-    j->err = portal_start();
+    // the Wi-Fi driver and esp_netif exist only once the boot finished (never in safe mode)
+    j->err = devconsole_is_ready() ? portal_start() : ESP_ERR_INVALID_STATE;
     if (j->err == ESP_OK) {
         portal_credentials(j->ssid, sizeof(j->ssid), j->pass, sizeof(j->pass));
     }
