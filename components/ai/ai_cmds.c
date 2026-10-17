@@ -23,8 +23,9 @@
 #define TTS_WAIT_MS  180000
 #define DRAIN_WAIT_MS 60000
 
-// What the blocking command waits for, filled by the listener (ai / tts task).
-static struct {
+// What the blocking command waits for, filled by the listener (ai / tts task). In PSRAM:
+// about 1.5 KB that only the console uses.
+typedef struct {
     uint32_t turn;
     bool ok;
     ai_result_t res;              // strings duplicated into PSRAM
@@ -32,7 +33,8 @@ static struct {
     bool tts_ok;
     tts_stats_t tts;
     or_err_t tts_err;
-} s_cap;
+} cap_t;
+static cap_t *s_cap;
 static EventGroupHandle_t s_eg;
 static bool s_log = true;
 static bool s_registered;
@@ -48,7 +50,7 @@ static void flat(char *s)
 
 static void listener(const ai_event_t *ev, void *ctx)
 {
-    bool waited = ev->turn && ev->turn == s_cap.turn;
+    bool waited = ev->turn && ev->turn == s_cap->turn;
     if (s_log) {
         switch (ev->type) {
         case AI_EV_UPLOAD_DONE:
@@ -95,29 +97,29 @@ static void listener(const ai_event_t *ev, void *ctx)
     }
     switch (ev->type) {
     case AI_EV_RESULT:
-        s_cap.res = *ev->result;
-        s_cap.res.transcript = ai_strdup(ev->result->transcript);
-        s_cap.res.text = ai_strdup(ev->result->text);
-        s_cap.ok = s_cap.res.transcript && s_cap.res.text;
-        if (!s_cap.ok) {
-            or_err_local(&s_cap.err, "M0");
+        s_cap->res = *ev->result;
+        s_cap->res.transcript = ai_strdup(ev->result->transcript);
+        s_cap->res.text = ai_strdup(ev->result->text);
+        s_cap->ok = s_cap->res.transcript && s_cap->res.text;
+        if (!s_cap->ok) {
+            or_err_local(&s_cap->err, "M0");
         }
         xEventGroupSetBits(s_eg, BIT_RESULT);
         break;
     case AI_EV_ERROR:
-        s_cap.err = *ev->err;
-        s_cap.ok = false;
+        s_cap->err = *ev->err;
+        s_cap->ok = false;
         xEventGroupSetBits(s_eg, BIT_RESULT);
         break;
     case AI_EV_TTS_DONE:
-        s_cap.tts = *ev->tts;
-        s_cap.tts_ok = true;
+        s_cap->tts = *ev->tts;
+        s_cap->tts_ok = true;
         xEventGroupSetBits(s_eg, BIT_TTS);
         break;
     case AI_EV_TTS_ERROR:
-        s_cap.tts = *ev->tts;
-        s_cap.tts_err = *ev->err;
-        s_cap.tts_ok = false;
+        s_cap->tts = *ev->tts;
+        s_cap->tts_err = *ev->err;
+        s_cap->tts_ok = false;
         xEventGroupSetBits(s_eg, BIT_TTS);
         break;
     default:
@@ -127,10 +129,10 @@ static void listener(const ai_event_t *ev, void *ctx)
 
 static void cap_reset(uint32_t turn)
 {
-    free(s_cap.res.transcript);
-    free(s_cap.res.text);
-    memset(&s_cap, 0, sizeof(s_cap));
-    s_cap.turn = turn;
+    free(s_cap->res.transcript);
+    free(s_cap->res.text);
+    memset(s_cap, 0, sizeof(*s_cap));
+    s_cap->turn = turn;
     xEventGroupClearBits(s_eg, BIT_RESULT | BIT_TTS);
 }
 
@@ -184,7 +186,7 @@ static void print_tts(const tts_stats_t *t)
 static int speak_and_wait(uint32_t turn, const char *text, const char *lang)
 {
     xEventGroupClearBits(s_eg, BIT_TTS);
-    s_cap.turn = turn;
+    s_cap->turn = turn;
     int64_t t0 = esp_timer_get_time();
     esp_err_t e = tts_client_speak(turn, text, lang);
     if (e != ESP_OK) {
@@ -193,10 +195,10 @@ static int speak_and_wait(uint32_t turn, const char *text, const char *lang)
     if (!(xEventGroupWaitBits(s_eg, BIT_TTS, pdTRUE, pdFALSE, pdMS_TO_TICKS(TTS_WAIT_MS)) & BIT_TTS)) {
         return dc_fail("tts: no answer (timeout)");
     }
-    print_tts(&s_cap.tts);
-    if (!s_cap.tts_ok) {
-        print_err("tts error", &s_cap.tts_err);
-        return dc_fail("%s %s", s_cap.tts_err.id, s_cap.tts_err.msg_ru);
+    print_tts(&s_cap->tts);
+    if (!s_cap->tts_ok) {
+        print_err("tts error", &s_cap->tts_err);
+        return dc_fail("%s %s", s_cap->tts_err.id, s_cap->tts_err.msg_ru);
     }
     int64_t t1 = esp_timer_get_time();
     while (audio_out_busy() && esp_timer_get_time() - t1 < (int64_t)DRAIN_WAIT_MS * 1000) {
@@ -251,11 +253,11 @@ static int run_turn_cmd(ai_mode_t mode, bool voice, int argc, char **argv)
     if (!(xEventGroupWaitBits(s_eg, BIT_RESULT, pdTRUE, pdFALSE, pdMS_TO_TICKS(TURN_WAIT_MS)) & BIT_RESULT)) {
         return dc_fail("no result (timeout)");
     }
-    if (!s_cap.ok) {
-        print_err("error", &s_cap.err);
-        return dc_fail("%s %s", s_cap.err.id, s_cap.err.msg_ru);
+    if (!s_cap->ok) {
+        print_err("error", &s_cap->err);
+        return dc_fail("%s %s", s_cap->err.id, s_cap->err.msg_ru);
     }
-    const ai_result_t *res = &s_cap.res;
+    const ai_result_t *res = &s_cap->res;
     print_field("transcript", res->transcript);
     print_field(mode == AI_MODE_ASSISTANT ? "reply" : "translation", res->text);
     if (mode == AI_MODE_ASSISTANT) {
@@ -684,8 +686,12 @@ void ai_console_register(void)
     if (s_registered) {
         return;
     }
-    s_registered = true;
+    s_cap = ai_calloc(1, sizeof(cap_t));
     s_eg = xEventGroupCreate();
+    if (!s_cap || !s_eg) {
+        return;
+    }
+    s_registered = true;
     ai_add_listener(listener, NULL);
     devconsole_register("ai",
                         "ai ask|tr [-a] <text> | voice|trvoice [-a] | say|fetch [-l xx] <text> | models [tts] | "

@@ -165,7 +165,8 @@ esp_err_t ai_get_json(const char *base_url, const char *path, size_t cap, bool o
         free(b);
         uint32_t delay;
         if (once || !or_retry_next(&rs, e, 0, &delay)) {
-            ret = e->http == 404 ? ESP_ERR_NOT_FOUND : ESP_FAIL;
+            // only a JSON 404 means "model not found"; a bare one (H404) is a wrong base URL
+            ret = !strcmp(e->id, "404") ? ESP_ERR_NOT_FOUND : ESP_FAIL;
             break;
         }
         ESP_LOGI(TAG, "GET %s: %s, retry in %" PRIu32 " ms", path, e->id, delay);

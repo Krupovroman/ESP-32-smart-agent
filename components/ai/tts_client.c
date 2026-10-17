@@ -257,6 +257,10 @@ static bool wav_header(pcm_parser_t *pp, size_t *data_at)
             *data_at = o + 8;
             return true;
         }
+        if (sz > sizeof(pp->hdr)) {
+            pp->bad_format = true;    // cannot be skipped inside the header buffer (and would wrap o)
+            return false;
+        }
         o += 8 + sz + (sz & 1);
     }
     return false;

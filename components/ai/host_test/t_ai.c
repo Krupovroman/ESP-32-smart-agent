@@ -507,6 +507,15 @@ static void t_stt(void)
     CHECK(s && !cJSON_GetObjectItem(s, "language"));
     cJSON_Delete(s);
 
+    // a 404 about routing parameters (not audio) does not detour through Whisper
+    setup();
+    mock_push_json(404, "{\"error\":{\"message\":\"No endpoints found that can handle the requested parameters.\","
+                        "\"code\":404}}");
+    j = mkjob(AI_MODE_ASSISTANT, NULL, s_pcm, s_npcm);
+    run(&j);
+    const ev_t *e = find_ev(AI_EV_ERROR);
+    CHECK(e && !strcmp(e->id, "404") && g_nreq == 1);
+
     // empty Whisper text -> P4 without chat
     setup();
     host_set("stt_mode", "1");

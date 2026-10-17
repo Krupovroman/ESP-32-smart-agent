@@ -851,11 +851,13 @@ static void run_turn(job_t *j)
             goto done;
         }
         // Automatic fixes of protocol §9.1 (not counted as retries).
-        static const char *const W_AUDIO[] = { "audio", "modalit", "endpoint" };
+        // "endpoint" alone is not enough: "No endpoints found that can handle the requested
+        // parameters" is a schema/reasoning problem, and Whisper would not fix it.
+        static const char *const W_AUDIO[] = { "audio", "modalit" };
         static const char *const W_REASON[] = { "reasoning", "effort" };
         static const char *const W_SCHEMA[] = { "response_format", "schema", "structured" };
         if (ch->pcm && !stt_done && (!strcmp(err.id, "404") || !strcmp(err.id, "400")) &&
-            mentions_any(err.message, W_AUDIO, 3)) {
+            mentions_any(err.message, W_AUDIO, 2)) {
             ESP_LOGW(TAG, "model rejects audio input, falling back to STT");
             stt_first = true;
             continue;
