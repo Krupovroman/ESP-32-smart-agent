@@ -6,6 +6,9 @@ $ErrorActionPreference = 'Stop'
 $activate = 'C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1'
 if (-not (Test-Path $activate)) { throw "ESP-IDF v6.1 not found ($activate). Install it with: eim install --config eim_config.toml" }
 . $activate *> $null
+# idf.py prints notes on stderr; in Windows PowerShell 5.1 that must not be treated as fatal
+$ErrorActionPreference = 'Continue'
+Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
     idf.py @args
