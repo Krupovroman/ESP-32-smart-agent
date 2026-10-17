@@ -1,5 +1,6 @@
 idf_component_register(
-    SRC_DIRS "." "board" "dev" "ui" "audio" "settings" "net"
-    INCLUDE_DIRS "." "board" "dev" "ui" "audio" "settings" "net"
-    EMBED_TXTFILES "net/portal.html"
+    SRC_DIRS "." "ui"
+    INCLUDE_DIRS "." "ui"
+    PRIV_REQUIRES board display touch audio settings net orhttp devconsole
+                  app_update lvgl__lvgl espressif__esp_lvgl_port
 )

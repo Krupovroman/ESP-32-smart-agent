@@ -1,1193 +1,1288 @@
-# Round AI Assistant: UI/UX Specification, "Calm Orb" concept
+# Round Assistant: UI/UX Specification, "Calm Watch" concept
 
-Target: Waveshare ESP32-S3-Touch-LCD-1.85 (ST77916 360×360 RGB565 over QSPI, CST816 single touch), LVGL 9.5.x through esp_lvgl_port 2.9, PARTIAL render mode with 2 × 360×40 internal-SRAM DMA buffers, 8 MB PSRAM.
-Concept: **calm and watch-like**. The device is voice-first and has one hero orb. The physical buttons drive the core loop. There are very few screens and the user should not need to learn anything.
+**Version:** 1.0, 2026-10-17.
 
-All coordinates are framebuffer pixels: origin top-left, centre (180,180). `c` means the vertical offset of an element's centre from y=180. `Rmax` means the farthest drawn pixel from (180,180). The hard limit is **Rmax ≤ 168** (12 px rim margin). Touch targets are **≥ 50 px**. "Estimate" marks numbers that must be measured on the device (see §8).
+**Target hardware and software:**
+- Waveshare ESP32-S3-Touch-LCD-1.85 rev 2.1.
+- ST77916 round IPS, 360×360, RGB565, on QSPI. At 80 MHz the bus runs at about 40 MB/s. At 40 MHz during bring-up it is about 20 MB/s, and every bus time below doubles.
+- CST816T single touch.
+- ESP-IDF 6.1, LVGL 9.5.x through esp_lvgl_port 2.9.
+- PARTIAL render mode with two 360×40 RGB565 draw buffers in internal DMA SRAM (28.8 KB each). Everything else goes to the 8 MB PSRAM.
+
+**Sources:** `docs/requirements.md`, `docs/hardware.md` and `docs/research/stack_2026-10-17.json`. The `verify:` corrections in the research file take priority over the research entries. I also checked these LVGL 9.5 sources directly: `lv_buttonmatrix.c` (hit-area expansion), `lv_arc.c` (ring hit test), `lv_qrcode.c/.h`, `lv_keyboard.c/.h`, `lv_arclabel.h`, and the v9.6 migration notes.
 
 ---
 
-## 0. Design principles and key decisions
+## 0. Concept and ground rules
 
-| # | Decision | Why |
-|---|---|---|
-| D1 | **Hold to talk anywhere.** Hold BOOT or hold the orb and speak; release to send. A quick tap latches hands-free listening instead. | One gesture covers 90% of use. It is the same on the button and on the screen. |
-| D2 | **PWR = menu / back.** On a face it opens the Mode dial. Everywhere else it goes back one level. Holding it for 3 s powers off. | Matches a watch crown. It gives a physical exit from every state. |
-| D3 | **Two faces** (Assistant, Translator). Each has two poses: *Face* (big orb) and *Chat* (mini orb + bubbles). | "Very few screens". The chat pose doubles as the chat history. |
-| D4 | **Mode dial** is a 2×2 grid of 116 px circles: Assistant, Translator, Voice on/off, Settings. It opens from the bottom mode chip or PWR. | Visible and big. No rim menu, because a touch-drag along the rim has no bezel to guide it and conflicts with back gestures. |
-| D5 | Gestures are **accelerators only**: vertical scroll, swipe → for back, swipe ↑ on a face for chat, swipe ←/→ on a face to switch mode. | Every action also has a visible tap target or a button. |
-| D6 | **Keyboard: alphabetical half-pages** (А–П / Р–Я, A–M / N–Z). 5 tapered rows, 25 keys of 51–53 px, commit on release with an echo bubble. | 33 letters cannot be one page at 50 px. Range labels tell the user exactly where each letter is. |
-| D7 | **Translator: one talk control with auto language detection.** Each card has a direction chip to force the opposite direction. | One control is zero-learning, and the model returns `src_lang` in the same JSON. Two "me/them" buttons would be ≤100 px each and force the user to decide who is speaking. |
-| D8 | **Glow from an A8 image**, not shadows. Size changes come from custom-draw radii, never `transform_scale`. Nothing full-screen animates. Fades to and from black use the **backlight PWM (LEDC hardware fade)**. | Keeps every animated frame ≤ ~55 k px (§6). |
-| D9 | No `clip_corner` on any screen. The circle is respected by geometry, and pixels outside it are physically absent. | Verify: `clip_corner` with radius 180 makes LVGL render the whole screen through ARGB8888 layers plus a mask. |
+**Calm Watch** is a voice-first object. You glance at it, press, talk and listen. It is not a phone UI.
+
+1. **One hero.** The orb is the only large element. It shows the device state and it is the on-screen talk button.
+2. **The physical buttons run the core loop.** **BOOT (GPIO0) = talk.** **PWR (GPIO6) = back / stop / cancel.** A full voice turn never needs the touchscreen.
+3. **Two modes, one face.** Assistant and Translator share the Home screen. The orb colour and the label in the top pill show which mode is active.
+4. **No hidden gestures.** There are no swipes, no long-press menus and no edge or rim menus. Every function has a visible, labelled target. The only drag in the whole UI is vertical scrolling of lists and the chat.
+5. **Status lives in one place.** The top "pill slot" shows the mode when idle, the progress text while busy, and the fault when something is wrong. Tapping a fault takes you to the screen that fixes it.
+6. **Everything important sits inside r = 168 px.** That leaves a 12 px rim margin. Each row is sized from the chord at its height. Nothing relies on `clip_corner`; the bezel already hides the corners.
+7. **Animated areas stay small.** Steady animation regions are at most about 42k px (32 % of the screen). Full-screen redraws happen only as single frames when the screen changes.
+8. **Few screens.** The UI uses 9 templates. Error states are not separate screens.
+9. **First-use hints retire themselves.** Inline hints disappear after 3 successful voice turns, so the steady-state UI has almost no text.
+
+### 0.1 Coordinates and fit rules
+
+- Origin is the top-left corner. Centre C = (180, 180). Usable radius R = 168.
+- Half-chord at vertical offset d from the centre: `h(d) = sqrt(168² − d²)`. Full chord width: `w(d) = 2·h(d)`.
+- **Rectangle** fits if the farthest corner satisfies `sqrt(dx² + dy²) ≤ 168`. A row of keys fits if the row's half-width ≤ h(d) at the row edge farthest from the centre.
+- **Stadium** (pill) of size w×h with end radius r = h/2 fits if `sqrt((w/2 − r)² + dy_c²) + r ≤ 168`, where dy_c is the offset of its centre line.
+- **Circle** fits if `|centre − C| + r ≤ 168`.
+- Angles follow the LVGL convention: 0° = 3 o'clock, increasing clockwise.
+
+Chord reference table (R = 168):
+
+| d | 0 | 38 | 40 | 50 | 60 | 65 | 70 | 80 | 91 | 100 | 110 | 120 | 130 | 140 | 144 | 150 | 160 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| w(d) px | 336.0 | 327.3 | 326.3 | 320.8 | 313.8 | 309.8 | 305.4 | 295.4 | 282.4 | 270.0 | 254.0 | 235.1 | 212.8 | 185.7 | 173.1 | 151.3 | 102.4 |
+
+**Touch targets.** The minimum visible target is 50×50 px. Most targets are 52–80 px. On this panel 1.85" ≈ 194 px/in, so 50 px ≈ 6.5 mm. Neighbouring targets are at least 4 px apart.
 
 ---
 
 ## 1. Visual language
 
-### 1.1 Canvas and safe-area rules
+### 1.1 Colour tokens
 
-- Usable chord at vertical offset d: **W(d) = 2·√(168² − d²)**
+The screen background is pure black: it hides the panel edge and makes the orb glow. All "glow" colours below are **precomputed opaque mixes with black**. The renderer never alpha-blends large areas. Fading UI elements use `opa` on small objects only.
 
-| d | 0 | 20 | 40 | 60 | 80 | 100 | 110 | 120 | 130 | 140 | 150 | 160 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| W(d) px | 336 | 333.6 | 326.3 | 313.8 | 295.5 | 270.0 | 254.0 | 235.2 | 212.8 | 185.7 | 151.3 | 102.4 |
-
-- **Circle** of radius r centred at distance D from the centre fits if D + r ≤ 168.
-- **Pill** of height h (radius h/2) centred at offset c fits if its width is ≤ `2·√((168−h/2)² − c²) + h`.
-- **Rounded rect** with corner radius rc fits if max(distance of each corner-arc centre) + rc ≤ 168.
-- Put these three in `ui_geom.h`. A debug build runs `ui_geom_check(screen)` after each screen build. It walks visible objects, computes Rmax from `lv_obj_get_coords` plus the radius style, and logs offenders.
-- Spacing grid is 4 px. Standard gaps are 4/8/12/16.
-- Radii: pills = h/2, cards and bubbles = 16, keys = 12, QR card = 16.
-
-### 1.2 Palette (dark; root background is pure black so the rim disappears into the bezel)
-
-| Token | Hex | Use |
-|---|---|---|
-| `COL_BG` | `#000000` | root screens, key gap borders, fades |
-| `COL_SURFACE_1` | `#12151C` | list pills, assistant bubble, field |
-| `COL_SURFACE_2` | `#1C212B` | letter keys, pressed pills, arc track |
-| `COL_SURFACE_3` | `#272D3A` | control keys, echo bubble |
-| `COL_PRESSED` | `#3A4252` | pressed key |
-| `COL_OUTLINE` | `#2F3644` | 1 px borders |
-| `COL_TEXT_1` | `#EEF1F6` | primary text |
-| `COL_TEXT_2` | `#A3ACBB` | secondary text, icons (≈9:1 on black) |
-| `COL_TEXT_3` | `#6B7383` | placeholders, disabled, hints (≈4.4:1, large text only) |
-| `COL_USER_BUBBLE` | `#1F2F4F` | user message bubble |
-| `COL_OK` | `#4CD98A` | success ticks |
-| `COL_WARN` | `#FFD25E` | low credit, brightness indicator |
-| `COL_LANG_A` | `#7B8CFF` | translator language A (left) |
-| `COL_LANG_B` | `#F38BB5` | translator language B (right) |
-| `COL_CARD_A` / `COL_CARD_B` | `#1A2340` / `#351A2A` | translator card tints |
-| `COL_ON_ACCENT` | `#0B0D12` | text on accent fills (OK key, primary pills) |
-
-### 1.3 Accent per orb state
-
-| State | Accent (halo, bars, arcs) | Core gradient top → bottom (VER) | Halo opa |
+| Token | Hex | Use | Contrast on #000 |
 |---|---|---|---|
-| IDLE | `#7B8CFF` | `#9AA6FF` → `#4F5BD5` | 90–160 (breathing) |
-| LISTEN | `#33D6B5` | `#6FF0D6` → `#12A086` | 180 |
-| UPLOAD / THINK | `#A98BFF` | `#C7B2FF` → `#7450E0` | 120 / 140 |
-| SPEAK | `#FFB04A` | `#FFCD7A` → `#E58A14` | 150–200 |
-| ERROR | `#FF5D6C` | `#FF8A96` → `#C83445` | 120 |
+| `bg` | `#000000` | screen background | – |
+| `surface-1` | `#111316` | list rows, function keys, cards, translator bubbles | – |
+| `surface-2` | `#1A1D22` | letter keys, user bubble, arc track, pressed rows | – |
+| `surface-3` | `#2C3138` | pressed keys/buttons, outlines, dividers | – |
+| `text-1` | `#F2F4F7` | primary text | ≈19:1 |
+| `text-2` | `#A6ADB8` | secondary text, hints, subtitles | ≈9.3:1 |
+| `text-3` | `#6B7380` | disabled and decorative only (never body text) | ≈4.4:1 |
+| `ink` | `#0B0D10` | text/icons on accent fills | 7.5:1 on assistant, 10:1 on translator |
+| `qr-light` / `qr-dark` | `#FFFFFF` / `#000000` | QR panel | – |
 
-The primary-action pill and the OK key use `#7B8CFF` with `COL_ON_ACCENT` text. The volume arc uses `#FFB04A` and the brightness arc `#FFD25E`.
+### 1.2 Accent colours (modes and states)
 
-```c
-/* ui_palette.h */
-#define COL_BG        lv_color_hex(0x000000)
-#define COL_SURFACE_1 lv_color_hex(0x12151C)
-#define COL_SURFACE_2 lv_color_hex(0x1C212B)
-#define COL_SURFACE_3 lv_color_hex(0x272D3A)
-#define COL_PRESSED   lv_color_hex(0x3A4252)
-#define COL_OUTLINE   lv_color_hex(0x2F3644)
-#define COL_TEXT_1    lv_color_hex(0xEEF1F6)
-#define COL_TEXT_2    lv_color_hex(0xA3ACBB)
-#define COL_TEXT_3    lv_color_hex(0x6B7383)
-typedef struct { uint32_t accent, top, bottom; uint8_t halo_opa; } orb_pal_t;
-static const orb_pal_t ORB_PAL[] = {
-  [ORB_IDLE]   = {0x7B8CFF, 0x9AA6FF, 0x4F5BD5, 125},
-  [ORB_LISTEN] = {0x33D6B5, 0x6FF0D6, 0x12A086, 180},
-  [ORB_UPLOAD] = {0xA98BFF, 0xC7B2FF, 0x7450E0, 120},
-  [ORB_THINK]  = {0xA98BFF, 0xC7B2FF, 0x7450E0, 140},
-  [ORB_SPEAK]  = {0xFFB04A, 0xFFCD7A, 0xE58A14, 175},
-  [ORB_ERROR]  = {0xFF5D6C, 0xFF8A96, 0xC83445, 120},
-};
-```
+Mode colours tint the orb when idle or thinking. State colours mean the same thing in both modes.
 
-### 1.4 Typography
+| Accent | Meaning | core-top (100 %) | core-bottom (×0.78) | mid (×0.55) | halo1 (×0.30) | halo2 (×0.14) | dim fill (×0.22) |
+|---|---|---|---|---|---|---|---|
+| assistant | Assistant mode, idle/thinking | `#7C9CFF` | `#617AC7` | `#44568C` | `#252F4D` | `#111624` | `#1B2238` |
+| translator | Translator mode, idle/thinking | `#FFA94D` | `#C7843C` | `#8C5D2A` | `#4D3317` | `#24180B` | `#382511` |
+| listen | mic open (both modes) | `#34E0C3` | `#29AF98` | `#1D7B6B` | `#10433B` | `#071F1B` | `#0B312B` |
+| speak | device speaking | `#B794FF` | `#8F73C7` | `#65518C` | `#372C4D` | `#1A1524` | `#282138` |
+| error | failure | `#FF5C5C` | `#C74848` | `#8C3333` | `#4D1C1C` | `#240D0D` | `#381414` |
+| warning | low credit, no speaker | `#FFD166` | `#C7A350` | `#8C7338` | `#4D3F1F` | `#241D0E` | `#382E16` |
+| success | saved, connected | `#3DDC84` | `#30AC67` | `#227949` | `#124228` | `#091F12` | `#0D301D` |
+| offline | no network | `#6B7380` (outline only) | – | – | – | – | – |
 
-**Font: Inter 4.1** (SIL OFL 1.1, full Cyrillic). Use the static TTFs from the release zip, not the variable font. Inter is narrower than Montserrat, which matters on chords. Rough planning widths: Cyrillic lowercase ≈ 0.56 em, uppercase ≈ 0.68 em. That is about 9 px per char at 16 px and 11.2 px per char at 20 px. Real widths come from `lv_text_get_size`, and every single-line label uses `LV_LABEL_LONG_DOT` as a safety net.
+- The core uses a **simple vertical gradient** (`bg_grad_dir = LV_GRAD_DIR_VER`) from core-top to core-bottom. That does not need `LV_USE_DRAW_SW_COMPLEX_GRADIENTS`.
+- Halos are flat opaque circles.
+- RGB565 quantises these dark colours slightly. Flat halos avoid visible banding. The core gradient spans only a 22 % range, so banding stays minimal.
 
-| Font object | Source | px | Roles | Line height (≈) |
-|---|---|---|---|---|
-| `font_16` | Inter-Medium | 16 | status, hints, captions, secondary lines, chips, dial labels | 19 |
-| `font_20` | Inter-Regular | 20 | chat text, list labels, error titles | 24 (+2 line_space in bubbles) |
-| `font_24` | Inter-SemiBold | 24 | screen titles, clock, keyboard key labels, newest translation | 29 |
-| `font_32` | Inter-SemiBold | 32 | values (70%), language codes, key echo, dial and error icons | 39 |
+### 1.3 Typography
 
-All four are 4 bpp, uncompressed (`LV_USE_FONT_COMPRESSED 0` is faster), with FontAwesome merged in. They are compiled as C arrays into flash.
+**Font:** **Inter** (SIL OFL 1.1), static TTF instances from the Inter 4.x release (`Inter-Medium.ttf`, `Inter-SemiBold.ttf`). Inter has full Cyrillic, clear shapes at 16 px on dark backgrounds, and narrower widths than Montserrat, which matters on a round chord. lv_font_conv cannot apply variable-font axes or OpenType features, so use the static instances. Digits are proportional, which is acceptable because all numbers are centred.
+
+| LVGL font | Source | Weight | px | Line height | bpp | Ranges | Icons merged | Est. flash | Used for |
+|---|---|---|---|---|---|---|---|---|---|
+| `ui_16` | Inter-Medium | 500 | 16 | 20 | 4 | TEXT | I_16 (14) | ≈38 KB | captions, subtitles, status line, user transcript, hints, "пробел/space" key, translator source line |
+| `ui_20` | Inter-Medium | 500 | 20 | 26 | 4 | TEXT | I_FULL (40) | ≈55 KB | replies, list titles, pill, buttons, keyboard level 1, orb label |
+| `ui_28` | Inter-SemiBold | 600 | 28 | 34 | 4 | TITLE | I_28 (12) | ≈45 KB | keyboard level 2 and hex keys, short translations, reader view, onboarding headlines, orb icons |
+| `ui_48` | Inter-SemiBold | 600 | 48 | 56 | 4 | DIGITS | – | ≈7 KB | volume/brightness value, ambient clock |
+
+Total ≈145 KB flash, read in place from rodata, with no RAM cost. The estimates scale from the measured Montserrat figures in the research: ~42 B/glyph at 16 px, ~88 B at 24 px, ~313 B at 48 px at 4 bpp, plus descriptors and kerning.
+
+Glyph ranges:
 
 ```sh
-TEXT="-r 0x20-0x7E -r 0xA0-0x17F -r 0x218-0x21B -r 0x400-0x45F -r 0x490-0x491 \
-      -r 0x2010-0x2027 -r 0x2030,0x2039,0x203A -r 0x20AC,0x20BD -r 0x2116 -r 0x2190-0x2193 -r 0x2212"
-ICONS="-r 0xF00C,0xF00D,0xF011,0xF013,0xF021,0xF023,0xF028,0xF029,0xF04D,0xF053,0xF05A,0xF062,\
-0xF06E,0xF070,0xF071,0xF077,0xF078,0xF084,0xF0AC,0xF0C2,0xF0E7,0xF11C,0xF127,0xF130,0xF131,0xF185,\
-0xF186,0xF1AB,0xF1DA,0xF1DE,0xF1EB,0xF233,0xF240-0xF244,0xF252,0xF2ED,0xF362,0xF3CD,0xF4AD,0xF51E,\
-0xF55A,0xF6A9"
-FA=lvgl/scripts/built_in_font/FontAwesome5-Solid+Brands+Regular.woff
-lv_font_conv --bpp 4 --size 16 --no-compress --format lvgl --lv-font-name font_16 \
-  --font Inter-Medium.ttf   $TEXT --font $FA $ICONS -o font_16.c
-lv_font_conv --bpp 4 --size 20 --no-compress --format lvgl --lv-font-name font_20 \
-  --font Inter-Regular.ttf  $TEXT --font $FA $ICONS -o font_20.c
-lv_font_conv --bpp 4 --size 24 --no-compress --format lvgl --lv-font-name font_24 \
-  --font Inter-SemiBold.ttf $TEXT --font $FA $ICONS -o font_24.c
-lv_font_conv --bpp 4 --size 32 --no-compress --format lvgl --lv-font-name font_32 \
-  --font Inter-SemiBold.ttf $TEXT --font $FA $ICONS -o font_32.c
+# TEXT: ASCII, Latin-1 + Latin Ext-A (de/fr/es/it/pt/pl/cs/tr…), Romanian ș ț,
+# the whole Cyrillic block (ru/uk/be/kk/sr/bg incl. Ґґ Ққ…), general punctuation
+# (– — ‘ ’ “ ” „ • …), ‰ ‹ ›, € ₴ ₸ ₽, №, ™, arrows, minus
+R_TEXT=0x20-0x7E,0xA0-0x17F,0x218-0x21B,0x400-0x4FF,0x2010-0x2027,0x2030,0x2039-0x203A,0x20AC,0x20B4,0x20B8,0x20BD,0x2116,0x2122,0x2190-0x2193,0x2212
+# TITLE: UI strings + translations in ru/en/Latin-1 languages
+R_TITLE=0x20-0x7E,0xA0-0xFF,0x400-0x45F,0x490-0x491,0x2013-0x2014,0x2018-0x201E,0x2022,0x2026,0x2116
+# DIGITS
+R_DIG=0x20,0x25,0x2B-0x3A,0x2212
+# Font Awesome 5 Free Solid 5.15.x (fa-solid-900.ttf; font OFL 1.1, icons CC BY 4.0)
+I_FULL=0xF00C,0xF00D,0xF011,0xF013,0xF023,0xF028,0xF029,0xF04B,0xF04D,0xF053,0xF054,0xF05A,0xF06E,0xF070,0xF071,0xF078,0xF084,0xF0AC,0xF0E7,0xF11C,0xF130,0xF131,0xF185,0xF1AB,0xF1DA,0xF1EB,0xF1F8,0xF240-0xF244,0xF2F1,0xF362,0xF3CD,0xF4AD,0xF544,0xF55A,0xF6A9
+I_16=0xF00C,0xF023,0xF053,0xF054,0xF071,0xF0E7,0xF1EB,0xF240-0xF244,0xF6A9
+I_28=0xF00C,0xF00D,0xF028,0xF04D,0xF053,0xF071,0xF0AC,0xF130,0xF185,0xF1EB,0xF55A,0xF6A9
+
+lv_font_conv --bpp 4 --size 16 --no-compress --format lvgl \
+  --font Inter-Medium.ttf -r $R_TEXT --font fa-solid-900.ttf -r $I_16 \
+  --lv-font-name ui_16 -o main/ui/fonts/ui_16.c
+lv_font_conv --bpp 4 --size 20 --no-compress --format lvgl \
+  --font Inter-Medium.ttf -r $R_TEXT --font fa-solid-900.ttf -r $I_FULL \
+  --lv-font-name ui_20 -o main/ui/fonts/ui_20.c
+lv_font_conv --bpp 4 --size 28 --no-compress --format lvgl \
+  --font Inter-SemiBold.ttf -r $R_TITLE --font fa-solid-900.ttf -r $I_28 \
+  --lv-font-name ui_28 -o main/ui/fonts/ui_28.c
+lv_font_conv --bpp 4 --size 48 --no-compress --format lvgl \
+  --font Inter-SemiBold.ttf -r $R_DIG --lv-font-name ui_48 -o main/ui/fonts/ui_48.c
 ```
 
-What the ranges cover:
+- Use `--no-compress`: compressed fonts cost CPU on every glyph draw.
+- Pin the lv_font_conv version in a `tools/package.json` and commit the generated `.c` files, so a rollback never depends on the tool.
+- Code points that Inter lacks are skipped by lv_font_conv. Review its warnings once.
 
-| Range | Contents |
-|---|---|
-| ASCII | basic Latin |
-| Latin-1 + Ext-A | « » ° ± × ÷ §, plus de/fr/es/it/pt/pl/cs/tr letters |
-| 0x218–0x21B | Romanian ș ț |
-| Full basic Cyrillic | Russian and Ukrainian (Є І Ї), plus 0x490–0x491 for Ґ ґ |
-| General punctuation | – — ‘ ’ “ ” „ • … ‰ ‹ › (LLM output needs these, per verify) |
-| Symbols | € ₽ №, arrows, minus |
+**Missing glyphs.** Set `LV_USE_FONT_PLACEHOLDER 1`, so an unknown glyph draws as a box instead of silently vanishing. Run a text sanitiser on every model string before it reaches a label:
+- strip markdown (`#`, `*`, `_`, backticks, `>`) and turn a leading "- " into "• ";
+- remove emoji and pictographs (U+1F000–1FAFF, U+2600–27BF, U+FE0F, U+200D);
+- turn U+2028/2029 into "\n" and collapse runs of 3 or more newlines;
+- drop any remaining code point that `ui_20` does not contain.
 
-Budget estimate: about 470 text glyphs plus 44 icons. 16 px ≈ 26 KB, 20 px ≈ 36 KB, 24 px ≈ 49 KB, 32 px ≈ 78 KB, so about 190–210 KB of flash in total.
+The system prompt also asks for "plain text, no markdown, no emoji, ≤ 60 words".
 
-- Unknown glyphs: the firmware strips markdown (`**`, `#`, backticks) and emoji from replies before `lv_label_set_text`.
-- Optional v2: a CJK `.bin` font in the storage partition, loaded with `lv_binfont_create()` and chained via `font_20.fallback`.
+For translator targets in scripts we do not ship (CJK, Arabic…), the JSON schema adds a `display_text` field with a romanisation (pinyin, romaji, …). The audio is still spoken in the real language.
 
-### 1.5 Icons
+### 1.4 Icons
 
-Icons are FontAwesome 5 Free Solid glyphs merged into each text font, not images. They recolour with `text_color`, stay crisp at each size and cost about 150–500 B per glyph. They need no image decoder or cache. The only images are the two A8 glow masks (§7.5). Attribution goes in About: Font Awesome Free, icons CC BY 4.0, font OFL.
+All icons are Font Awesome 5 Free Solid glyphs merged into the text fonts. There are no bitmap images in the UI, so no image cache and no decoder are needed.
 
-| Name | U+ | Where |
+| Code point | UTF-8 | FA name | Use |
+|---|---|---|---|
+| U+F130 | `EF 84 B0` | microphone | onboarding, diagnostics mic test |
+| U+F131 | `EF 84 B1` | microphone-slash | mic fault |
+| U+F028 | `EF 80 A8` | volume-up | voice button (voice on), volume row |
+| U+F6A9 | `EF 9A A9` | volume-mute | voice button (text only), no speaker |
+| U+F013 | `EF 80 93` | cog | settings button |
+| U+F00C | `EF 80 8C` | check | OK key, selected rows |
+| U+F00D | `EF 80 8D` | times | cancel, cancel-armed orb |
+| U+F04D | `EF 81 8D` | stop | latched-listening orb core |
+| U+F04B | `EF 81 8B` | play | voice preview |
+| U+F053 / F054 / F078 | `EF 81 93` / `EF 81 94` / `EF 81 B8` | chevron-left / right / down | header back, row chevron, pill |
+| U+F362 | `EF 8D A2` | exchange-alt | "RU ⇄ EN" |
+| U+F1AB / F0AC | `EF 86 AB` / `EF 82 AC` | language / globe | translator, UI language |
+| U+F544 | `EF 95 84` | robot | model row |
+| U+F4AD | `EF 92 AD` | comment-dots | assistant mode row |
+| U+F11C | `EF 84 9C` | keyboard | "type a question" |
+| U+F1EB | `EF 87 AB` | wifi | Wi-Fi, offline orb |
+| U+F084 / F023 | `EF 82 84` / `EF 80 A3` | key / lock | API key, secured networks |
+| U+F029 / F3CD | `EF 80 A9` / `EF 8F 8D` | qrcode / mobile-alt | phone setup |
+| U+F185 | `EF 86 85` | sun | brightness |
+| U+F06E / F070 | `EF 81 AE` / `EF 81 B0` | eye / eye-slash | reveal password |
+| U+F071 / F05A | `EF 81 B1` / `EF 81 9A` | exclamation-triangle / info-circle | errors / about |
+| U+F55A | `EF 95 9A` | backspace | ⌫ key (= `LV_SYMBOL_BACKSPACE`) |
+| U+F2F1 / F1F8 / F1DA | `EF 8B B1` / `EF 87 B8` / `EF 87 9A` | sync / trash / history | retry / clear / history |
+| U+F240–F244, U+F0E7 | `EF 89 80`–`84`, `EF 83 A7` | battery levels, bolt | low battery / charging |
+| U+F011 | `EF 80 91` | power-off | power row |
+
+Wi-Fi signal strength is drawn as 4 small bars in the row's draw event, not with glyphs.
+
+### 1.5 Shape, spacing, touch
+
+- **Radii:** keys 10, list rows 20, bubbles 16–18, cards 20, pills = h/2, round buttons = circle.
+- **Spacing scale:** 4 / 6 / 8 / 12 / 16 / 24 px.
+- **No borders, no shadows.** Surfaces are separated by fill colour.
+- **Pressed state:** fill changes to `surface-3`, or to accent-mid for accent fills, through an 80 ms style transition. Nothing scales.
+- **Disabled state:** text changes to `text-3`; the fill stays the same.
+
+### 1.6 Motion tokens
+
+| Token | Value | Use |
 |---|---|---|
-| comment-dots | F4AD | dial "Assistant" |
-| language | F1AB | dial "Translator", settings languages |
-| volume-up / volume-mute | F028 / F6A9 | voice toggle, status, volume |
-| cog | F013 | dial "Settings" |
-| wifi | F1EB | status, Wi-Fi rows |
-| lock | F023 | secured network |
-| battery 4…0 / bolt | F240–F244 / F0E7 | status |
-| keyboard | F11C | chat chip "type" |
-| arrow-up | F062 | Shift |
-| backspace | F55A | ⌫ |
-| check / times | F00C / F00D | OK, close |
-| chevron-left / up / down | F053 / F077 / F078 | back, mode chip |
-| exchange-alt | F362 | swap languages, direction chip |
-| key | F084 | API key, bad-key error |
-| coins | F51E | no-credit error |
-| unlink | F127 | no internet |
-| globe | F0AC | region blocked |
-| hourglass-half | F252 | rate limited |
-| cloud | F0C2 | server error |
-| microphone / microphone-slash | F130 / F131 | dictation, mic silent |
-| sun / moon | F185 / F186 | brightness, sleep |
-| qrcode / mobile-alt | F029 / F3CD | phone setup |
-| server | F233 | provider |
-| sliders-h | F1DE | volume and brightness row |
-| info-circle | F05A | about |
-| history / trash | F1DA / F2ED | clear history |
-| eye / eye-slash | F06E / F070 | password reveal |
-| sync | F021 | rescan / retry |
-| power-off | F011 | power menu |
-| stop | F04D | stop speech |
-| warning | F071 | generic error |
+| `t_tap` | 80 ms, linear | press feedback |
+| `t_fast` | 150 ms, ease_in / ease_out | fades of chrome |
+| `t_base` | 220 ms, ease_out | message appear, state entries |
+| `t_slow` | 360 ms, ease_in_out | orb hero ↔ compact |
+| `t_morph` | 400 ms, ease_in_out | colour morphs |
+| `t_breath` | 3000 ms each way, ease_in_out, reverse, infinite | idle breathing |
+| ticker | 33 ms (30 Hz) | all continuous orb motion (level rings, arcs) |
+
+Calm means **no bounce or overshoot**, except one 110 ms ease_out "settle" after the orb press-in.
 
 ---
 
 ## 2. Screens and navigation
 
-### 2.1 Inventory
+### 2.1 Screen inventory
 
-| ID | Screen | Lifetime | Reached from |
-|---|---|---|---|
-| O1–O5 | Onboarding: language → Wi-Fi → key → sound check → practice turn | first boot (`setup_done`=0) | boot |
-| S1 | **Assistant face** (pose A: big orb) | persistent | boot, dial, swipe → on S2 |
-| S1c | **Assistant chat** (pose B: mini orb + bubbles; also the chat history) | same screen as S1 | reply arrives, swipe ↑, tap peek line |
-| S2 / S2c | **Translator face / chat** | persistent | dial, swipe ← on S1 |
-| S2L | Translator languages (pair screen) → S2Lx language list | on demand | tap RU/EN code on S2, settings |
-| S3 | **Mode dial** | persistent | mode chip, PWR on a face |
-| S4 | Settings list | on demand | dial |
-| S4k | Key and provider | on demand | S4 |
-| S5 | Wi-Fi scan list | on demand | S4, O2, errors |
-| S6 | Text entry plus keyboard | on demand | S5, S4k, S1c chip, O2/O3 |
-| S7 | AI model picker | on demand | S4, error "model unavailable" |
-| S8 | TTS voice picker (+ S8m TTS model) | on demand | S4 |
-| S9 | Volume and brightness | on demand | S4 |
-| S10 | Phone setup (SoftAP plus `lv_qrcode`); S10q generic "open on phone" QR | on demand | O2/O3, S4, S5, errors |
-| S11 | Diagnostics / About | on demand | S4 |
-| E | Error states: overlays on the face (orb, title, action pill) | — | any failure |
-| T / P | Toast, power-off ring (on `lv_layer_top`) | transient | — |
+Templates: `T_HOME`, `T_LIST`, `T_TEXT`, `T_ADJUST`, `T_QR`, `T_DIALOG`, `T_STEP`, `T_AMBIENT`, `T_READ`.
+
+| ID | Screen | Template | Purpose | Entered from | Exits to |
+|---|---|---|---|---|---|
+| S0 | Boot splash | `T_HOME` (orb only) | orb forms (600 ms) | power-on | O1 (first boot) or H |
+| O1–O5 | Onboarding | `T_STEP` + `T_QR`/`T_LIST`/`T_TEXT` | language → network → key → speaker test → first try | first boot, factory reset | H |
+| H | Home, Assistant face | `T_HOME` | orb + chat | boot; back from anything | – |
+| H′ | Home, Translator face | `T_HOME` | the same, amber, language pair | Mode sheet | – |
+| H.hist | Chat history (state of H) | – | scroll up the chat; "Новый разговор" | drag chat | – |
+| H.read | Reader (translator) | `T_READ` | large text to show the other person | tap a translation bubble | back |
+| M | Mode sheet | `T_LIST` | mode choice, languages, direction, volume, type a question, new chat | pill | H |
+| L | Languages | `T_LIST` | "Мой язык", "Собеседник", "Направление" → language list | M | M |
+| S | Settings | `T_LIST` | all settings | ⚙ button | H |
+| W | Wi-Fi networks | `T_LIST` | scan, select, connect | S, O2, "Нет Wi-Fi" pill | S / O3 |
+| K | Text entry | `T_TEXT` | round keyboard | W, PE, AI, M ("Написать"), O3 | caller |
+| AI | AI model picker | `T_LIST` | curated audio-capable models | S, PE, fault pill | S |
+| V | TTS voice picker | `T_LIST` | voices with preview | S | S |
+| A | Volume / Brightness | `T_ADJUST` | 270° arc adjuster | S, M | caller |
+| Q | Phone setup | `T_QR` | SoftAP + QR + portal progress | S, O2, O3, fault pill | caller / H |
+| P | Provider & keys | `T_LIST` | chat / STT / TTS endpoints | S, fault pill | S |
+| PE | Endpoint editor | `T_LIST` | base URL, key, model | P | P |
+| D | Diagnostics / About | `T_LIST` | versions, network, latency, tests | S | S |
+| C | Confirm dialog | `T_DIALOG` | destructive actions | S, D | caller |
+| Z | Ambient | `T_AMBIENT` | clock + dot orb | idle timeout | H on wake |
+| X | Screen off | – | backlight 0, LVGL idle | PWR at idle, timeout | H on wake |
+
+Error states are not separate screens. They appear in the **pill**, the **orb** and a **card in the chat**, and they route to W, Q, P or AI (§3.11, §5.6).
 
 ### 2.2 Navigation map
 
-```mermaid
-flowchart TD
-  PWRON([Power on]) -->|setup_done=0| O1[O1 Language] --> O2[O2 Wi-Fi] --> O3[O3 API key] --> O4[O4 Sound+mic check] --> O5[O5 Practice turn] --> S1
-  O2 -->|From phone| S10[S10 Phone setup QR]
-  O2 -->|Choose here| S5[S5 Wi-Fi list] --> S6[S6 Keyboard]
-  PWRON -->|setup_done=1| S1[S1 Assistant face]
-  S1 <-->|reply / swipe up / tap peek ⟷ PWR / swipe right / 30 s idle| S1c[S1c Assistant chat]
-  S1 <-->|swipe left ⟷ swipe right| S2[S2 Translator face]
-  S2 <--> S2c[S2c Translator chat]
-  S2 -->|tap code| S2L[S2L Languages] --> S2Lx[S2Lx list]
-  S1 & S2 -->|mode chip / PWR| S3[S3 Mode dial]
-  S3 --> S1 & S2 & S4[S4 Settings]
-  S3 -->|Voice tile| S3
-  S4 --> S5 & S7[S7 Model] & S8[S8 Voice] & S9[S9 Volume/brightness] & S10 & S4k[S4k Key & provider] & S2L & S11[S11 About]
-  S4k --> S6
-  S1c -->|keyboard chip| S6
+```
+Power ─► S0 ─┬─ first boot ─► O1 Language ─► O2 Network ─┬─► Q Phone setup (Wi-Fi + key in one go) ─┐
+             │                                           └─► W Wi-Fi list ─► K password ───────────┤
+             │                O3 Key (skipped if Q delivered it) ─► Q  |  K (hex keypad) ───────────┤
+             │                O4 Speaker test ─► O5 First try ─────────────────────────────────────┤
+             ▼                                                                                      ▼
+   ┌──────────────────────────── H  HOME (Assistant ⇄ Translator) ─────────────────────────────────┐
+   │ pill ──► M Mode sheet ─► L Languages ─► language list                                         │
+   │                       ├► A Volume                                                             │
+   │                       ├► K "Написать текстом" ─► sends the question ─► H                       │
+   │                       └► "Новый разговор" ─► H (empty)                                        │
+   │ ⚙ ─────► S Settings ─► A Volume │ A Brightness │ W Wi-Fi ─► K │ Q Phone │ AI Model ─► K       │
+   │                    ├► V Voice │ UI language list │ P Provider ─► PE Endpoint ─► K │ Q │ AI     │
+   │                    └► C Clear history │ D Diagnostics ─► C Factory reset                     │
+   │ 🔊 button ─ toggles voice/text-only (no navigation)                                            │
+   │ fault pill ─► the screen that fixes it (W │ Q │ P │ AI)                                        │
+   │ idle 30 s ─► dim 25 %  · +60 s ─► Z Ambient (15 %) · +5 min ─► X screen off                    │
+   └───────────────────────────────────────────────────────────────────────────────────────────────┘
+Global: PWR short = back one level (at H idle: screen off) · PWR hold 3 s = power off
+        BOOT = talk; from any list screen BOOT jumps to H and starts listening (not in K / C / O1–O4)
+Maximum depth: H → S → P → PE → K (4 levels).
 ```
 
-### 2.3 Global controls
+### 2.3 Physical buttons and touch, per context
 
-| Context | **BOOT** (GPIO0) | **Orb touch** | **PWR** short (GPIO6) | **PWR** hold |
-|---|---|---|---|---|
-| Face / chat, IDLE | press = start listening (hybrid, §5.1) | same as BOOT | face: open dial · chat: back to face | 2 s: show off-ring; 3 s: power off |
-| LISTEN | release (hold mode) or tap (latched) = send | release = send; slide > 80 px away = cancel | cancel | — |
-| UPLOAD / THINK | press = cancel and listen again | same | cancel | — |
-| SPEAK | tap = stop speech · hold = stop and listen | same | stop speech | — |
-| ERROR on face | press = dismiss and listen | same | dismiss | — |
-| Mode dial | close dial and listen | — | close dial | — |
-| Lists / settings | jump to the current face and listen | — | back | — |
-| Keyboard | hold = dictate into the field (TEXT fields only; otherwise a toast) | — | cancel; draft kept 60 s | — |
-| Screen asleep | wake **and** start listening | first touch only wakes | wake | — |
+The tap/hold threshold is **400 ms**, identical to LVGL `long_press_time`.
 
-Notes:
-- BOOT is a strapping pin: use the internal pull-up and a 20 ms debounce.
-- The PWR press that powers the board on is still held when firmware starts. Ignore PWR until its first release.
-- Holding PWR for 3 s drives GPIO7 low on battery. On USB the board cannot cut power, so it turns the backlight off and stops LVGL instead.
+| Context | BOOT press-and-hold | BOOT tap (< 400 ms) | PWR short | PWR hold 3 s | Touch |
+|---|---|---|---|---|---|
+| H idle | record; release = send | start **latched** recording | screen off | power off on battery (GPIO7 low); on USB: screen off + "Питание от USB" | orb = talk (same as BOOT); pill = Mode sheet; ⚙ = Settings; 🔊 = voice toggle |
+| Recording (hold) | release = send | – | cancel (discard) | – | slide beyond cancel radius = arm cancel |
+| Recording (latched) | press = send | press = send | cancel | – | orb tap = send |
+| Uploading / thinking | hold ≥ 400 ms = abort + new recording | ignored (orb pulse, hint) | abort request | – | orb: same as BOOT |
+| Speaking | press stops speech; held to 400 ms → new recording (barge-in) | stop speech | stop speech | – | orb: same as BOOT |
+| Any `T_LIST` / `T_ADJUST` / `T_QR` / `T_READ` | jump to H and record (hold semantics) | jump to H, latched | back | power off | header = back |
+| K text entry | ignored (pill toast "Сначала завершите ввод") | ignored | cancel (= ✕) | power off | keys |
+| C dialog | ignored | ignored | = "Отмена" | – | buttons |
+| O1–O4 | ignored | ignored | previous step | power off | buttons |
+| Dimmed (25 %) | wake + act | wake + act | wake | – | the first touch only wakes and is swallowed |
+| Z ambient / X off | wake to H + record immediately | wake to H + latched | wake to H | power off | wake (swallowed) |
 
-### 2.4 Why gestures do not conflict with scrolling or hold-to-talk
+### 2.4 Why there are no input conflicts
 
-1. **The orb is not scrollable and does not bubble gestures.** Clear `LV_OBJ_FLAG_SCROLLABLE`, `LV_OBJ_FLAG_SCROLL_CHAIN` and `LV_OBJ_FLAG_GESTURE_BUBBLE`. Keep `LV_OBJ_FLAG_PRESS_LOCK` (the default for children). A drag that starts on the orb never scrolls the chat and never switches mode. It only arms slide-to-cancel.
-2. **The orb is never inside the scrolling chat.** In chat pose the mini orb, keyboard chip and voice chip sit below the chat container (container ends at y=262).
-3. **Chat and lists scroll vertically only** (`lv_obj_set_scroll_dir(.., LV_DIR_VER)`). LVGL skips gesture detection while a scroll is in progress (`if(indev->pointer.scroll_obj) return;`). So vertical drags scroll, and only clear horizontal flicks become gestures.
-4. **Gesture thresholds are raised**: `lv_indev_set_gesture_min_distance(indev, 60)` and `lv_indev_set_gesture_min_velocity(indev, 4)`. Defaults are 50 and 3.
-5. **Widgets with horizontal drags clear `GESTURE_BUBBLE`**: keyboard, volume arc, QR card. Sliding across keys never triggers back.
-6. **Hit testing is circular.** Orb, mini orb, dial tiles and round chips use `LV_OBJ_FLAG_ADV_HITTEST` plus an `LV_EVENT_HIT_TEST` handler (distance ≤ radius). Overlapping bounding boxes (mini orb vs chips, orb vs translator codes) therefore never steal touches.
-7. **Long-press has one meaning:** hold-to-talk on the orb, and key repeat on ⌫. Nothing else uses long-press. Destructive rows use an explicit hold-to-confirm fill.
+- **No horizontal gestures and no tileview.** Swipe navigation would be invisible (it fails zero-learning). It would compete with scrolling. A tileview is also a full-screen scroll: 129.6k px redrawn every frame. Mode switching is an explicit two-tap action (pill → choose), so it cannot happen by accident. The CST816's on-chip gesture codes are ignored.
+- **No rim menu.** Targets near the bezel are partly hidden under the finger and the rim. The only published rotary-keyboard evidence (COMPASS) used a physical rotating bezel, which this board does not have.
+- **Hold-to-talk vs scrolling.** The orb is a **sibling** of the chat container, not a child, and it is not scrollable. Its flags:
+  - `LV_OBJ_FLAG_PRESS_LOCK`: it stays pressed even when the finger slides off;
+  - `LV_OBJ_FLAG_ADV_HITTEST` with a circular hit test;
+  - `LV_OBJ_FLAG_SCROLL_CHAIN` and `LV_OBJ_FLAG_GESTURE_BUBBLE` cleared.
+
+  A drag that starts on the orb never scrolls, and a drag that starts on the chat never talks. The screen object itself is not scrollable (`lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE)`).
+- **Scrolling vs tapping.** Lists use LVGL's 10 px scroll limit, so a scroll never fires a click. The translator reader opens on `LV_EVENT_CLICKED`, and is ignored if `LV_EVENT_SCROLL_END` happened less than 300 ms earlier. That covers the "tap to stop the fling" case.
+- **BOOT covers the case where on-screen hold is unreliable.** If the CST816T drops "pressed" during a long stationary hold (to be verified, §8), the on-screen orb still works in latched mode, and BOOT is never affected.
 
 ---
 
-## 3. Geometry per screen
+## 3. Geometry per screen (360×360 coordinates)
 
-Status cluster, shared by S1, S1c, S2 and S2c:
+### 3.1 Home, empty state (no messages in the current mode)
 
-| Element | Widget | x,y,w,h | Centre | Rmax | Style |
-|---|---|---|---|---|---|
-| Wi-Fi glyph | label | 120,38,16,16 | 128,46 | 154 | font_16, TEXT_2; connecting = opa pulse 1 s; off = ERROR colour |
-| Clock "14:32" | label | 146,22,68,29 | 180,36 | 161 | font_24, TEXT_1 (RTC PCF85063 + SNTP; hidden until valid) |
-| Battery | label | 222,38,20,16 | 232,46 | 155 | font_16, TEXT_2; bolt glyph when charging |
-| Mute glyph (voice off / no speaker) | label | 92,54,16,16 | 100,62 | 154 | font_16, TEXT_3 |
-
-### S1 Assistant face (pose A)
-
-| Element | Widget | x,y,w,h | Centre | Rmax | Notes |
-|---|---|---|---|---|---|
-| Root | screen | 0,0,360,360 | — | — | bg `#000`, radius 0, **no clip_corner**, scroll off |
-| Orb | custom-draw `lv_obj` | 80,64,200,200 | 180,164 | 114 (bar tips) | core R=60; hit radius 76 (touch disc Ø152); bars to r=98 |
-| Hint / peek | label LONG_DOT | 70,268,220,19 | 180,277 | 151 | font_16 TEXT_2; state hints (§5.9); idle after 5 sessions = first line of last reply + "⌃" |
-| Mode chip | pill obj + label + icon | 108,292,144,40 | 180,312 | 162 | r=20, SURFACE_1, border 1 OUTLINE; "Ассистент ⌃"; `ext_click_area` 8 → 160×56 touch |
-
-### S1c Assistant chat (pose B, same screen)
-
-| Element | Widget | x,y,w,h | Centre | Rmax | Notes |
-|---|---|---|---|---|---|
-| Chat container | `lv_obj` flex COLUMN, scroll VER | 56,60,248,202 | 180,161 | 165.9 (bubble corners) | gap 8, pad 0, scrollbar OFF, momentum on |
-| Message row | `lv_obj` transparent, w 248, h CONTENT | — | — | — | holds one bubble aligned TOP_LEFT (AI) or TOP_RIGHT (user) |
-| Bubble | `lv_obj` + label WRAP | max w 232 | — | — | r=16, pad 10/12, font_20, line_space 2; AI = SURFACE_1, user = USER_BUBBLE |
-| Top fade | `lv_obj`, not clickable | 56,60,248,24 | — | — | bg `#000` VER gradient, main_opa 255 → grad_opa 0 |
-| Bottom fade | `lv_obj`, not clickable | 56,238,248,24 | — | — | opa 0 → 255 |
-| Mini orb | custom-draw `lv_obj` | 120,236,120,120 | 180,296 | 164 | core R=28, bars r 36..48, hit radius 36 (Ø72) |
-| Keyboard chip | circle obj | 74,264,52,52 | 100,290 | 162 | SURFACE_1, F11C font_20 TEXT_2 → S6 (TEXT) |
-| Voice chip | circle obj | 234,264,52,52 | 260,290 | 162 | F028 TEXT_2 / F6A9 ERROR; toggles `S_VOICE` |
-| Scroll indicator | `lv_arc`, not clickable | 16,16,328,328 | — | 164 | bg angles 330..30, width 3, indicator TEXT_3; shown while scrolling, fades after 600 ms |
-
-Bubble fit: a bubble's top-left corner arc at the container top is centred at (72,76), which is 149.9 + 16 = 165.9 ✓. Text width is 208 px, about 19 Cyrillic characters per line. The chat box shows about 7 lines.
-
-**UI requirement for the system prompt:** replies of at most 2 sentences or about 160 characters unless the user asks for detail.
-
-### S2 Translator face
-
-| Element | x,y,w,h | Centre | Rmax | Notes |
+| Element | Type | Geometry | Fit check | Target |
 |---|---|---|---|---|
-| Orb | 80,64,200,200 | 180,164 | 114 | as S1 |
-| Code A "RU" | 20,132,64,64 (circle touch) | 52,164 | 161 | font_32 LANG_A; pressed bg SURFACE_2; tap → S2L |
-| Code B "EN" | 276,132,64,64 | 308,164 | 161 | font_32 LANG_B |
-| Direction dot | 10×10 circle | moves on r=104 around (180,164) | ≤ 125 | §6 A16 |
-| Hint | 70,268,220,19 | 180,277 | 151 | "Говорите на RU или EN" |
-| Mode chip | 108,292,144,40 | 180,312 | 162 | "Переводчик ⌃" |
+| Pill | stadium, transparent; `surface-1` when pressed | x 110, y 36, 140×50 | (45, 119) → 127.2 + 25 = **152.2 ✓** | 140×50 |
+| Pill content | `ui_20` label + chevron-down 16 px | Assistant: "Ассистент ⌄"; Translator: "RU ⇄ EN ⌄" (codes in amber) | ≤ 124 px wide ✓ | – |
+| Status line (non-idle; the pill is hidden) | `ui_16` label, `text-2` | centre (180, 61), w ≤ 200, y 51–71 | (100, 129) → **163.2 ✓** | – |
+| Orb (hero) | custom-draw `lv_obj` | box x 78, y 90, 204×204; centre **(180, 192)** | max drawn radius 101 + offset 12 = **113 ✓** | circle r 80 |
+| Orb label (first-use) | `ui_20`, colour `ink`, 2 lines | centre (180, 192), w ≤ 120: "Нажмите" / "и говорите" (translator: "Говорите" / "RU или EN") | inside core r 70 ✓ | – |
+| Voice button | circle Ø52, `surface-1`, icon `ui_20` | centre (100, 292) | (80, 112) → 137.6 + 26 = **163.6 ✓** | 52 |
+| Settings button | circle Ø52 | centre (260, 292) | symmetric ✓ | 52 |
 
-S2c is S1c with translator cards (§5.6) instead of bubbles.
+- Clearance from the pill bottom (86) to the top of halo2 (192 − 98 = 94) is 8 px.
+- Clearance from the orb drawing to each button: |(80, 100)| = 128.1 − 26 = 102.1 > 101 ✓. The orb's bounding box overlaps the button boxes, but the orb hit test is circular and the buttons are created after the orb (on top), so the buttons receive their touches.
 
-### S3 Mode dial
+### 3.2 Home, conversation state and history (≥ 1 message)
 
-| Element | x,y,w,h | Centre | Rmax | Content |
-|---|---|---|---|---|
-| Tile TL "Ассистент" | 58,58,116,116 | 116,116 | 148.5 | icon F4AD font_32 at (cx, cy−14); label font_16 at (cx, cy+20), max 100 px |
-| Tile TR "Переводчик" | 186,58,116,116 | 244,116 | 148.5 | F1AB |
-| Tile BL "Голос: вкл/выкл" | 58,186,116,116 | 116,244 | 148.5 | F028 / F6A9; toggles in place; disabled with "Нет динамика" when no speaker |
-| Tile BR "Настройки" | 186,186,116,116 | 244,244 | 148.5 | F013 |
-| Close × | 154,154,52,52 | 180,180 | 26 | 6.5 px clear of the tiles |
+| Element | Geometry | Fit check |
+|---|---|---|
+| Pill | x 110, y 24, 140×50 | (45, 131) → 138.5 + 25 = **163.5 ✓** |
+| Status line (non-idle) | centre (180, 49), w ≤ 180, y 39–59 | (90, 141) → **167.3 ✓** |
+| Chat viewport | x 54, y 80, **252×164** (y 80–244), flex column, scroll VER, scrollbar off, momentum + elastic | top corners (126, 100) → **160.9 ✓**; bottom (126, 64) → 141.3 ✓ |
+| Top fade | x 54, y 80, 252×24; `bg #000`, `bg_main_opa 255` → `bg_grad_opa 0`, VER | inside viewport |
+| Bottom fade | x 54, y 228, 252×16; opa 0 → 255 | inside viewport |
+| Rim scroll indicator | `lv_arc` 336×336 at (12, 12), bg angles 320° → 40°, width 4, not clickable; track invisible; thumb `text-3` | ring r 164–168 ✓ |
+| Orb (compact) | box x 134, y 244, 92×92; centre **(180, 290)** | 110 + 46 = **156 ✓**; orb top 244 = viewport bottom |
+| Voice / Settings buttons | same as §3.1 | to orb: 80 − 26 = 54 > 46 ✓ |
 
-Tiles are circles: SURFACE_1, border 1 OUTLINE. The active mode tile has a 3 px accent border.
+Chat content:
+- **Assistant reply:** `ui_20` `text-1`, width 252, no background (calm), `LV_LABEL_LONG_WRAP`. Line 26 px, so 6 lines are visible.
+- **User transcript:** `ui_16` `text-2` on a `surface-2` bubble, radius 16, padding 8/12, `max_width 220`, right-aligned.
+- **Gaps:** 6 px from a user bubble to its reply, 14 px between turns.
+- **System cards:** see §3.11.
+- **History:** the first child (shown when ≥ 2 turns) is the stadium button "Новый разговор / New chat", 200×50, `surface-1`, centred, ≥ 50 px tall ✓. There are no dates or extra chrome.
+- **Idle divider:** after 15 min idle a `ui_16` `text-3` divider "— новый разговор —" is inserted and the model context resets.
+- **Limits:** at most **20 messages** per mode. The oldest are deleted. The text model is kept in PSRAM per mode and persisted to the `storage` partition (last 20).
 
-### S4 Settings (and every list: S5, S7, S8, S2Lx, S11)
+### 3.3 Translator variants
 
-| Element | Value |
-|---|---|
-| Container | `lv_obj` 64,24,232,312, flex COLUMN, gap 6, pad_top = pad_bottom = 126, `scroll_snap_y = CENTER`, scrollbar OFF |
-| Title row (first child) | transparent, h 48, "‹ Настройки" font_24; tap = back |
-| Row | pill 232×60, r=30, SURFACE_1; icon font_20 TEXT_2 at x+20; label font_20 at x+52 (max 160 px, LONG_DOT); value font_16 TEXT_2 on line 2; toggles use `lv_switch` 44×24 at x+168 |
-| Full-visibility band | \|c\| ≤ 108, from the pill rule: √(86² + c²) + 30 ≤ 168 |
-| Distance fade (LV_EVENT_SCROLL) | opa 255 for \|c\| ≤ 96, linear to 0 at \|c\| = 156; rows below opa 20 get `LV_OBJ_FLAG_HIDDEN` |
+- **Faces.** The empty and conversation faces of H′ have the same geometry as §3.1/§3.2. The orb and pill accent are `translator`.
+- **Turn bubble:** `surface-1`, radius 18, padding 10/12, width ≤ 236.
+  - Utterances in "my language" (A) are right-aligned; the other person's (B) are left-aligned.
+  - Line 1 (`ui_16`): direction "RU → EN", with the target code in amber.
+  - Line 2 (`ui_16` `text-2`): transcript.
+  - Line 3: the translation in `text-1`. It uses `ui_28` if it has ≤ 48 characters and every glyph exists in `ui_28` (checked with `lv_font_get_glyph_dsc` per code point), otherwise `ui_20`.
+- **Reader view** (`T_READ`, opened by tapping a translation bubble):
+  - text box x 54, y 80, 252×200: corners (126, 100) → **160.9 ✓**;
+  - `ui_28` centred, scroll VER;
+  - small direction label `ui_16` at centre (180, 300), w ≤ 200: (100, 130) → 164 ✓;
+  - tap anywhere or PWR → back.
 
-Rows of S4:
-1. Голосовые ответы (toggle)
-2. Громкость и яркость
-3. Wi-Fi · *SSID*
-4. Модель ИИ · *name*
-5. Голос · *Маша · MAI-Voice*
-6. Языки перевода · *RU ⇄ EN*
-7. Настройка с телефона
-8. Ключ и провайдер · *openrouter.ai · …a3f9*
-9. Язык интерфейса · *Русский*
-10. Экран и сон · *30 с*
-11. Динамик подключён (toggle; also has "Проверить")
-12. Очистить историю (hold-to-confirm 1.5 s fill)
-13. Об устройстве
+### 3.4 Ambient (Z)
 
-### S5 Wi-Fi list
+| Element | Geometry | Check |
+|---|---|---|
+| Clock "14:32" | `ui_48` `text-1` at 70 % brightness level; centre (180, 166), w ≤ 160, y 138–194 | corners (80, 42) ✓ |
+| Date "пт, 17 октября" | `ui_16` `text-2`, centre (180, 212), w ≤ 220 | (110, 42) ✓ |
+| Dot orb | orb preset AMBIENT: core r 12, halo1 r 18, centre (180, 262) | 82 + 18 = 100 ✓ |
+| Battery (only if < 20 % or charging) | `ui_16` icon, centre (180, 300) | ✓ |
 
-1. Title "‹ Wi-Fi".
-2. Status row: "Подключено: HomeNet −58 dBm", or a "Поиск сетей…" row with `lv_spinner` 32×32.
-3. Up to 15 networks sorted by RSSI. Each row shows the wifi glyph (TEXT_1 ≥ −60 dBm, TEXT_2 down to −75, TEXT_3 below), the SSID, and F023 if secured.
-4. "Другая сеть…" opens S6 for the SSID.
-5. "Обновить".
-6. "С телефона" opens S10.
+The ambient face redraws once a minute (clock observer) and breathes the dot at 8 s cycles (redrawing a 36×36 area).
 
-Scan with `esp_wifi_scan_start(.., false)` on enter. Rows are rebuilt on `SCAN_DONE`.
+### 3.5 List template (`T_LIST`)
 
-### S6 Text entry: see §4
+Used by M, L, S, W, AI, V, P, PE, D, the UI-language list and onboarding pickers.
 
-### S7 Model picker
-
-Uses the list layout with two-line rows: name font_20, price font_16 such as "$0.25 / $1.50 · аудио $0.50" (per 1M tokens). The selected row gets F00C plus a 2 px accent border, and the default model is marked "★".
-
-Data: `GET /api/v1/models?input_modalities=audio&output_modalities=text&supported_parameters=response_format,structured_outputs&sort=pricing-low-to-high&limit=12`. Drop:
-- `:batch` ids
-- ids starting with `~`
-- `-preview` duplicates
-- negative prices
-- non-null `expiration_date`
-
-Show 12 entries plus the current model. Loading shows a spinner row; failure shows a "Не удалось загрузить · Повторить" row. The last row is "Другая модель… (с телефона)".
-
-### S8 Voice picker
-
-1. Title.
-2. "Модель голоса · MAI-Voice 2.1 Flash", which opens S8m: a curated list of mai-voice-2.1-flash, gemini-3.8-flash-lite-tts, grok-voice-tts-1.0, and fish s2.1-pro-free shown with "до 30.11".
-3. "Без голоса (только текст)".
-4. Voices from `supported_voices` filtered by UI locale prefix (`ru-RU-`). Display names come from a map: Masha → Маша, Lev → Лев, Grant → Грант, Harper → Харпер.
-5. "Для переводчика: автоматически".
-
-Tapping a voice selects it and plays the preview "Привет! Я буду говорить так." The row shows the speaking mini-bars meanwhile. With no speaker, preview is disabled and the row shows a "Нет динамика" chip.
-
-### S9 Volume and brightness
-
-| Element | x,y,w,h | Centre | Rmax | Notes |
-|---|---|---|---|---|
-| Arc | `lv_arc` 26,26,308,308 | 180,180 | 162 (knob) | bg angles 135→45 (270° through the top), width 18 (band r 136–154), track SURFACE_2, indicator `#FFB04A` / `#FFD25E`, knob pad 8 (Ø34) TEXT_1, range 0–100 (brightness 5–100); `GESTURE_BUBBLE` cleared |
-| Icon | label font_32 | 180,128 | 68 | F028 or F185 |
-| Value "70%" | label font_32 | 180,176 | 40 | |
-| Caption | label font_16 | 180,214 | 40 | "Громкость" / "Яркость" |
-| − / + | circles 84,224,56,56 / 220,224,56,56 | 112,252 / 248,252 | 127 | ±5 per tap, repeat on hold; inside the arc's inner edge (136) |
-| Tab: volume / brightness | circles 122,288,52,52 / 186,288,52,52 | 148,314 / 212,314 | 163.8 | sit in the arc's bottom gap (66°–114°); active = accent ring |
-
-Volume is a software PCM gain with a perceptual curve. Releasing the knob plays a 120 ms tick at the new level. Volume 0 skips TTS requests.
-
-Brightness: LEDC duty = 4095·(v/100)^2.2, minimum 3%.
-
-### S10 Phone setup (SoftAP plus captive portal)
-
-| Element | x,y,w,h | Centre | Rmax | Notes |
-|---|---|---|---|---|
-| Title | label font_16 | 180,40 | 159 | "Наведите камеру" / "Scan with camera" |
-| QR card | white `#FFFFFF` rect r=16 | 90,60,180,180 | 143.6 | |
-| QR | `lv_qrcode` 164 px | 98,68,164,164 | — | dark `#000`, light `#FFF`, quiet zone ON |
-| Line 1 | label font_20 | 180,262 | ~150 | step 1: SSID "Orb-7568" · step 2: "192.168.4.1" |
-| Line 2 | label font_16 TEXT_2 | 180,288 | ~150 | step 1: "Пароль 4820 1937" · step 2: "Откройте страницу" |
-| Cancel | pill 120,298,120,40 | 180,318 | 163.7 | also PWR / swipe → |
-
-Three steps:
-1. AP up. The QR is `WIFI:T:WPA;S:Orb-7568;P:48201937;;`, with a random 8-digit WPA2 password per session and `\ ; , : "` escaped. That is 36 B, QR version 3 (29 modules). With the quiet zone that is 37 modules, so the scale is 4 px per module (148 px drawn).
-2. `WIFI_EVENT_AP_STACONNECTED` arrives. The QR switches to `http://192.168.4.1/` (V2, 33 modules incl. quiet zone, 132 px). DNS hijack plus DHCP option 114 usually open it automatically.
-3. Form received: a ✓ circle (Ø96, COL_OK, at 180,140), received items as font_16 lines at y 210–270, then a "Готово" pill. The device then connects to Wi-Fi and verifies the key.
-
-The portal page is our own `esp_http_server` page, because esp-wifi-connect cannot take extra fields. Fields: Wi-Fi (scan dropdown plus password), OpenRouter key, UI language, and under "Advanced" a base URL, key and model per endpoint (chat / STT / TTS). The AP times out after 10 min.
-
-S10q reuses the layout with an arbitrary URL, for example `https://openrouter.ai/settings/credits` for the no-credit error, captioned "Откройте на телефоне".
-
-### S11 Diagnostics / About
-
-A list of read-only two-line rows: version and OTA slot, Wi-Fi SSID/RSSI/IP, free SRAM / PSRAM, FPS (render-ready counter), panel init variant (ST77916 ID), touch chip, key limit/usage from `GET /api/v1/key` (shows "без лимита" when `limit_remaining` is null), last round-trip time.
-
-Actions: "Тест микрофона" (orb listening bars plus dBFS readout), "Тест динамика" (sweep), "Перезагрузить", "Сброс настроек" (hold 3 s). Then licences: Inter OFL, Font Awesome CC BY 4.0, LVGL MIT, xiaozhi-esp32 board code MIT © 2025 Shenzhen Xinzhi Future Technology Co., Ltd. and Project Contributors.
-
-Values refresh at 1 Hz, visible rows only.
-
-### S2L Translator languages
-
-| Element | x,y,w,h | Centre | Rmax |
+| Element | Geometry | Check | Target |
 |---|---|---|---|
-| Title "‹ Языки" font_24 | label | 180,56 | ~150 |
-| Pill A | 64,100,232,60, r30, 10 px LANG_A dot + name font_24 | 180,130 | 129.5 |
-| Swap button F362 | circle 154,170,52,52 | 180,196 | 42 |
-| Pill B | 64,232,232,60 | 180,262 | 148.8 |
+| Header (= back) | stadium x 110, y 20, 140×50; content "‹ Title" `ui_20`; optional busy arc r 9 at the right inside the pill | (45, 135) → 142.3 + 25 = **167.3 ✓** | 140×50 |
+| List viewport | x 54, y 76, 252×270 (y 76–346), flex column, gap 6, `pad_top 4`, `pad_bottom 134` (so the last row can reach the centre), scroll VER, momentum on, no snap | – | – |
+| Row | 252×64, radius 20, `surface-1` | fully inside R for row-centre offset \|d_c\| ≤ 79 (corner (126, d_c+32) ≤ 168) | 252×64 |
+| Rim scroll indicator | same as §3.2 | ✓ | – |
 
-Tapping A or B opens S2Lx, a list of names written in their own language: Русский, English, Українська, Deutsch, Français, Español, Italiano, Português, Polski, Türkçe, Čeština, Nederlands. Picking the language already on the other side swaps them.
+**Curved-edge behaviour (no layers, no `clip_corner`).** On `LV_EVENT_SCROLL`, each visible row gets `opa = 255` for \|d_c\| ≤ 79, falling linearly to 0 at \|d_c\| = 119. A row whose opa is below 128 loses `LV_OBJ_FLAG_CLICKABLE`. Faded rows may reach into the 12 px rim margin. At d_c = 100 the rounded corner is at 174 px, still inside the physical r = 180 and at 47 % opacity. That is acceptable for non-important, transitional content.
 
-### Onboarding (O1–O5)
+**Initial position.** The first row is centred at y = 112 (rows 80–144, 150–214, 220–284; the fourth row is faded).
 
-| Screen | Elements (centre; Rmax) |
-|---|---|
-| O1 Language | mini orb box 120,40,120,120 at (180,100) breathing (Rmax 140); title "Привет · Hello" font_24 (180,172); pills 200×56 "Русский" (180,226) and "English" (180,290) (159.5) |
-| O2 Wi-Fi | title "Подключим Wi-Fi" font_24 (180,84); primary pill 232×56 accent "С телефона" (180,160); caption font_16 "Wi-Fi и ключ за один раз" (180,204); secondary pill "Выбрать сеть" (180,254) (143) |
-| O3 Key | skipped if the portal delivered a key. Same template: "Ключ OpenRouter", "С телефона" / "Ввести вручную" (S6 KEY). Validates with `GET /api/v1/key` and shows "Ключ работает ✓" |
-| O4 Sound | big orb box 80,40,200,200 at (180,140) plays a local chime (no network needed); title font_20 "Слышите звук?" (180,254); pills 104×52 "Слышу" (128,296) and "Не слышу" (232,296) (165.8). Then the mic step: orb listening, "Скажите что-нибудь", auto-advances after 300 ms above −40 dBFS |
-| O5 Practice | real S1 with a coach mark: `lv_arclabel` "BOOT ›" at radius 150, angle `BOOT_HINT_DEG` (measured on the case), font_16 LISTEN colour, opa pulse 1 s; hint "Удерживайте BOOT или шар и спросите что-нибудь". The first successful turn sets `setup_done`=1 and toasts "Готово!" |
+**Row anatomy:**
 
-### Error overlay (on S1/S2 face)
+| Part | Position | Font / colour |
+|---|---|---|
+| Icon | centre (x+28, y+32) | `ui_20`, accent or `text-2` |
+| Title | x+52, y+10, w ≤ 164, `LONG_DOT` | `ui_20`, `text-1` (≤ 15 chars) |
+| Subtitle | x+52, y+38, w ≤ 184, `LONG_DOT` | `ui_16`, `text-2` (≤ 21 chars) |
+| Right slot | centre (x+226, y+32) | chevron (`text-3`), ✓ check (accent) for the selected radio, "Вкл/Выкл" `ui_16` for toggles, or Wi-Fi bars |
 
-| Element | x,y,w,h | Centre | Rmax |
+Info rows (diagnostics) put the title in `ui_16` `text-2` and the value in `ui_20` `text-1`, and are not clickable. Destructive rows use an `error` icon and title.
+
+**Content of each list:**
+
+- **M, Mode sheet:**
+  - Ассистент (radio, "Отвечает на вопросы");
+  - Переводчик (radio, "RU ⇄ EN");
+  - *(translator only)* Языки ("Русский ⇄ English" ›) and Направление ("Авто" ›);
+  - Громкость ("70 %" ›);
+  - Написать текстом (›);
+  - Новый разговор ("Забыть контекст").
+
+  Selecting a mode returns to H with the colour morph (A13).
+- **L, Languages:** Мой язык ›, Собеседник ›, Направление (Авто / A→B / B→A) ›. Each opens a radio list of the curated languages, shown by native name: Русский, English, Deutsch, Français, Español, Italiano, Português, Polski, Türkçe, Nederlands, Čeština, Svenska, Українська, Қазақша. The subtitle says "только текст" when the current TTS has no voice for that language. Picking the language already in the other slot swaps the two.
+- **S, Settings** (titles ≤ 15 chars):
+  - Громкость, Яркость;
+  - Wi-Fi (SSID);
+  - Телефон (QR);
+  - Модель ИИ (model name);
+  - Голос (voice name);
+  - Ответ голосом (Вкл/Выкл; same state as 🔊);
+  - Динамик (Подключён/Нет);
+  - Язык меню (Русский);
+  - Провайдер (openrouter.ai);
+  - История (Очистить);
+  - О системе;
+  - Выключение.
+- **W, Wi-Fi:**
+  - "↻ Искать снова";
+  - networks sorted by RSSI: SSID `ui_20`, subtitle "Подключено"/"Защищена"/"Открытая", 4-bar meter and lock icon at the right;
+  - "Другая сеть…" (opens K for the SSID);
+  - "С телефона (QR)".
+- **AI, Model picker:** a curated list built from `GET /api/v1/models?input_modalities=audio&output_modalities=text&sort=pricing-low-to-high`, filtered as follows:
+  - keep only models whose `supported_parameters` include `response_format` and `structured_outputs`;
+  - drop `:batch`, `-preview`, `~` aliases, negative prices and non-null `expiration_date`.
+
+  The list shows at most 12 models. The subtitle is the estimated cost per turn, computed as 320 audio + 300 prompt + 150 output tokens, e.g. "≈ $0.0005 / ответ". Default: Gemini 3.1 Flash-Lite. Extra rows: "↻ Обновить список" and "Свой ID…" (K, or Q).
+- **V, Voice picker:**
+  - for MAI: Маша, Лев, Грант, Харпер (`ru-RU-*:MAI-Voice-2.1-Flash`);
+  - for Gemini TTS: Kore, Puck, Charon, …;
+  - subtitle: provider and price;
+  - tapping a row selects it and plays a 40-character preview ("Привет! Так звучит мой голос.").
+- **P, Provider & keys:**
+  - Чат (host · model);
+  - Распознавание ("Как чат (аудио в модель)");
+  - Голос (host · TTS model);
+  - Ключ API ("sk-or-…a9f3 ✓");
+  - Настроить с телефона;
+  - Проверить ключ: `GET /api/v1/key` shows "Лимит: осталось $4.20" or "Без лимита".
+- **PE, Endpoint editor:** Адрес (URL), Ключ, Модель, and "Как у чата" (toggle).
+- **D, Diagnostics / About:**
+  - info rows: firmware version and slot (ota_0/1), ESP-IDF/LVGL versions, panel ID (reg 0x04), MAC, IP, RSSI, uptime, free internal/PSRAM heap, last latency ("загрузка 0.9 с · ответ 1.6 с · голос 0.7 с");
+  - actions: Тест микрофона (live level row), Тест динамика, Показать FPS (lv_sysmon toggle), Показать подсказки (resets the hint counter), Перезагрузить, Сброс настроек (C).
+
+### 3.6 Text entry (`T_TEXT`), layout around the keyboard (keyboard itself in §4)
+
+| Element | Geometry | Check | Target |
 |---|---|---|---|
-| Orb in ERROR state, icon font_32 `#2A0E12` in the core | — | 180,164 | 84 |
-| Title font_20 TEXT_1 | label max 250 | 180,262 | ~150 |
-| Action pill 168×44 accent | 96,288,168,44 | 180,310 | 166 |
+| Prompt label (what is being entered, + counter) | `ui_16` `text-2`, x 105, y 30, 150×20, `LONG_DOT`, e.g. "Пароль · HomeNet", "Ключ · 37/64" | (75, 150) → **167.7 ✓** | – |
+| Cancel ✕ | circle Ø50, `surface-1`, centre (76, 86) | (104, 94) → 140.2 + 25 = **165.2 ✓** | 50 |
+| Text field | `lv_textarea` one-line, x 105, y 61, 150×50, radius 14, `surface-2`, `ui_20`, pad 12/14 | corners (75, 119) → **140.7 ✓** | 150×50 |
+| Reveal 👁 (secret fields only; otherwise hidden) | circle Ø50, centre (284, 86) | symmetric ✓ | 50 |
+| Keyboard | `lv_keyboard` x 18, y 115, 324×209 | see §4.4 | ≥ 50 |
 
-The hint and mode chip are hidden while an error is shown. The error contents are listed in §5.7.
+There is a 4 px gap between ✕ (x 51–101) and the field (x 105). About 13 characters are visible in the field, and it scrolls to the cursor. Password mode uses the bullet "•" (U+2022) and shows each new character for 1.5 s (`LV_TEXTAREA_DEF_PWD_SHOW_TIME`).
 
-### Toast and power ring (`lv_layer_top`)
+### 3.7 Arc adjuster (`T_ADJUST`), volume and brightness
 
-- Toast: pill 70,64,220,36, r18, SURFACE_3, font_16 TEXT_1, Rmax 152.4.
-- Power ring: `lv_arc` 16,16,328,328, width 6, ERROR colour, plus centre label "Удерживайте — выключение" font_16.
+| Element | Geometry | Check | Target |
+|---|---|---|---|
+| Arc | `lv_arc` x 30, y 30, 300×300 (R 150); bg angles 135° → 45° (270° through the top); range 0–100 (brightness 5–100); width 16; track `surface-2`, indicator accent; knob Ø32 (`pad 8`) | ring r 134–150, knob ≤ 158 ✓ | `ext_click_area 17` → hit ring r 117–167 = **50 px** thick |
+| Caption | `ui_16` `text-2`, "Громкость" / "Яркость", centre (180, 128) | ✓ | – |
+| Value | `ui_48` "70%", centre (180, 176), w ≤ 140 | ✓ | – |
+| − / + | circles Ø52, centres (144, 254) and (216, 254), step 5 | (36, 74) → 82.3 + 26 = 108.3 < 117: inside the arc's inner hit radius ✓ | 52 |
+| "Готово" | stadium 120×50 in the bottom gap, x 120, y 290 | (35, 135) → 139.5 + 25 = **164.5 ✓**; its corners lie at 61°/119°, more than 16° inside the 45°–135° gap, so the arc's angle check rejects touches there (checked in `lv_arc.c`) | 120×50 |
+
+- Brightness applies live through LEDC.
+- Volume plays a 60 ms tick on release, if a speaker is present.
+- PWR or "Готово" goes back.
+- Keep the default `change_rate` of 720°/s; it prevents value jumps.
+
+### 3.8 Phone setup (`T_QR`)
+
+| Element | Geometry | Check |
+|---|---|---|
+| Header | stadium as in §3.5: "‹ Телефон" | ✓ |
+| QR panel | white rounded rect x 85, y 78, 190×190, radius 16 | far corner (95, 102) → **139.4 ✓** |
+| QR | `lv_qrcode`, dark `#000`, light `#FFF`, centred in the panel; **size = modules × scale** (no LVGL quiet zone; the white panel margin of ≥ 4 modules is the quiet zone) | – |
+| Caption line 1 | `ui_16` `text-1`, centre (180, 286), w ≤ 220 | (110, 116) → 159.9 ✓ |
+| Caption line 2 | `ui_16` `text-2`, centre (180, 308), w ≤ 180 | (90, 138) → 164.8 ✓ |
+
+Steps:
+
+1. **Join the device's network.**
+   - QR payload: `WIFI:T:WPA;S:Orb-7568;P:k7m2q9x4;;` (34 bytes → version 3 at ECC M, which LVGL uses → 29 modules × **scale 5 = 145 px**; margin 22 px ≈ 4.5 modules).
+   - The SSID suffix is the last 2 MAC bytes. The password is 8 random characters from `23456789abcdefghjkmnpqrstuvwxyz`, new each session.
+   - Captions: "Сеть: Orb-7568" / "Пароль: k7m2q9x4".
+2. **Open the portal** (shown automatically when `WIFI_EVENT_AP_STACONNECTED` fires).
+   - QR payload: `http://192.168.4.1/` (19 bytes → version 2 → 25 modules × **scale 6 = 150 px**).
+   - Captions: "Откройте 192.168.4.1" / "Ждём данные…" with a busy arc.
+   - The captive-portal DNS usually opens the page by itself.
+3. **Data received.** The QR is replaced by checklist rows "Wi-Fi ✓ / Ключ API ✓ / Модель ✓", then "Подключаюсь…". On success: back to H with the success toast "Готово".
+
+Further rules:
+- The portal is our own `esp_http_server` page. esp-wifi-connect cannot take an API key or model id.
+- It closes after a save, after 10 min, or on PWR.
+- Backlight is forced to 100 % while a QR is shown.
+- **LVGL 9.5 call order:** `lv_qrcode_set_size()`, then the colours, then `lv_qrcode_update(qr, data, len)`. In 9.5, size or quiet-zone changes made after the data are silently dropped (fixed in 9.6).
+
+### 3.9 Confirm dialog (`T_DIALOG`)
+
+| Element | Geometry | Check |
+|---|---|---|
+| Icon | `ui_28`, error or warning colour, centre (180, 96) | ✓ |
+| Title | `ui_20` `text-1`, centre (180, 132), w ≤ 260 | (130, 48) ✓ |
+| Body | `ui_16` `text-2`, x 60, y 150, 240×60, up to 3 lines, centred | (120, 60) → 134 ✓ |
+| "Отмена" | stadium x 56, y 226, 120×50, `surface-1` | (35, 71) → 79 + 25 ✓ |
+| "Удалить"/"Сбросить" | stadium x 184, y 226, 120×50, `error` fill, `ink` text | symmetric ✓ |
+
+PWR means "Отмена".
+
+### 3.10 Onboarding step (`T_STEP`)
+
+| Element | Geometry | Check |
+|---|---|---|
+| Mini orb | preset MINI (core r 28, halo2 r 40), centre (180, 88) | 92 + 40 = 132 ✓ |
+| Title | `ui_28` (or `ui_20` for long strings), centre (180, 153), w ≤ 280 | ✓ |
+| Subtitle | `ui_16` `text-2`, centre (180, 182), w ≤ 290 | ✓ |
+| Primary button | stadium x 62, y 204, 236×56, accent fill, `ink` `ui_20` | (90, 52) → 103.9 + 28 = 131.9 ✓ |
+| Secondary button | stadium x 80, y 268, 200×56, `surface-1`, `text-1` | (72, 116) → 136.5 + 28 = **164.5 ✓** |
+| Progress dots | 5 × Ø6 at y 338, x 156/168/180/192/204; current = accent, others `text-3` | (24, 158) → 159.8 + 3 ✓ |
+
+### 3.11 Error presentation (no separate screen)
+
+**Pill.** Persistent faults replace the pill text with the fault in its colour, e.g. "Нет Wi-Fi ›", "Ключ не принят ›", "Нет средств ›". The pill is up to 160 wide: (55, 131) → 141.6 + 25 = 166.6 ✓. While the fault is active, tapping the pill opens the fixing screen instead of M.
+
+**Orb.** The orb shows ERROR for 2.4 s (§5.3). If the fault persists, it then shows OFFLINE (hollow) or IDLE.
+
+**Chat card** (system message):
+
+| Property | Value |
+|---|---|
+| Size | width 252, radius 20 |
+| Background / padding | status "dim fill" colour, padding 14 |
+| Row 1 | icon `ui_20` in the status colour + title `ui_20` `text-1` |
+| Row 2 | body `ui_16` `text-2`, ≤ 2 lines |
+| Row 3 | optional action stadium 160×50, status-colour fill, `ink` text |
+| Height | ≈ 14 + 26 + 6 + 40 + 10 + 50 + 14 = **160 ≤ 164 viewport ✓** |
+
+In the empty state, the first error card switches H to the conversation layout.
 
 ---
 
-## 4. On-screen keyboard
+## 4. The round keyboard
 
-### 4.1 Choice: alphabetical half-pages
+### 4.1 Decision: two-step "group → letter" keypad (phone-keypad groups)
 
-Geometry allows only 25 keys of at least 50 px (§4.2), against 33 Russian letters plus 7 controls.
+Measured capacity: with keys of at least 50×50 px, the four rows that fit under a text field hold **≈ 14–19 keys in total** (§4.4). Six or seven of those must be function keys (⌫, OK, space, language, 123, punctuation). That leaves about 12 letter slots per page. The Russian alphabet has 33 letters.
 
-| Option | Taps per letter | Zero-learning? | Verdict |
-|---|---|---|---|
-| Full ЙЦУКЕН (12/row) | 1 | yes | impossible: needs 600 px rows |
-| ЙЦУКЕН split left/right | ≈1.5 | no (which half?) | rejected |
-| Frequency page (оеаинтсрвлкмдпуяыь) plus rest | ≈1.12 | no (unfamiliar order) | rejected |
-| T9 multi-tap / group-then-letter | 2+ | partly | slow, two visual searches |
-| Rim rotary picker | — | no | COMPASS data is for physical bezels (verify) |
-| **Alphabetical halves А–П / Р–Я** | ≈1.4 | **yes**: the page key is labelled with the other range | **chosen** |
-
-Long-press alternates are not used (hidden). Ё has its own key.
-
-The keyboard is a **fallback**:
-- Chat text comes from voice. Hold BOOT inside a TEXT field to dictate.
-- Long secrets come from the phone portal.
-- Wi-Fi passwords are mostly Latin and digits, so English uses the same scheme (A–M / N–Z) plus three symbol pages that cover all 32 ASCII punctuation characters.
-
-### 4.2 Geometry and fit proof
-
-Screen layout:
-- **Field** (`lv_textarea`, one line): 88,30,184,44, r22, SURFACE_1, border 1 OUTLINE (focused: 2 px `#7B8CFF`), pad_hor 14, font_20.
-  - Cap centres (110,52) and (250,52) → √(70² + 128²) + 22 = **167.9 ✓**.
-  - Text box x 102–258 at y ≥ 40 fits W(140) = 185.7 ✓, about 14 characters visible. The field scrolls horizontally.
-  - The placeholder carries the context, for example "Пароль для HomeNet". There is no caption, because the chord above y=30 is too small.
-- **Keyboard**: one `lv_keyboard` at **18,78, w 324, h 250**, pad 0, pad_row 0, pad_column 0. That gives 5 rows of 50 px.
-
-Visual gaps come from a 2 px `#000` border on `LV_PART_ITEMS`, so the visible key is (w−4)×46 with r12. Hit areas tile with **no dead gaps**. Spacer keys are `LV_BUTTONMATRIX_CTRL_HIDDEN`. Their label must be `" "`, because `""` terminates the map.
-
-| Row | y (incl.) | Far edge d | Allowed x (= 180 ± √(168²−d²)) | Units: spacer + keys + spacer (Σ) | Key x ranges (screen, incl.) | Key widths | Outer corner → R |
-|---|---|---|---|---|---|---|---|
-| R1 | 78–127 | 102 | 46.5–313.5 | 8 + 13×5 + 8 (81 → 4 px/unit exactly) | 50–101, 102–153, 154–205, 206–257, 258–309 | 52 ×5 | (50,78) → 165.2 ✓ |
-| R2 | 128–177 | 52 | 20.25–339.75 | 1 + 15×6 + 1 (92) | 21–73, 74–126, 127–179, 180–231, 232–284, 285–337 | 53,53,53,52,53,53 | (21,128) → 167.3 ✓ |
-| R3 | 178–227 | 48 | 19.0–341.0 | as R2 | as R2 | as R2 | (21,227) → 165.8 ✓ |
-| R4 | 228–277 | 98 | 43.5–316.5 | as R1 | as R1 | 52 ×5 | (50,277) → 162.2 ✓ |
-| R5 | 278–327 | 148 | 100.5–259.5 | 13 + 8×3 + 13 (50) | 102–153, 154–204, 205–256 | 52, 51, 52 | (102,327) → 166.4 ✓ |
-
-Pixel positions follow LVGL's `x1 = (max_w·u_cum)/Σu`, `x2 = (max_w·(u_cum+u))/Σu − 1`, with max_w = 324 and pcol = 0. Every key corner lies inside r=168 even before corner rounding. Every hit area is ≥ 51×50 px.
-
-Button index layout, 35 entries, the same for every page:
-
-| Row | Indices |
+| Option | Problem on this screen |
 |---|---|
-| R1 | `0 sp · 1 · 2 · 3 · 4 · 5 · 6 sp` |
-| R2 | `7 sp · 8–13 · 14 sp` |
-| R3 | `15 sp · 16–21 · 22 sp` |
-| R4 | `23 sp · 24 · 25 · 26 · 27 · 28 · 29 sp` |
-| R5 | `30 sp · 31 · 32 · 33 · 34 sp` |
+| ЙЦУКЕН / QWERTY rows | 11–12 keys per row need ≥ 572 px. Split into pages, RU needs **3 pages** of about 12 letters, and the user has to hunt across pages. |
+| Long-press for ё/ъ or variants | Hidden, so it fails zero-learning. It conflicts with ⌫ auto-repeat. Popovers would clip at the rim (LVGL docs say they extend past the widget). |
+| Multi-tap T9 | Depends on timing; "аб" needs a pause. High error rate for passwords. |
+| Rim / rotary picker | No evidence for a touch-only bezel-less rim; COMPASS used a physical bezel. Fingers slip off the edge. |
+| **Two-step groups (chosen)** | Every letter is exactly **2 taps**, with no timing and no hidden states. All 33 letters are visible on level 1, in alphabetical order, exactly like the Russian phone keypad (АБВГ · ДЕЁЖЗ · …). Level 2 shows the group's letters as **huge keys with lower case and upper case both visible**, so there is **no Shift key and no caps-lock state**, the most common cause of a wrong Wi-Fi password. |
 
-Roles:
-- Letter pages: 1 = LANG, 5 = PAGE, 24 = SHIFT, 28 = ⌫, 31 = 123, 32 = SPACE, 33 = OK, everything else = CHAR.
-- Symbol pages: 1 = CHAR, 5 = SYM-PAGE, 24 = CHAR (EYE on SYM1 in password fields), 28 = ⌫, 31 = ABC, 32 = SPACE, 33 = OK.
+- **Cost:** about 1.2 s per character, so "HomeNet2024" takes about 18 s. This keyboard is the fallback. The primary entry paths are the phone portal (Wi-Fi, keys, URLs, model ids) and voice (questions).
+- **API keys:** OpenRouter keys get a dedicated **single-tap hex keypad**: the prefix `sk-or-v1-` is pre-filled and locked, then 64 hex characters take 64 taps.
 
-### 4.3 Every page
+### 4.2 Keyboard geometry
 
-Key widths per row are fixed by §4.2. Labels are font_24.
-- ⇧ = F062, ⌫ = F55A, ✓ = F00C.
-- ␣ is a visible key with label `" "`; a 24×4 px TEXT_2 bar is drawn on it in `LV_EVENT_DRAW_POST`.
-- Control keys carry `CHECKED`, which gives SURFACE_3 with TEXT_2 text.
+- `lv_keyboard`: x 18, y 115, **324×209**; `pad_all 0`, **`pad_row 3`**, **`pad_column 4`**; no background or border.
+- Row height = (209 − 3·3)/4 = **50 px**.
+- Row y ranges: **R1 115–165**, **R2 168–218**, **R3 221–271**, **R4 274–324**.
+- Key style: radius 10.
+  - Letter and group keys: `surface-2` / `text-1`.
+  - Function keys: `surface-1` / `text-2`.
+  - OK: mode accent fill with `ink` text; disabled OK: `surface-1` / `text-3`.
+  - Pressed: `surface-3`.
+- Popovers are off.
+- **Hit expansion (verified in `lv_buttonmatrix.c` v9.5).** Each key's hit area grows by `(pad/2) + 1 + (pad & 1)`, capped at `LV_DPI_DEF/10`: **+3 px left/right** (pad_column 4) and **+3 px up/down** (pad_row 3). Visible 50×50 becomes an effective 56×56.
+- **Button width formula** (`update_map`): `x1 = (max_w_no_gap · units_before)/units_row + i·pad_col`, where `max_w_no_gap = 324 − (n−1)·4`. All pixel values below come from that formula (±1 px rounding). Rows taper to the circle through **hidden spacer buttons** (`LV_BUTTONMATRIX_CTRL_HIDDEN`, label `" "`; an empty string would end the map).
 
-**RU page 1, lower (а–п)**
+Row limits: half-chord at each row's far edge.
 
-| Row | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|
-| R1 | EN | а | б | в | р–я | |
-| R2 | г | д | е | ё | ж | з |
-| R3 | и | й | к | л | м | н |
-| R4 | ⇧ | о | п | . | ⌫ | |
-| R5 | 123 | ␣ | ✓ | | | |
+| Row | y | far-edge d | chord w(d) | half |
+|---|---|---|---|---|
+| R1 | 115–165 | 65 | 309.8 | 154.9 |
+| R2 | 168–218 | 38 | 327.3 | 163.6 |
+| R3 | 221–271 | 91 | 282.4 | 141.2 |
+| R4 | 274–324 | 144 | 173.1 | 86.5 |
 
-**RU page 1, upper**
+### 4.3 Layouts
 
-| Row | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|
-| R1 | EN | А | Б | В | Р–Я | |
-| R2 | Г | Д | Е | Ё | Ж | З |
-| R3 | И | Й | К | Л | М | Н |
-| R4 | ⇧ | О | П | . | ⌫ | |
-| R5 | 123 | ␣ | ✓ | | | |
+#### Level 1, letters (RU shown; EN in brackets). Same geometry for both languages.
 
-**RU page 2, lower (р–я)**
+```
+R1          [ абвг ] [ деёжз ] [ ийкл ]             ([abc] [def] [ghi])
+R2  [ 123 ] [ мноп ] [ рсту  ] [ фхцч ] [ ⌫ ]       ([123][jkl] [mno] [pqrs] [⌫])
+R3          [ шщъы ] [ ьэюя  ] [пробел]             ([tuv] [wxyz] [space])
+R4               [ EN ] [ .,?! ] [ ✓ ]              ([RU] [.,?!] [✓])
+```
 
-| Row | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|
-| R1 | EN | р | с | т | а–п | |
-| R2 | у | ф | х | ц | ч | ш |
-| R3 | щ | ъ | ы | ь | э | ю |
-| R4 | ⇧ | я | , | . | ⌫ | |
-| R5 | 123 | ␣ | ✓ | | | |
+| Row | Units (hidden = h) | Keys: screen x range (width) |
+|---|---|---|
+| R1 | h10, 13, 13, 13, h10 | абвг 74–141 (68) · деёжз 146–212 (67) · ийкл 217–284 (68) |
+| R2 | 10, 13, 13, 13, 10 | 123 18–69 (52) · мноп 74–141 (68) · рсту 146–212 (67) · фхцч 217–284 (68) · ⌫ 289–341 (53) |
+| R3 | h10, 13, 13, 13, h10 | шщъы 74–141 · ьэюя 146–212 · пробел 217–284 |
+| R4 | h13, 9, 9, 9, h13 | EN 97–148 (52) · .,?! 153–205 (53) · ✓ 210–261 (52) |
 
-**RU page 2, upper**
+- Group labels use `ui_20`. "деёжз" ≈ 59 px and "шщъы" ≈ 57 px, both inside 67–68 px keys.
+- "пробел"/"space" uses `ui_16`, ≈ 50 px.
+- The language key shows the language it **switches to**. It is `DISABLED` in ASCII-only fields (passwords, keys, URLs, model ids), which also start in EN.
 
-| Row | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|
-| R1 | EN | Р | С | Т | А–П | |
-| R2 | У | Ф | Х | Ц | Ч | Ш |
-| R3 | Щ | Ъ | Ы | Ь | Э | Ю |
-| R4 | ⇧ | Я | , | . | ⌫ | |
-| R5 | 123 | ␣ | ✓ | | | |
+#### Level 2, the chosen group: lower row + upper row, then back
 
-Coverage check: 17 + 16 = 33 Russian letters, and "." sits at index 27 on every letter page.
+```
+R1   [ а ] [ б ] [ в ] [ г ]          lower case
+R2   [ А ] [ Б ] [ В ] [ Г ]          upper case
+R3            [ ‹ ]                   back to level 1 (also PWR)
+R4   (one hidden key)
+```
 
-**EN page 1, lower (a–m)**
+Level 2 uses font `ui_28`. Choosing a letter inserts it and returns to level 1 immediately.
 
-| Row | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|
-| R1 | RU | a | b | c | n–z | |
-| R2 | d | e | f | g | h | i |
-| R3 | j | k | l | m | - | _ |
-| R4 | ⇧ | @ | / | . | ⌫ | |
-| R5 | 123 | ␣ | ✓ | | | |
+| Group size | Units R1/R2 | Keys: screen x (width) |
+|---|---|---|
+| 3 (EN abc…tuv) | h6, 14, 14, 14, h6 | 56–135 (80) · 140–218 (79) · 223–302 (80) |
+| 4 (RU, EN pqrs/wxyz, symbol groups) | h2, 12, 12, 12, 12, h2 | 33–102 (70) · 107–177 (71) · 182–251 (70) · 256–325 (70) |
+| 5 (деёжз, punctuation) | h2, 11, 11, 11, 11, 11, h2 | 32–87 (56) · 92–147 (56) · 152–206 (55) · 211–266 (56) · 271–326 (56) |
+| R3 back | h10, h13, 13, h13, h10 | ‹ 146–212 (67) |
 
-**EN page 1, upper**
+Group contents:
 
-| Row | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|
-| R1 | RU | A | B | C | N–Z | |
-| R2 | D | E | F | G | H | I |
-| R3 | J | K | L | M | - | _ |
-| R4 | ⇧ | @ | / | . | ⌫ | |
-| R5 | 123 | ␣ | ✓ | | | |
+| Key | Lower (R1) | Upper (R2) |
+|---|---|---|
+| абвг | а б в г | А Б В Г |
+| деёжз | д е ё ж з | Д Е Ё Ж З |
+| ийкл | и й к л | И Й К Л |
+| мноп | м н о п | М Н О П |
+| рсту | р с т у | Р С Т У |
+| фхцч | ф х ц ч | Ф Х Ц Ч |
+| шщъы | ш щ ъ ы | Ш Щ Ъ Ы |
+| ьэюя | ь э ю я | Ь Э Ю Я |
+| abc / def / ghi / jkl / mno / tuv | 3 letters | 3 capitals |
+| pqrs / wxyz | 4 letters | 4 capitals |
+| .,?! (punctuation, size 5) | `. , ? ! -` | `: ; ( ) "` |
 
-**EN page 2, lower (n–z)**
+That covers all 33 Russian letters (8 groups: 7×4 + 1×5) and all 26 English letters.
 
-| Row | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|
-| R1 | RU | n | o | p | a–m | |
-| R2 | q | r | s | t | u | v |
-| R3 | w | x | y | z | ! | ? |
-| R4 | ⇧ | : | , | . | ⌫ | |
-| R5 | 123 | ␣ | ✓ | | | |
+#### Digits (single tap), reached with "123"
 
-**EN page 2, upper**
+```
+R1          [ 1 ] [ 2 ] [ 3 ]
+R2  [ абв ] [ 4 ] [ 5 ] [ 6 ] [ ⌫ ]
+R3          [ 7 ] [ 8 ] [ 9 ]
+R4       [ #+= ] [ 0 ] [ ✓ ]
+```
 
-| Row | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|
-| R1 | RU | N | O | P | A–M | |
-| R2 | Q | R | S | T | U | V |
-| R3 | W | X | Y | Z | ! | ? |
-| R4 | ⇧ | : | , | . | ⌫ | |
-| R5 | 123 | ␣ | ✓ | | | |
+Same units and x ranges as level-1 letters. Digits use `ui_28`. "абв"/"abc" returns to the current-language letters.
 
-The English pages keep the URL and e-mail characters (`- _ @ / . : , ! ?`) on the letter pages.
+#### Symbols level 1 (two-step like letters; covers all 32 printable ASCII symbols), reached with "#+="
 
-**SYM1 (123)**
+```
+R1          [ !?., ] [ @#$% ] [ &*^~ ]
+R2  [ абв ] [ -_=+ ] [ ()[] ] [ {}<> ] [ ⌫ ]
+R3          [ /\|` ] [ :;'" ] [ пробел ]
+R4       [ 123 ] [ «»—… ] [ ✓ ]
+```
 
-| Row | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|
-| R1 | 1 | 2 | 3 | 4 | #+= | |
-| R2 | 5 | 6 | 7 | 8 | 9 | 0 |
-| R3 | . | , | - | _ | @ | # |
-| R4 | 👁/+ | ! | ? | / | ⌫ | |
-| R5 | абв | ␣ | ✓ | | | |
+The symbol groups' level 2 uses the 4-key shape in R1 only. R2 is a single hidden key, R3 is back.
 
-**SYM2 (#+=)**
+#### Hex keypad (OpenRouter key; the field holds `sk-or-v1-` + 64 hex)
 
-| Row | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|
-| R1 | $ | % | & | * | «» | |
-| R2 | ( | ) | [ | ] | { | } |
-| R3 | < | > | = | + | ' | " |
-| R4 | : | ; | ~ | ^ | ⌫ | |
-| R5 | абв | ␣ | ✓ | | | |
+```
+R1  [1][2][3][4][5]
+R2  [6][7][8][9][0][⌫]
+R3    [a][b][c][d]
+R4    [e][f][✓]
+```
 
-**SYM3 («»)**
+| Row | Units | Keys: screen x (width) |
+|---|---|---|
+| R1 | h1, 12×5, h1 | 26–83 (58) · 88–145 (58) · 150–208 (59) · 213–270 (58) · 275–332 (58) |
+| R2 | 1×6 | 18–67 (50) · 72–122 (51) · 127–177 (51) · 182–231 (50) · 236–286 (51) · 291–341 (51) |
+| R3 | h3, 8×4, h3 | 46–109 (64) · 114–177 (64) · 182–245 (64) · 250–313 (64) |
+| R4 | h13, 9, 9, 9, h13 | e 97–148 · f 153–205 · ✓ 210–261 |
 
-| Row | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|
-| R1 | \ | \| | ` | € | 123 | |
-| R2 | « | » | „ | “ | ” | № |
-| R3 | — | – | … | • | ° | ₽ |
-| R4 | ± | × | ÷ | § | ⌫ | |
-| R5 | абв | ␣ | ✓ | | | |
+Font `ui_28`. OK stays `DISABLED` until exactly 64 hex characters are entered, and the prompt shows "Ключ · n/64". If the key does not match `^sk-or-v1-[0-9a-f]{64}$`, or the provider is not OpenRouter, the normal EN keyboard is used.
 
-- SYM1 R4 slot 1 is the eye toggle (F06E/F070) in PASSWORD fields and "+" elsewhere. "+" is also on SYM2.
-- "абв" or "abc" on R5 returns to the last letter page.
-- The 32 ASCII punctuation characters are all present across the letter and symbol pages.
+### 4.4 Proof that every row fits
 
-### 4.4 Field types
+| Layout / row | Row span (screen x) | Half-span | Allowed half-chord | Result |
+|---|---|---|---|---|
+| L1 R1 / R3 (also digits, symbols) | 74–284 | 106 | 154.9 / 141.2 | ✓ / ✓ |
+| L1 R2 | 18–341 | 162 | 163.6 | ✓ |
+| L1 R4 (3×52) | 97–261 | 83 | 86.5 | ✓ |
+| L2 3-key R1, R2 | 56–302 | 124 | 154.9, 163.6 | ✓ |
+| L2 4-key R1, R2 | 33–325 | 147 | 154.9, 163.6 | ✓ |
+| L2 5-key R1, R2 | 32–326 | 148 | 154.9, 163.6 | ✓ |
+| L2 R3 | 146–212 | 34 | 141.2 | ✓ |
+| Hex R1 (tightest) | 26–332 | 154 | 154.9 | ✓ (corner 167.2 px from centre) |
+| Hex R2 | 18–341 | 162 | 163.6 | ✓ |
+| Hex R3 | 46–313 | 134 | 141.2 | ✓ |
 
-| Type | Opens on | Auto-cap | Mask | BOOT dictation | Max len | Prefill | Submit |
-|---|---|---|---|---|---|---|---|
-| TEXT (chat / translate) | UI-language page 1 | first letter and after ". " | no | **yes** (STT into the cursor) | 500 | — | sends as a text turn |
-| PASSWORD (Wi-Fi) | EN p1 lower | no | `lv_textarea_set_password_mode`, last char shown 1200 ms, eye on SYM1 | no (toast) | 63 | — | connect; failure = coral border + 360 ms shake + "Неверный пароль" |
-| KEY | EN p1 lower | no | shows first 9 + last 4 when unfocused | no | 200 | `sk-or-v1-` | `GET /api/v1/key` to validate |
-| URL | EN p1 lower | no | no | no | 200 | `https://` | save |
-| SSID | EN p1 lower | no | no | no | 32 B UTF-8 | — | → PASSWORD |
+The smallest visible key is 50×50 (hex R2); the effective target is 56×56. Group keys are 68×50 (74×56 effective). Level-2 letters are 55–80 × 50 (61–86 × 56 effective).
 
-Shift:
-- Tap = one-shot. The key fill turns accent and returns to lower after one character.
-- Two taps within 400 ms = caps lock: accent fill plus a 2 px TEXT_1 underline drawn in DRAW_POST.
-- Lock is cleared by a tap or a page/language change.
+### 4.5 Mapping onto `lv_keyboard` / `lv_buttonmatrix`
 
-PWR or swipe → cancels. The draft is kept 60 s, so re-opening restores it.
+`lv_keyboard` is a buttonmatrix with an attached textarea. Facts checked in v9.5:
+- `lv_keyboard_set_map(kb, mode, map, ctrl)` writes into **file-static tables shared by all keyboards** and re-applies the current mode at once.
+- `lv_keyboard_set_mode()` **returns early if the mode is unchanged**.
+- The constructor adds `lv_keyboard_def_event_cb` on `VALUE_CHANGED`.
 
-### 4.5 Mapping onto lv_keyboard / lv_buttonmatrix
-
-- **One `lv_keyboard` instance, always mode `LV_KEYBOARD_MODE_USER_1`.** There are 11 layouts and only 9 mode slots. `lv_keyboard_set_map()` re-applies the map immediately even for the current mode (`lv_keyboard_update_map` is called unconditionally, checked in the 9.5 source). So each page change is one `lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_USER_1, map, ctrl)`. `set_mode` is never needed, and it returns early when the mode is unchanged.
-- Gotcha: `kb_map[]` and `kb_ctrl[]` are file-static in `lv_keyboard.c`, shared by every keyboard. Keep exactly one alive.
-- `lv_keyboard_set_popovers(kb, false)`. Popovers extend past the widget and are clipped at the rim; a custom echo (below) replaces them.
-- Remove the built-in handler and add our own: `lv_obj_remove_event_cb(kb, lv_keyboard_def_event_cb); lv_obj_add_event_cb(kb, kb_value_cb, LV_EVENT_VALUE_CHANGED, NULL);`. Dispatch on the **button index** through a per-layout role table, never on label strings ("р–я" vs text).
-- `lv_keyboard_set_textarea(kb, ta)` is kept for focus and cursor display. Insertion is ours: `lv_textarea_add_text` / `add_char` / `delete_char`.
-- `lv_obj_set_size(kb, 324, 250); lv_obj_set_align(kb, LV_ALIGN_TOP_LEFT); lv_obj_set_pos(kb, 18, 78);` overrides the keyboard's default 100%×50% bottom alignment. Also `lv_obj_remove_flag(kb, LV_OBJ_FLAG_GESTURE_BUBBLE)`.
+So: use **one slot, `LV_KEYBOARD_MODE_USER_1`**, swap maps into it, and replace the default handler with our own. Our handler classifies keys by **button index** through a per-layout action table, not by comparing UTF-8 labels.
 
 ```c
-#define SPC(w) ((w) | LV_BUTTONMATRIX_CTRL_HIDDEN)
-#define CH(w)  ((w) | LV_BUTTONMATRIX_CTRL_CLICK_TRIG | LV_BUTTONMATRIX_CTRL_NO_REPEAT)   /* commit on release */
-#define CT(w)  (CH(w) | LV_BUTTONMATRIX_CTRL_CHECKED)                                    /* control style    */
-#define BK(w)  ((w) | LV_BUTTONMATRIX_CTRL_CHECKED)                                      /* fires on press, repeats */
-#define OKK(w) (CT(w) | LV_BUTTONMATRIX_CTRL_CUSTOM_1)                                   /* accent fill      */
+/* ui_kb.c — LVGL 9.5 */
+#define SP   " "                                   /* hidden spacer; "" would end the map */
+#define HID  LV_BUTTONMATRIX_CTRL_HIDDEN
+#define TAP  (LV_BUTTONMATRIX_CTRL_CLICK_TRIG | LV_BUTTONMATRIX_CTRL_NO_REPEAT)
+#define U(n) ((lv_buttonmatrix_ctrl_t)(n))          /* relative width 1..15 */
 
-static const char * const MAP_RU1_L[] = {
-  " ", "EN", "а", "б", "в", "р–я", " ", "\n",
-  " ", "г", "д", "е", "ё", "ж", "з", " ", "\n",
-  " ", "и", "й", "к", "л", "м", "н", " ", "\n",
-  " ", SYM_SHIFT, "о", "п", ".", LV_SYMBOL_BACKSPACE, " ", "\n",
-  " ", "123", " ", LV_SYMBOL_OK, " ", ""
-};
-static const lv_buttonmatrix_ctrl_t CTRL_LETTERS[35] = {
-  SPC(8), CT(13), CH(13), CH(13), CH(13), CT(13), SPC(8),
-  SPC(1), CH(15), CH(15), CH(15), CH(15), CH(15), CH(15), SPC(1),
-  SPC(1), CH(15), CH(15), CH(15), CH(15), CH(15), CH(15), SPC(1),
-  SPC(8), CT(13), CH(13), CH(13), CH(13), BK(13), SPC(8),
-  SPC(13), CT(8), CH(8), OKK(8), SPC(13),
-};
-/* CTRL_SYM: same, but [1] = CH(13), [24] = CH(13) (or CT(13) when it is the eye key) */
-/* SYM_SHIFT = "\xEF\x81\xA2" (U+F062) */
+static const char * const kb_ru_l1[] = {
+    SP, "абвг", "деёжз", "ийкл", SP, "\n",
+    "123", "мноп", "рсту", "фхцч", LV_SYMBOL_BACKSPACE, "\n",
+    SP, "шщъы", "ьэюя", "пробел", SP, "\n",
+    SP, "EN", ".,?!", LV_SYMBOL_OK, SP, "" };
+static const char * const kb_en_l1[] = {
+    SP, "abc", "def", "ghi", SP, "\n",
+    "123", "jkl", "mno", "pqrs", LV_SYMBOL_BACKSPACE, "\n",
+    SP, "tuv", "wxyz", "space", SP, "\n",
+    SP, "RU", ".,?!", LV_SYMBOL_OK, SP, "" };
+static const char * const kb_digits_ru[] = {
+    SP, "1", "2", "3", SP, "\n",
+    "абв", "4", "5", "6", LV_SYMBOL_BACKSPACE, "\n",
+    SP, "7", "8", "9", SP, "\n",
+    SP, "#+=", "0", LV_SYMBOL_OK, SP, "" };          /* kb_digits_en: "abc" */
+static const char * const kb_sym_l1_ru[] = {
+    SP, "!?.,", "@#$%", "&*^~", SP, "\n",
+    "абв", "-_=+", "()[]", "{}<>", LV_SYMBOL_BACKSPACE, "\n",
+    SP, "/\\|`", ":;'\"", "пробел", SP, "\n",
+    SP, "123", "«»—…", LV_SYMBOL_OK, SP, "" };
+/* ⌫ has no TAP flag: it fires on PRESSED and auto-repeats via LONG_PRESSED_REPEAT (100 ms) */
+static const lv_buttonmatrix_ctrl_t kb_l1_ctrl[] = {
+    HID|U(10), TAP|U(13), TAP|U(13), TAP|U(13), HID|U(10),
+    TAP|U(10), TAP|U(13), TAP|U(13), TAP|U(13),     U(10),
+    HID|U(10), TAP|U(13), TAP|U(13), TAP|U(13), HID|U(10),
+    HID|U(13), TAP|U(9),  TAP|U(9),  TAP|U(9),  HID|U(13) };
 
-typedef enum { KR_SP, KR_CHAR, KR_LANG, KR_PAGE, KR_SHIFT, KR_BKSP, KR_MODE, KR_SPACE, KR_OK, KR_EYE } kr_t;
-typedef struct { const char * const *map; const lv_buttonmatrix_ctrl_t *ctrl; const uint8_t *roles; } kb_layout_t;
+/* Level 2, 4-letter shape (example: абвг) */
+static const char * const kb_l2_abvg[] = {
+    SP, "а", "б", "в", "г", SP, "\n",
+    SP, "А", "Б", "В", "Г", SP, "\n",
+    SP, SP, LV_SYMBOL_LEFT, SP, SP, "\n",
+    SP, "" };
+static const lv_buttonmatrix_ctrl_t kb_l2_4_ctrl[] = {
+    HID|U(2), TAP|U(12), TAP|U(12), TAP|U(12), TAP|U(12), HID|U(2),
+    HID|U(2), TAP|U(12), TAP|U(12), TAP|U(12), TAP|U(12), HID|U(2),
+    HID|U(10), HID|U(13), TAP|U(13), HID|U(13), HID|U(10),
+    HID|U(1) };
+/* kb_l2_3_ctrl: h6,14,14,14,h6 ; kb_l2_5_ctrl: h2,11×5,h2 ; kb_l2_sym_ctrl: R1 as 4, R2 = HID|1 */
+
+static const char * const kb_hex[] = {
+    SP, "1", "2", "3", "4", "5", SP, "\n",
+    "6", "7", "8", "9", "0", LV_SYMBOL_BACKSPACE, "\n",
+    SP, "a", "b", "c", "d", SP, "\n",
+    SP, "e", "f", LV_SYMBOL_OK, SP, "" };
+static const lv_buttonmatrix_ctrl_t kb_hex_ctrl[] = {
+    HID|U(1), TAP|U(12), TAP|U(12), TAP|U(12), TAP|U(12), TAP|U(12), HID|U(1),
+    TAP|U(1), TAP|U(1), TAP|U(1), TAP|U(1), TAP|U(1), U(1),
+    HID|U(3), TAP|U(8), TAP|U(8), TAP|U(8), TAP|U(8), HID|U(3),
+    HID|U(13), TAP|U(9), TAP|U(9), TAP|U(9), HID|U(13) };
+
+typedef enum { KA_NONE, KA_CHAR, KA_GROUP, KA_BKSP, KA_SPACE, KA_OK,
+               KA_LANG, KA_DIGITS, KA_SYMBOLS, KA_LETTERS, KA_BACK } kb_act_t;
+typedef struct {
+    const char * const *map; const lv_buttonmatrix_ctrl_t *ctrl;
+    const uint8_t *act;   /* kb_act_t per button index (no "\n" entries) */
+    const uint8_t *arg;   /* group id for KA_GROUP */
+    const lv_font_t *font;
+} kb_layout_t;
+
+static const kb_layout_t *cur, *l1;    /* l1 = current-language level 1 */
+static lv_obj_t *kb, *ta;
+
+static void kb_apply(const kb_layout_t *L) {
+    cur = L;
+    lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_USER_1, L->map, L->ctrl); /* applies immediately */
+    lv_obj_set_style_text_font(kb, L->font, LV_PART_ITEMS);
+}
 
 static void kb_value_cb(lv_event_t *e) {
-  lv_obj_t *kb = lv_event_get_current_target(e);
-  uint32_t id = lv_buttonmatrix_get_selected_button(kb);
-  if (id == LV_BUTTONMATRIX_BUTTON_NONE) return;
-  switch (g_kb.layout->roles[id]) {
-    case KR_CHAR:  lv_textarea_add_text(g_kb.ta, lv_buttonmatrix_get_button_text(kb, id));
-                   if (g_kb.shift == SHIFT_ONCE) kb_set_shift(SHIFT_OFF); break;
-    case KR_SPACE: lv_textarea_add_char(g_kb.ta, ' '); kb_autocap(); break;
-    case KR_BKSP:  lv_textarea_delete_char(g_kb.ta); break;
-    case KR_SHIFT: kb_shift_tap(lv_tick_get()); break;          /* 400 ms double-tap = lock */
-    case KR_PAGE:  g_kb.page = kb_next_page(); kb_apply(); break;
-    case KR_LANG:  g_kb.lang ^= 1; g_kb.page = 0; kb_apply(); break;
-    case KR_MODE:  g_kb.sym = !g_kb.sym; kb_apply(); break;
-    case KR_EYE:   kb_toggle_reveal(); break;
-    case KR_OK:    kb_submit(); break;
-  }
+    uint32_t id = lv_buttonmatrix_get_selected_button(kb);
+    if (id == LV_BUTTONMATRIX_BUTTON_NONE) return;
+    switch ((kb_act_t)cur->act[id]) {
+    case KA_CHAR:   lv_textarea_add_text(ta, lv_buttonmatrix_get_button_text(kb, id));
+                    if (cur != l1 && cur->font == &ui_28 && cur->act == act_l2) kb_apply(l1);
+                    break;                          /* level 2 returns to level 1 */
+    case KA_GROUP:  kb_apply(&kb_l2_layouts[cur->arg[id]]); break;
+    case KA_BKSP:   lv_textarea_delete_char(ta); break;
+    case KA_SPACE:  lv_textarea_add_char(ta, ' '); break;
+    case KA_OK:     lv_obj_send_event(ta, LV_EVENT_READY, NULL); break;
+    case KA_LANG:   l1 = (l1 == &kb_ru) ? &kb_en : &kb_ru; kb_apply(l1); break;
+    case KA_DIGITS: kb_apply(l1 == &kb_ru ? &kb_digits_ru_l : &kb_digits_en_l); break;
+    case KA_SYMBOLS:kb_apply(l1 == &kb_ru ? &kb_sym_ru_l : &kb_sym_en_l); break;
+    case KA_LETTERS:
+    case KA_BACK:   kb_apply(l1); break;
+    default: break;
+    }
 }
-static void kb_apply(void) {
-  g_kb.layout = kb_pick(g_kb.lang, g_kb.page, g_kb.shift != SHIFT_OFF, g_kb.sym, g_kb.type);
-  lv_keyboard_set_map(g_kb.kb, LV_KEYBOARD_MODE_USER_1, g_kb.layout->map, g_kb.layout->ctrl);
+
+/* Per-key colours/fonts without extra objects (LVGL 9 draw-task API) */
+static void kb_draw_cb(lv_event_t *e) {
+    lv_draw_task_t *t = lv_event_get_draw_task(e);
+    lv_draw_dsc_base_t *b = lv_draw_task_get_draw_dsc(t);
+    if (b->part != LV_PART_ITEMS) return;
+    kb_act_t a = (kb_act_t)cur->act[b->id1];
+    bool pressed = lv_obj_has_state(kb, LV_STATE_PRESSED) &&
+                   lv_buttonmatrix_get_selected_button(kb) == b->id1;
+    lv_draw_fill_dsc_t  *f = lv_draw_task_get_fill_dsc(t);
+    lv_draw_label_dsc_t *l = lv_draw_task_get_label_dsc(t);
+    if (a == KA_OK && !lv_buttonmatrix_has_button_ctrl(kb, b->id1, LV_BUTTONMATRIX_CTRL_DISABLED)) {
+        if (f) f->color = pressed ? ui_accent_mid() : ui_accent();
+        if (l) l->color = UI_INK;
+    } else if (a >= KA_BKSP && !pressed) {
+        if (f) f->color = UI_SURFACE_1;
+        if (l) l->color = UI_TEXT_2;
+    }
+    if (a == KA_SPACE && l) l->font = &ui_16;
+}
+
+lv_obj_t *ui_kb_create(lv_obj_t *parent, lv_obj_t *textarea, ui_kb_kind_t kind) {
+    kb = lv_keyboard_create(parent); ta = textarea;
+    lv_obj_remove_event_cb(kb, lv_keyboard_def_event_cb);   /* own handler only */
+    lv_obj_add_event_cb(kb, kb_value_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_flag(kb, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+    lv_obj_add_event_cb(kb, kb_draw_cb, LV_EVENT_DRAW_TASK_ADDED, NULL);
+    lv_keyboard_set_popovers(kb, false);
+    lv_keyboard_set_textarea(kb, ta);                     /* keeps cursor/focus handling */
+    lv_obj_set_pos(kb, 18, 115); lv_obj_set_size(kb, 324, 209);
+    lv_obj_set_style_pad_all(kb, 0, 0);
+    lv_obj_set_style_pad_row(kb, 3, 0); lv_obj_set_style_pad_column(kb, 4, 0);
+    lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_USER_1);
+    l1 = (kind == KB_TEXT_RU) ? &kb_ru : &kb_en;
+    kb_apply(kind == KB_HEX ? &kb_hex_l : l1);
+    return kb;
 }
 ```
 
-Styles on the keyboard:
+- Each L2 map (8 RU, 8 EN, punctuation, 8 symbol groups, «»—…: 26 in total) is a `static const` array in flash, about 100 B each. Ctrl maps are shared by shape (3 / 4 / 5 / symbol).
+- `lv_buttonmatrix_set_map` stores the map pointer, so maps must be static. It reallocates the button areas, at about 8 B per button.
+- A map swap redraws only the keyboard: 324×209 = 67.7k px, one frame of about 14 ms. No animation.
 
-| Selector | Style |
-|---|---|
-| `LV_PART_MAIN` | bg_opa 0, border 0, pad 0, pad_gap 0 |
-| `LV_PART_ITEMS` | bg SURFACE_2, radius 12, border 2 `#000`, text font_24 TEXT_1, no shadow |
-| `ITEMS \| CHECKED` | bg SURFACE_3, text TEXT_2 |
-| `ITEMS \| PRESSED` | bg COL_PRESSED |
-| `ITEMS \| DISABLED` | text TEXT_3 |
+### 4.6 Field behaviours
 
-The OK key accent and the Shift-active state use `LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS` with an `LV_EVENT_DRAW_TASK_ADDED` handler. It reads `lv_draw_task_get_draw_dsc(t)->id1` (the button index). For FILL tasks it sets `lv_draw_task_get_fill_dsc(t)->color`. For LABEL tasks on OK it sets `COL_ON_ACCENT`.
+| Field | Start layout | Accepted / limits | Secret | OK enabled when |
+|---|---|---|---|---|
+| Wi-Fi password | EN, language key disabled | printable ASCII 0x20–0x7E, 8–63 chars (WPA2) | yes | len ≥ 8 (or open network) |
+| SSID ("Другая сеть") | EN | ≤ 32 **bytes** (checked in UTF-8 bytes, not characters) | no | len ≥ 1 |
+| OpenRouter key | HEX | `0-9a-f`, 64 after the locked prefix (`lv_textarea_set_accepted_chars`) | yes | exactly 64 |
+| Other API key / base URL / model id | EN | printable ASCII, ≤ 200 | key yes | len ≥ 1; URL must start `http` |
+| Question to the assistant | UI language (RU) | any, ≤ 500 | no | len ≥ 1 |
 
-**Key echo** replaces popovers. It is a circle Ø52 on `lv_layer_top`: SURFACE_3, border 2 `#7B8CFF`, glyph in font_32.
-- Shown on `LV_EVENT_PRESSED` and moved on `LV_EVENT_PRESSING` (the selection follows a sliding finger). Hidden on `RELEASED` / `PRESS_LOST`.
-- Position comes from a precomputed per-index table, by default centre (key_cx, key_top − 28).
-- Exceptions computed to keep Rmax ≤ 166:
-  - R2 index 8 moves to x=64 and index 13 to x=296.
-  - R1 index 1 on symbol pages shows **below** the key, at (76,156).
-- All other R1 letter keys fit above. For example (128,50) gives 140 + 26 = 166 ✓.
-- Echo is shown for CHAR keys only.
-
-Because letters commit on release (`CLICK_TRIG`), a wrong press can be corrected by sliding onto the right key before lifting. ⌫ fires on press and auto-repeats every 100 ms after 400 ms (`LONG_PRESSED_REPEAT`).
+- **✕ or PWR** sends `LV_EVENT_CANCEL` to the textarea and returns to the caller; the caller keeps the draft only for questions.
+- **👁** toggles `lv_textarea_set_password_mode`.
+- Tapping the field does nothing (the cursor always stays at the end), which avoids precise cursor placement.
+- **BOOT** is ignored on this screen; see §2.3.
 
 ---
 
 ## 5. Interaction design
 
-### 5.1 Push-to-talk (identical for BOOT and the orb)
+### 5.1 Push-to-talk: hold and tap both work, with no setting
 
-```
-press ──► LISTEN (recording starts at once, 300 ms pre-roll from the mic ring buffer)
-  │ released < 350 ms ──► LATCHED: keep recording; ends on next tap, 1.2 s silence after ≥ 400 ms speech, or 30 s
-  │ held ≥ 350 ms     ──► HOLD: release = send
-  │ (orb only) finger > 80 px from orb centre ──► CANCEL-ARMED (orb ✕, hint "Отпустите — отмена") ── release = cancel
-  │ < 300 ms of speech energy at send ──► discard, toast "Удерживайте, пока говорите"
-  ▼
-UPLOAD (progress ring from bytes written) ──► THINK (until first SSE token) ──► reply streams into a bubble
-  ──► SPEAK (first TTS PCM) ──► IDLE           text-only: THINK ──► IDLE + "done" halo pulse
-```
+The mic runs into a **0.5 s PSRAM ring buffer** whenever the screen is awake (16 KB; never leaves RAM unless the user presses). On press, the last 250 ms are prepended so the first syllable is not lost.
 
-| Constant | Value |
-|---|---|
-| Debounce | 20 ms |
-| Tap / hold threshold | 350 ms |
-| Pre-roll | 300 ms |
-| VAD end (latched) | 1.2 s below −45 dBFS after ≥ 400 ms speech |
-| Max recording | 30 s (rim arc turns amber at 25 s; auto-send at 30) |
-| Chat → face return | 30 s without touch or audio |
-| Dim / sleep | 30 s → 30% backlight; +60 s → off and `lvgl_port_stop()` |
-| Error auto-clear | 6 s for transient errors; config errors persist |
-| Toast | 2000 ms |
+| From | Event | To | Effects |
+|---|---|---|---|
+| IDLE | press (BOOT or orb) | REC_PRESS | capture starts with pre-roll; earcon ↑; orb → LISTENING; status "Слушаю…" |
+| REC_PRESS | release after ≥ 400 ms | SEND | earcon ↓ |
+| REC_PRESS | release after < 400 ms | REC_LATCHED | core shows ■; status "Нажмите — отправлю" |
+| REC_PRESS (orb) | finger > cancel radius (hero 110 px, compact 70 px from the orb centre) | REC_CANCEL | orb grey, ✕ in core; status "Отпустите — отмена" |
+| REC_CANCEL | finger back inside | REC_PRESS | – |
+| REC_CANCEL | release | IDLE | audio discarded; earcon "cancel" |
+| REC_LATCHED | press (BOOT or orb) | SEND | sends on press-down (snappy) |
+| REC_LATCHED | VAD: ≥ 400 ms speech, then 1200 ms silence | SEND | automatic |
+| REC_LATCHED | no speech for 5 s | IDLE | neutral status "Не расслышал" 2 s |
+| REC_* | 25 s elapsed | – | status countdown "Ещё 5 с" … "1 с" |
+| REC_* | 30 s elapsed | SEND | automatic |
+| REC_* | PWR | IDLE | discard, "Отменено" |
+| SEND | VAD speech < 300 ms | IDLE | "Слишком коротко" 1.5 s, **no request** (saves money) |
+| SEND | otherwise | UPLOADING | encode, POST |
+| UPLOADING | body fully written | THINKING | – |
+| THINKING | `transcript` field arrives (streamed JSON) | THINKING | the user bubble appears early |
+| THINKING | reply text | SPEAKING (voice on + speaker present), else ANSWERED → IDLE | reply bubble |
+| SPEAKING | playback finished | IDLE | – |
+| SPEAKING | press (BOOT/orb) | IDLE, or REC_PRESS if still held at 400 ms | TTS flushed within 50 ms; recording starts after the flush (no pre-roll, so no TTS tail is captured) |
+| UPLOADING / THINKING | tap | – | orb pulse; hint "PWR — отмена" (first uses) |
+| UPLOADING / THINKING | hold ≥ 400 ms | REC_PRESS | old request aborted |
+| UPLOADING / THINKING | PWR | IDLE | abort, "Отменено" |
+| any | network/API error | ERROR (2.4 s) | then IDLE or OFFLINE (§5.6) |
 
-Earcons, only when a speaker is present and "Звуки интерфейса" is on:
-- start: 880 → 1320 Hz, 60 ms, −18 dBFS. Recording begins after the earcon, and the pre-roll covers the gap.
-- send: a falling tone.
-- error: a low double tone.
-All are generated procedurally, with no assets.
+The FSM runs in the **app task**. The UI only mirrors it through `s_ui_state` (§7.5).
 
-### 5.2 Cancel, retry, barge-in
+### 5.2 Cancel, interrupt, text-only
 
-- **Cancel** by sliding off the orb, PWR during LISTEN/UPLOAD/THINK, or BOOT during UPLOAD/THINK (that cancels and re-listens). The HTTP request is aborted, the orb plays the collapse animation, and a toast says "Отменено".
-- **Retry**: the last recording (≤ 960 KB at 16 kHz/16-bit) stays in PSRAM until the next turn. "Повторить" re-sends it without re-recording.
-- **Barge-in**: BOOT or the orb during SPEAK ramps audio to 0 over 30 ms and stops. A tap goes to IDLE; holding goes straight to LISTEN. Tapping an assistant bubble or translator card replays its audio if a speaker is present.
+- **Cancel recording:** PWR, or slide off the orb and release.
+- **Interrupt speech:** tap the orb, BOOT, PWR, or the 🔊 button (which also switches to text-only).
+- **Barge-in:** hold BOOT or the orb while the device speaks; it stops and listens.
+- **Text-only toggle:** the 🔊/🔇 button at (100, 292) and the matching row in Settings.
+  - The state persists (NVS write debounced by 2 s, done while no animation runs).
+  - Toggling shows a 1.5 s pill toast "Голос выкл." / "Голос вкл.".
+  - In text-only mode the orb goes THINKING → ANSWER-READY pulse (A9) → IDLE.
+- **No speaker** (configured in onboarding or Settings): replies are always text. The 🔇 icon has a 6 px `warning` dot. Tapping it posts a card "Динамик не подключён. Отвечаю текстом" with the action "Проверить звук".
 
-### 5.3 Text-only toggle
+### 5.3 What the orb shows
 
-Subject `S_VOICE`. It can be toggled from three places: the dial tile, the chat-pose voice chip and the settings row. A toast confirms: "Ответы только текстом" / "Голосовые ответы включены".
+Hero values (compact values in brackets). L = mic level 0..1 and T = TTS level 0..1, both smoothed (attack 0.6, release 0.12 per 33 ms tick). Mic L = clamp((dBFS + 50)/40, 0, 1).
 
-When off:
-- No `/audio/speech` calls are made, which saves money.
-- The orb skips SPEAK.
-- The status bar shows F6A9.
-
-If `S_SPEAKER`=0, the toggle is disabled with "Динамик не подключён". The setting is made in onboarding O4 and settings; the PCM5101 cannot detect a speaker. Volume 0 behaves like voice off for TTS requests.
-
-### 5.4 Translator turn-taking
-
-- **One talk control** (BOOT or orb, same hybrid PTT). Whoever speaks presses, or the user presses for the other person.
-- The request asks for `{src_lang, transcript, translation}` with A and B given. The target is whichever was not spoken.
-- If `src_lang` ∉ {A, B}: the hint shows "Не понял язык — повторите" and nothing is spoken.
-- After detection the direction dot travels from the source code to the target code (§6 A16). The target code brightens, and TTS speaks with the target-language voice from the locale map.
-- If there is no voice for the target language (e.g. MAI lacks uk), the card gets a "нет голоса" chip and stays text-only.
-- **Fix-up:** every card has a 16 px direction chip, for example "RU→EN ⇄" (visual 64×28, `ext_click_area` 12 → 88×52). Tapping it re-sends the same audio with the direction forced reversed.
-- Optional v1.1 "show to partner": `esp_lcd_panel_mirror(panel, true, true)` plus `esp_lcd_touch_set_mirror_x/y` rotate the whole UI 180° in hardware at zero render cost.
-
-### 5.5 What the orb shows
-
-| State | Core | Halo (A8) | Ring | Hint (face) | Loop rate |
+| State | Core | Halos | Ring / arcs | Centre content | Status (pill slot) |
 |---|---|---|---|---|---|
-| IDLE | R 60↔62, IDLE gradient | opa 90↔160, 4 s ease-in-out | — | "Удерживайте и говорите" or peek | 15 Hz; stops after 60 s |
-| PRESSED | R → 56 in 90 ms | — | — | — | anim |
-| LISTEN | R 60 static, teal | opa 180 | 32 bars, w 4, r 72→72+len, len 4–26 from mic RMS × travelling wave; rim timer arc r164 w3 | "Отпустите — отправлю" / "Нажмите — отправлю" | 30 Hz |
-| CANCEL-ARMED | ERROR gradient, ✕ icon | 120 | bars freeze at 30% opa | "Отпустите — отмена" (coral) | — |
-| UPLOAD | R 58, violet | 120 | progress arc r=R+16, w 6, 0→360° by bytes | "Отправляю…" | event ≤ 15 Hz |
-| THINK | R 58±3, 600 ms | 140 | arc A r=R+16 w6 70° at 300°/s; arc B r=R+28 w3 40° at −200°/s, opa 70% | "Думаю…" / translator "Перевожу…" | 30 Hz |
-| SPEAK | R 60, amber | 150↔200, 1.6 s | 32 bars from TTS-output RMS (attack 60 ms, release 220 ms) | "Нажмите, чтобы прервать" | 30 Hz |
-| ERROR | coral + glyph font_32 | 120 | — | error title + action pill | static after shake |
+| IDLE · Assistant | r 70 [30], gradient `#7C9CFF`→`#617AC7` | h1 `#252F4D` r 80↔84 [36]; h2 `#111624` r 92↔98 [42↔44], breathing 3 s | – | first-use label (`ink`) | pill "Ассистент ⌄" |
+| IDLE · Translator | `#FFA94D`→`#C7843C` | `#4D3317` / `#24180B` | – | "Говорите / RU или EN" | "RU ⇄ EN ⌄" |
+| LISTENING | `#34E0C3`→`#29AF98`, r 70+4L [30+2L] | h1 `#10433B` r 80 fixed; h2 hidden | 24 bars [16], width 6 [4], round caps, `#34E0C3`; r_in 78 [34], length 4+16·Lᵢ [3+7·Lᵢ] → r_out ≤ 98 [44]; Lᵢ = L·(0.6+0.4·sin(φ+i·2π/7)), φ += 0.09 rad/tick | latched: ■ (`ink`, `ui_28`) | "Слушаю…" / "Нажмите — отправлю" / "Ещё 5 с" |
+| CANCEL-ARMED | `#6B7380` flat | hidden | bars `#6B7380` | ✕ | "Отпустите — отмена" |
+| UPLOADING | mode mid (`#44568C` / `#8C5D2A`) | h1 = mode dim | progress arc r 82 [36], width 4 [3], mode accent from −90° clockwise to `s_upload_pct`; track `surface-2` | – | "Отправляю 62%" |
+| THINKING | mode mid, r 66↔70 every 1.2 s | h1 mode dim | arc A r 82 [36] w 4, 70°, +300°/s; arc B r 90 [41] w 3 [2], 40°, −200°/s; mode accent, opa 255 / 140 | – | "Думаю…" → after 6 s "Ещё немного…" |
+| SPEAKING | `#B794FF`→`#8F73C7`, r 70+4T [30+2T] | h1 `#372C4D` | echo rings: r 76+12T (w 3, opa 160) and r 84+14T (w 2, opa 90) [32+6T / 37+7T] | translator: target code "EN" (`ink`, `ui_20`) | "Нажмите — стоп" (first uses) |
+| ANSWER-READY (text-only) | mode accent | h1 flashes to mode mid 300 ms, back in 600 ms | – | – | – |
+| ERROR | `#FF5C5C`→`#C74848`, shake | h1 `#4D1C1C` | – | ⚠ (`ink`, `ui_28`) | short error, coral |
+| OFFLINE | hollow: 3 px ring `#6B7380`, fill `#000` | none | – | wifi icon `#6B7380` | pill "Нет Wi-Fi ›" (coral) |
+| AMBIENT | r 12, mode accent | h1 r 18, mode halo1, 8 s breathing | – | – | (clock face) |
 
-The mini orb in chat pose uses the same states: R=28, bars width 3 at r 36→48 (len 2–12), and a 120×120 halo mask.
+Orb presets: HERO (box 204, centre (180, 192)), COMPACT (box 92, centre (180, 290)), MINI (box 96, core 28) and AMBIENT (box 40, core 12). Hit test (`LV_EVENT_HIT_TEST`): circle of radius core_r + 10, i.e. 80 / 40 / 38 px. Orb taps in OFFLINE open W; in ERROR they dismiss the error.
 
-Bar formula, per 33 ms tick:
+### 5.4 Chat behaviour
 
-```
-target_i = Lmin + (Lmax − Lmin) · lvl · (0.75 + 0.25·sin(2π·(i/8) + ω·t))
-lvl = clamp((dBFS + 60)/60, 0, 1)
-len_i += (target_i − len_i) · (target_i > len_i ? 0.5 : 0.2)
-ω = 2π/1.2 s (listen) or 2π/2 s (speak)
-```
+- **User bubble:** appears as soon as the transcript is known (A11). With a non-streamed JSON reply, the user bubble and the reply appear together, the reply 80 ms later.
+- **Reply, voice on:** sentences appear **as their TTS chunk starts playing**, because TTS is pipelined per sentence. If TTS fails, all text appears at once and a `ui_16` `text-3` note "🔇 голос недоступен" goes under the reply.
+- **Reply, voice off:** text appears as it streams. The label updates at most every 100 ms, because a label relayout costs scale with the whole text.
+- **Auto-scroll:** `lv_obj_scroll_to_y(chat, LV_COORD_MAX, LV_ANIM_ON)` on every new sentence. A manual scroll by the user suspends auto-scroll until the next turn, and the next press of talk jumps back to the bottom.
+- **Mode histories:** each mode has its own history. Switching mode rebuilds the chat children (≤ 20, < 10 ms) and picks the empty or conversation layout.
+- **Typed question** (M → "Написать текстом"): K returns the text and the FSM goes straight to THINKING with a text-only request. The bubble shows the typed text.
 
-### 5.6 Chat bubbles and translator cards
+### 5.5 Translator turn-taking: one control with auto-detection
 
-1. On send, a **user bubble** appears at once, right-aligned. It shows F130 plus the duration "0:04" in TEXT_2. When the streamed JSON yields `transcript` (structured outputs stream partial JSON), the label text is replaced.
-2. An **assistant bubble** appears left-aligned, with three typing dots (8 px, opa wave 900 ms). Reply deltas are appended at most every 125 ms (8 Hz) to bound relayouts.
-3. **Follow mode:**
-   - While text streams and the reply fits, the view is scrolled to the bottom with `LV_ANIM_OFF`.
-   - If the bubble is taller than the 202 px box, scroll so its top sits at the top of the box. During SPEAK, scroll proportionally to TTS progress: `y = top + (h − 202)·spoken_chars/total_chars`, at 8 Hz.
-   - Any touch on the chat stops follow mode.
-4. Scroll-to-new-message uses `lv_obj_scroll_to_view(row, LV_ANIM_ON)`. Tapping an assistant bubble replays TTS.
-5. Limits:
-   - 40 rows are kept as LVGL objects; the oldest are deleted.
-   - Message text is kept in a 64 KB PSRAM ring (about 100 messages).
-   - It is persisted to `/storage/history.txt` every 10 turns and on power-off.
-   - "Очистить историю" exists in settings and as the first element at the top of the chat log.
-6. **Translator card**:
-   - r16, width 160–240.
-   - Left-aligned with tint `COL_CARD_A` when spoken in A, right-aligned with `COL_CARD_B` when spoken in B.
-   - A 3 px border on the target side (`border_side LEFT` / `RIGHT`) in the target language colour.
-   - Children: direction chip (font_16 TEXT_2), transcript (font_16 TEXT_2), translation (font_24 TEXT_1 for the newest card, font_20 for older ones).
-7. Inline failures appear as a centred system line, font_16 coral, for example "Нет интернета · Повторить". Tapping it retries.
+- **One talk control for both people** (the orb or BOOT). The request carries both languages. The JSON schema constrains `src_lang` to `enum [A, B]` and returns `{src_lang, transcript, translation, display_text?}`. The model translates into the other language, and TTS uses the voice mapped to the target language.
+- **Why not two buttons ("me"/"them"):**
+  - the board has a single BOOT button;
+  - two on-screen buttons would halve the hero target;
+  - each speaker would have to pick the right button, which is extra learning and a common error under social pressure;
+  - the requirement explicitly asks the device to work out the spoken language.
+- **Override for edge cases** (names, one-word utterances): M → Направление (Авто / RU→EN / EN→RU). When forced, the pill shows "RU → EN" instead of "RU ⇄ EN", so the override is never hidden.
+- **Direction feedback:** for 2 s after detection the pill shows the direction ("EN → RU"). During speaking the core shows the target language code, so the listener knows it is for them.
+- **No speaker:** translations display at `ui_28` when short, and a tap opens the Reader view to show the other person.
 
-### 5.7 Error states
+### 5.6 Error states
 
-| Trigger | Glyph | Title RU / EN | Action pill → | Clears |
+| Fault | Detection | Pill | Card title / body (RU · EN) | Action → screen |
 |---|---|---|---|---|
-| STA not connected > 10 s | F1EB | Нет Wi-Fi / No Wi-Fi | Выбрать сеть → S5 | on connect |
-| DNS/TLS fail with Wi-Fi up | F127 | Нет интернета / No internet | Повторить | 6 s |
-| HTTP 401 | F084 | Ключ API не подходит / API key rejected | С телефона → S10 (secondary: ввести → S6 KEY via S4k) | on a new valid key |
-| HTTP 402 | F51E | Закончились кредиты / Out of credits | Пополнить → S10q `https://openrouter.ai/settings/credits` | on success |
-| HTTP 403 "region" | F0AC | Недоступно в регионе / Not available in region | Сменить провайдера → S10 (advanced) | persistent |
-| HTTP 429 | F252 | Подождите минуту / Please wait a minute | — (auto-retry countdown on the rim arc, 30 s) | auto |
-| 5xx / 524 / 529 / timeout | F0C2 | Сервер не ответил / Server didn't respond | Повторить (re-sends the kept audio) | 6 s |
-| 404 model / 400 params | F071 | Модель недоступна / Model unavailable | Выбрать модель → S7 | on change |
-| Mic RMS < −55 dBFS for the whole clip | F131 | Не слышу вас / I can't hear you | — | 3 s |
-| TTS failed | — (inline chip on the bubble: "🔇 голос недоступен") | — | — | — |
-| No speaker | F6A9 in the status bar + one-time toast "Динамик не подключён — ответы текстом" | — | Settings row | — |
-| `limit_remaining` < $1 | COL_WARN dot on the settings key row + one-time toast "Мало кредитов" | — | — | — |
+| No Wi-Fi | not configured, or `WIFI_EVENT_STA_DISCONNECTED` (auto-reconnect 2→60 s backoff) | "Нет Wi-Fi ›" coral; orb OFFLINE | "Нет подключения к Wi-Fi" / "Подключаюсь снova…" · "Not connected to Wi-Fi" / "Reconnecting…" | "Настроить" → W |
+| Bad key | HTTP 401 (or 403 with an invalid-key message) | "Ключ не принят ›" coral | "Ключ API не подошёл (401)" · "API key rejected (401)" | "Заменить ключ" → Q (or K hex) |
+| No credit | HTTP 402 | "Нет средств ›" yellow | "Закончились средства" / "Пополните баланс на openrouter.ai" · "Out of credit" / "Top up at openrouter.ai" | "Подробнее" → P (shows the `/api/v1/key` limit) |
+| Low credit | `/api/v1/key` limit_remaining < $0.50 (checked daily; a per-key limit must be set) | "Мало средств" yellow (once a day) | – | – |
+| Region blocked | 403 "Not available in your region" | "Недоступно ›" coral | "Сервис недоступен в регионе" · "Service not available in your region" | "Провайдер" → P |
+| Model gone | 404, or 400 "model not found" | "Модель недоступна ›" | "Модель недоступна" · "Model unavailable" | "Выбрать" → AI |
+| Rate limit | 429 (+ Retry-After, default 10 s) | – | "Слишком часто — подождите 10 с" (countdown arc in the card) | – |
+| Server / timeout | 5xx, 524, 529, connect > 10 s, response > 30 s, SSE `finish_reason:"error"` | – | "Сервер не ответил" · "Server didn't respond" | "Повторить" (re-sends the cached clip in PSRAM) |
+| TLS / DNS | esp-tls error | – | "Не удаётся связаться с сервером" | "Повторить", "Диагностика" → D |
+| Not heard | empty transcript or VAD < 300 ms | – | neutral `text-2` status "Не расслышал" (no card, no red) | – |
+| Mic dead | all-zero / flat RMS for the whole clip | "Микрофон ›" coral | "Микрофон молчит" · "Microphone is silent" | "Диагностика" → D |
+| No speaker | configuration flag (the PCM5101 cannot sense a speaker) | 🔇 + yellow dot | "Динамик не подключён" / "Отвечаю текстом" | "Проверить звук" → D |
+| Low battery | ≤ 10 % | toast "Батарея 10 %" | – | – |
 
-Error shake: orb x offsets 0, −6, +6, −4, +4, −2, 0 over 360 ms.
+### 5.7 Onboarding (first boot)
 
-### 5.8 Sleep, wake, power
+1. **O1, Language.** Title "Привет! · Hello!". Primary "Русский", secondary "English".
+2. **O2, Network.** "Подключим Wi-Fi". Primary "С телефона (QR)" → Q, which takes Wi-Fi + API key + optional model on one page. Secondary "Выбрать сеть здесь" → W → K.
+3. **O3, Key.** Skipped if Q delivered the key. Primary "С телефона (QR)", secondary "Ввести вручную" (K hex). Subtitle "Ключ: openrouter.ai/keys".
+4. **O4, Speaker.** "Проверим звук" plays three chimes. Primary "Слышу", secondary "Нет динамика"; the latter sets `s_speaker = 0` and voice to text-only.
+5. **O5, First try.** Hero orb with the label "Скажите «Привет»". This is a real round trip, and any fault is shown with its fix (§5.6). On success: "Готово" → H.
 
-- Dim and wake use the **LEDC hardware fade** (`ledc_set_fade_with_time`). Dim takes 400 ms, wake 150 ms, and boot fades in over 300 ms after the first frame. These fades cost LVGL nothing.
-- Asleep: `lvgl_port_stop()` and orb timers paused. Wake: `lvgl_port_resume()`.
-- Never sleep while in LISTEN, THINK or SPEAK, or while on the phone-setup screen.
-- PWR hold:
-  - at 2 s the off-ring appears and grows 0 → 360° over 1 s;
-  - releasing early cancels;
-  - at 3 s the device saves history, shows "До свидания" for 400 ms, fades the backlight out, and drives GPIO7 low.
+### 5.8 Sleep, ambient, power
 
-### 5.9 Copy deck (core strings)
+| Event | Result |
+|---|---|
+| 30 s idle | backlight fades to 25 % (LEDC hardware fade, 800 ms) |
+| +60 s | Ambient face, backlight 15 % |
+| +5 min | screen off: backlight 0, mic off, LVGL timers paused, the LVGL task sleeps |
+| Wake | BOOT wakes to H and **starts listening at once** (voice-first, like raising a watch). PWR or touch wakes to H; the waking touch is swallowed. |
+| PWR at H idle | screen off immediately |
+| PWR held 3 s | rim progress ring (A21), then power off: GPIO7 low on battery. On USB the screen goes off and the toast says "Питание от USB" (the latch cannot cut USB power). |
 
-| Key | RU | EN |
-|---|---|---|
-| hint_hold | Удерживайте и говорите | Hold and speak |
-| hint_release | Отпустите — отправлю | Release to send |
-| hint_tap_send | Нажмите — отправлю | Tap to send |
-| hint_cancel | Отпустите — отмена | Release to cancel |
-| hint_sending | Отправляю… | Sending… |
-| hint_thinking | Думаю… | Thinking… |
-| hint_translating | Перевожу… | Translating… |
-| hint_stop | Нажмите, чтобы прервать | Tap to stop |
-| hint_pair | Говорите на %s или %s | Speak %s or %s |
-| toast_cancelled | Отменено | Cancelled |
-| toast_short | Удерживайте, пока говорите | Hold while you speak |
-| toast_text_only | Ответы только текстом | Text-only replies |
-| mode_assistant / translator | Ассистент / Переводчик | Assistant / Translator |
-| voice_on / off | Голос: вкл / Голос: выкл | Voice: on / Voice: off |
-| settings | Настройки | Settings |
-| kb_ph_password | Пароль для %s | Password for %s |
-| unknown_lang | Не понял язык — повторите | Language not recognised |
+### 5.9 Earcons and first-use hints
 
-All strings live in `const char * const STR[STR_COUNT][2]`. Layout widths are budgeted for the Russian strings, which run about 20–30% longer. Changing the UI language rebuilds all screens.
+**Earcons** play only when a speaker is present, at 30 % of the master volume, and are generated as sine tones with an envelope (no assets):
+
+| Event | Tone |
+|---|---|
+| Listening starts | 660 → 880 Hz, 60 ms |
+| Sent | 880 → 660 Hz, 60 ms |
+| Cancel | 440 Hz, 40 ms |
+| Error | 330 Hz, 120 ms |
+
+**First-use hints.** `s_hints` starts at 3 and drops by 1 after each successful turn. While it is above 0, the UI shows the orb label and the instructive status strings. Diagnostics → "Показать подсказки" restores it.
 
 ---
 
-## 6. Animations and frame budget
+## 6. Animations and the frame budget
 
-**Cost model (estimate; check with LV_USE_SYSMON):**
-- Bus: QSPI 80 MHz × 4 = 40 MB/s, which is 20 Mpx/s. 40 k px takes 2.0 ms; a full frame (129.6 k px) takes 6.5 ms. At 40 MHz everything is doubled.
-- Software render on the S3 at 240 MHz without SIMD (esp_lvgl_port SIMD is off for LVGL ≥ 9.2): about 15–25 ns/px for opaque fill, about 50–80 ns/px for blended, anti-aliased or text pixels.
-- Rendering in 360×40 strips is double-buffered, so DMA overlaps rendering.
+### 6.1 Budget model
 
-**Budget rules:**
-- Looping animations: ≤ 45 k px per frame at ≤ 30 Hz.
-- Transitions: ≤ 80 k px per frame for ≤ 450 ms.
-- No full-screen invalidation two frames in a row.
-- `LV_DEF_REFR_PERIOD 33` (30 fps cap; try 20 ms only after measuring).
-- Looping orb effects run from one `lv_timer` per orb (66 ms idle, 33 ms active). The orb timer phase is derived from `lv_tick_get()`, and the timer is paused when its screen is not active.
+**Bus cost.** RGB565 is 2 B/px, so the bus costs **0.05 µs per pixel** at 40 MB/s (0.1 µs at 20 MB/s). Reference areas:
+- hero orb 204² = **41.6k px**, 2.1 ms;
+- compact orb 8.5k px;
+- chat viewport 41.3k px;
+- list viewport 68k px;
+- keyboard 67.7k px;
+- full screen 129.6k px, 6.5 ms.
 
-| # | Animation | Mechanism | Properties | Duration / easing | Invalidated per frame | Estimate |
+**Render cost.** These are assumptions to verify with lv_sysmon. The LVGL 9.5 software renderer on the S3 runs without the SIMD blend (esp_lvgl_port only compiles it for LVGL 9.1.x). Assume about 8–10 Mpx/s for anti-aliased shapes and about 4–5 Mpx/s for text-dense areas. The two partial buffers let DMA of one chunk overlap rendering of the next. A 204-px-wide area is rendered in strips of 28.8 KB / (204·2) = 70 rows, i.e. 3 chunks.
+
+**Rules:**
+
+| Rule | Limit |
+|---|---|
+| Steady animation | ≤ 50k px per frame, ≤ 8 ms per frame |
+| Transitions | ≤ 90k px per frame, for ≤ 500 ms |
+| Full-screen redraw | only once, at a screen change (≈ 25 ms frame), never animated |
+| Continuous orb motion | driven by one **orb ticker** `lv_timer` at 33 ms (30 fps), parameters computed from `lv_tick_get()`. `lv_anim` is used only for one-shot transitions, which run at LVGL's refresh rate (`LV_DEF_REFR_PERIOD 16`). |
+| Partial invalidation | the orb is one object, so any change redraws its whole box; there is no per-part invalidation and no layers |
+
+**Acceptance test.** With lv_sysmon running on the device, every row of §6.2 must hold ≥ 30 fps, and LVGL CPU on core 1 must stay ≤ 70 % during A3/A7 at 80 MHz QSPI. If not, apply these fallbacks in order: hero bars 24 → 16, drop halo2 while listening, ticker 33 → 40 ms.
+
+### 6.2 Animation table
+
+| # | Animation | LVGL mechanism | Animated properties | Duration · easing | Invalidated / frame | Est. cost / frame |
 |---|---|---|---|---|---|---|
-| A1 | Idle breathing | orb `lv_timer` 66 ms | halo opa 90↔160, core R 60↔62 | 4 s period, sine (ease-in-out) | orb box 200×200 = 40 k px | ~4 ms/frame at 15 Hz (~6% CPU); stops after 60 s |
-| A2 | Press feedback | `lv_anim` custom exec (R) | R 60→56 / back | 90 ms ease_out / 160 ms overshoot | core box 124×124 = 15 k | trivial |
-| A3 | Any state colour change | `lv_anim` 0→255 `mix`; draw uses `lv_color_mix(new, old, mix)` | accent, gradient, halo opa | 180 ms (→LISTEN), 240 ms (→SPEAK), 160 ms (→ERROR), ease_out | 40 k | 6 frames |
-| A4 | Listening bars | orb timer 33 ms + atomic mic dBFS | 32 bar lengths | continuous | **4 ring bands** around a static core: 2×(200×38) + 2×(38×124) = 24.6 k via `lv_obj_invalidate_area` | ~3 ms → 30 fps |
-| A5 | Recording rim timer | `lv_arc` value at 4 Hz | indicator angle | 30 s linear | changed sector only (`lv_arc` invalidates the delta) | ~0 |
-| A6 | Upload progress | event-driven ≤ 15 Hz | arc end angle | — | ring bands 24.6 k | low |
-| A7 | Thinking | 2 `lv_anim` REPEAT_INFINITE (angles) + core breath | arc angles, R ±3 | 1200 ms/rev linear, 1800 ms/rev, 600 ms ease_in_out | 40 k | ~4–5 ms → 30 fps |
-| A8 | Speaking bars | orb timer + atomic TTS dBFS | bar lengths, halo opa | continuous | 40 k (big) / 14.4 k (mini) | 30 fps |
-| A9 | Error shake | `lv_anim` 0..6 keyframe index → `shake_dx` | x offset | 360 ms linear keyframes | 212×200 = 42 k | 11 frames |
-| A10 | Face → chat pose | `lv_anim_timeline`: 0–300 ms orb (custom exec: y 164→296, R 60→28, obj 200→120, hit 76→36); 0–150 ms halo opa →0 then mini halo 150–300 ms; 120–240 ms hint and chip opa →0; 260–440 ms chat container `translate_y` 16→0 + `opa` 0→255; 300–440 ms chips Ø40→52 + opa | position, radii, opa (`opa`, not `opa_layered`) | 440 ms, ease_in_out (orb), ease_out (others) | ≤ 42 k (orb union) + 52 k (chat) during the 40 ms overlap; otherwise ≤ 52 k | peak ~94 k for ~2 frames; acceptable |
-| A11 | Chat → face | same timeline, `lv_anim_timeline_set_reverse(tl, true)` + start | — | 440 ms | same | — |
-| A12 | New bubble | `lv_anim` ×2 on the row | translate_y 12→0, opa 0→255 | 200 ms ease_out | row ≤ 248×80 = 20 k (+ scroll) | — |
-| A13 | Chat scroll / scroll_to_view | LVGL scroll anim | scroll_y | ~200–400 ms (LVGL default) | chat box 248×202 = 50 k | ~5 ms + 2.5 ms bus → 30 fps |
-| A14 | Typing dots | `lv_anim` repeat, 3 dots phase-shifted | opa 80↔255 | 900 ms loop | 40×16 | ~0 |
-| A15 | Dial open | screen load NONE (instant black), then 4 `lv_anim` on tiles | w/h 92→116 (children centred by align), opa 0→255 | 200 ms ease_out, stagger 0/30/60/90 ms | ≤ 4×116² = 54 k | 8 frames |
-| A16 | Translator direction dot | `lv_anim` custom exec θ 180°→0° on r=104 around (180,164) | dot pos, colour A→B | 420 ms ease_in_out | 2×14×14 | ~0 |
-| A17 | List / secondary screen enter | screen load NONE + container anim | translate_y 12→0, opa 0→255 | 160 ms ease_out | 232×312 = 72 k | 5 frames |
-| A18 | List scroll + distance fade | LVGL scroll + `LV_EVENT_SCROLL` sets row `opa` | scroll_y, opa | — | 72 k | ~7–9 ms → ~30 fps (watch) |
-| A19 | Key press / echo | state change, no theme transition | bg colour; echo show/move | 1 frame | key 53×50 + echo 52×52 ≈ 5.4 k | ~0 |
-| A20 | Toast | `lv_anim` ×2 | opa, translate_y −8→0 | 160 ms in, 2000 ms dwell, 200 ms out | 220×36 = 8 k | ~0 |
-| A21 | Volume arc drag | `lv_arc` | indicator sector, value label | — | sector + 80×40 | low |
-| A22 | Power-off ring | `lv_anim` on `lv_arc` value | 0→360° | 1000 ms linear | sector delta | ~0 |
-| A23 | Backlight fades (boot, dim, wake, off) | **LEDC hardware fade**, not LVGL | duty | 300 / 400 / 150 / 300 ms | 0 | 0 |
-| A24 | Mode switch (face ↔ face) | `lv_screen_load` NONE + A3 colour flash + codes opa 0→255 | — | 200 ms | ≤ 40 k + 2×64² | — |
-| A25 | Text-only "done" pulse | `lv_anim` | halo opa →255 → back | 400 ms ease_out | 40 k | 12 frames |
+| A1 | Idle breathing | 2 × `lv_anim` on orb params; exec_cb invalidates only when the integer radius changes | h1 r 80↔84, h2 r 92↔98 (phase +1500 ms) [compact h2 42↔44] | 3000 ms each way, ease_in_out, reverse, infinite | 41.6k [8.5k], **only ≈ 4–6 redraws/s** | ≈ 6 ms per redraw; < 5 % CPU |
+| A2 | Press-in → listening | `lv_anim_timeline` | core r 70→64 (90 ms ease_out) → 70 (110 ms ease_out); colour mode→listen (`lv_color_mix`, 200 ms); bar scale 0→1 (180 ms ease_out); pill and ⚙ `opa` 255→0 (150 ms ease_in, then HIDDEN) | 200 ms | 41.6k + 7k + 2.7k = 51.3k | ≈ 7 ms |
+| A3 | Listening level | orb ticker reads `atomic_int mic_level` | bar lengths, core r | continuous, 30 Hz | 41.6k [8.5k] | ≈ 6 ms [1.5 ms] |
+| A4 | Release → uploading | `lv_anim` + ticker | bars 1→0 (160 ms ease_in); colour listen→mode mid (200 ms ease_out); progress arc from `s_upload_pct` | 200 ms, then steady | 41.6k | ≈ 5 ms |
+| A5 | Thinking | orb ticker | arc phases (+300°/s, −200°/s), core r 66↔70 (1.2 s, sine) | continuous | 41.6k [8.5k] | ≈ 5 ms |
+| A6 | Thinking → speaking | `lv_anim_timeline` | arcs opa 255→0 (150 ms ease_in); colour → speak (250 ms ease_out) | 250 ms | 41.6k | ≈ 5 ms |
+| A7 | Speaking level | orb ticker reads `atomic_int tts_level` (RMS per 20 ms I2S block) | core r, 2 echo-ring radii | continuous, 30 Hz | 41.6k [8.5k] | ≈ 5 ms |
+| A8 | Back to idle | `lv_anim_timeline` | rings → 0 (200 ms ease_in); colour → mode (300 ms ease_in_out); pill/⚙ opa 0→255 (200 ms ease_out) | 300 ms | 51.3k | ≈ 7 ms |
+| A9 | Answer-ready pulse | `lv_anim` (reverse) | h1 colour halo1 → mid → halo1 | 300 ms ease_out + 600 ms ease_in_out | 41.6k | ≈ 5 ms |
+| A10 | Hero → compact (first message) | `lv_anim_timeline` | orb `lv_obj_set_pos/size` y 90→244, box 204→92, params scaled (0–320 ms ease_in_out); orb label opa 255→0 (0–100 ms); chat container opa 0→255 (280–460 ms ease_out) | 460 ms | ≤ 83k (old + new orb boxes) early, ≤ 50k later | ≤ 12 ms (≥ 30 fps worst case) |
+| A10r | Compact → hero ("Новый разговор") | same timeline, `lv_anim_timeline_set_reverse()` | – | 460 ms | ≤ 83k | ≤ 12 ms |
+| A11 | Message appears | `lv_anim`, custom exec sets style `opa` + `translate_y` (neither creates a layer) | opa 0→255, translate_y 12→0 | 220 ms ease_out; reply +80 ms | ≤ 252×120 = 30k | ≈ 5 ms |
+| A12 | Auto-scroll | `lv_obj_scroll_to_y(..., LV_ANIM_ON)` | scroll_y | LVGL-computed (≈ 200–400 ms) | 41.3k | ≈ 9–10 ms (text-dense) |
+| A13 | Mode colour morph | `lv_anim` 0→255, exec mixes colours | core gradient, halos, pill accent | 400 ms ease_in_out | 41.6k + 7k | ≈ 6 ms |
+| A14 | Pill/status text swap, toasts | 2 × `lv_anim` on label `opa` | old 255→0 (100 ms ease_in), text swap, new 0→255 (160 ms ease_out) | 260 ms | ≤ 9k | < 1.5 ms |
+| A15 | Error shake | `lv_anim`, custom path | core x offset = 6·sin(6πt)·(1−t); colour → error (120 ms) | 360 ms | 41.6k (the shake stays inside the box) | ≈ 5 ms |
+| A16 | List screen entrance | `lv_anim` on the list container (`opa` multiplies children, no layer) | translate_y 16→0, opa 128→255 | 180 ms ease_out (after an instant `lv_screen_load`) | 68k | ≈ 13 ms (≥ 30 fps) |
+| A17 | Rim scroll indicator | `lv_arc_set_angles` on `LV_EVENT_SCROLL`; `lv_anim` fade | thumb angles; opa → 0 after 600 ms idle (300 ms ease_in) | – | arc segment bbox ≈ 60×190 = 11k | ≈ 1.5 ms |
+| A18 | Press feedback | `lv_style_transition_dsc_t` | bg_color | 80 ms linear | the target only (≤ 16k) | < 3 ms |
+| A19 | Keyboard map swap | none (instant) | – | – | 67.7k once | ≈ 14 ms, single frame |
+| A20 | Arc adjuster drag | native `lv_arc` (invalidates only the changed segment) | indicator angle, value label | – | ≤ 15k | ≈ 3 ms |
+| A21 | PWR hold ring | `lv_anim` on `lv_arc` 340×340 at (10, 10), w 4, r 166–170 | value 0→360 | 3000 ms linear; release → retract 200 ms ease_in | segment only | < 2 ms |
+| A22 | Boot splash | `lv_anim_timeline` | core r 0→70 (500 ms ease_out), halo colours black → halo (600 ms) | 600 ms | 41.6k | ≈ 5 ms |
+| A23 | Backlight dim / wake | LEDC `ledc_set_fade_with_time` | duty | 800 ms / 150 ms | 0 | 0 |
+| A24 | Busy arc (headers, Q) | ticker-style `lv_timer` 33 ms | arc rotation, r 9 | continuous | 28×28 | ≈ 0.2 ms |
+| A25 | Screen change | `lv_screen_load(scr)`, **no load animation** | – | – | 129.6k once | ≈ 25 ms single frame |
 
-Explicitly not used:
-- `clip_corner` anywhere except small containers.
-- `transform_scale` / `transform_rotate`.
-- `opa_layered`, `blend_mode`, bitmap masks.
-- Box shadows (`LV_DRAW_SW_SHADOW_CACHE_SIZE 0`).
-- Lottie / ThorVG.
-- Complex (radial/conical) gradients; the core uses a simple 2-stop vertical gradient.
-- `lv_screen_load_anim` MOVE/FADE, tileview swipes, full-screen opacity animations.
+### 6.3 Patterns that are not used, and why
 
-Tearing: neither ST77916 init table sends TEON and esp_lvgl_adapter documents QSPI as "tearing NONE". The design therefore keeps large moving content to ≤ 13 px per frame (orb) and scroll. TE sync on GPIO18 is a later research spike.
+| Pattern | Why |
+|---|---|
+| `clip_corner` on the root screen or the curved list | In LVGL 9.5 it renders children into ARGB8888 layers for the rounded bands on every redraw. With a 360 circle that covers the whole screen. The bezel already masks the corners. |
+| `transform_scale` / rotation / skew on large objects | One layer per transformed area. Sizes animate through custom-draw parameters or width/height instead. |
+| Large `box_shadow`, glow shadows | Slow and memory-hungry. "Glow" is two flat opaque halos. |
+| Lottie / ThorVG, full-screen vector graphics | ARGB8888 w·h·4 buffers, and the S3 renders vectors in software. `LV_USE_LOTTIE 0`. |
+| Full-screen FADE or MOVE screen loads, tileview swipes | Redraw 129.6k px every frame and block input. Screens switch instantly. |
+| `opa_layered`, blend modes, bitmap masks | Create simple layers. |
+| Radial/conical gradients | Need `LV_USE_DRAW_SW_COMPLEX_GRADIENTS` and per-pixel math. Not needed. |
+| `lv_roller` INFINITE | Copies the option list across pages. Not used at all. |
+| `lv_list`, `lv_menu`, `lv_win` | Deprecated in 9.6. Lists are plain `lv_obj` flex columns. |
 
 ---
 
 ## 7. LVGL 9.5 implementation notes
 
-### 7.1 Configuration (sdkconfig `CONFIG_LV_*`)
+### 7.1 `lv_conf` / Kconfig
 
-Enable:
-- `LV_COLOR_DEPTH 16`
-- `LV_DEF_REFR_PERIOD 33`
-- `LV_USE_OBSERVER 1`, `LV_USE_QRCODE 1` (needs `LV_USE_CANVAS 1`), `LV_USE_ARCLABEL 1`, `LV_USE_KEYBOARD 1` (xiaozhi sets it to n; reverse that), `LV_USE_TEXTAREA 1`, `LV_USE_BUTTONMATRIX 1`, `LV_USE_ARC 1`, `LV_USE_SWITCH 1`, `LV_USE_SPINNER 1`, `LV_USE_IMAGE 1`, `LV_USE_FLEX 1`
-- `LV_USE_OBJ_NAME 1` (test ids), `LV_USE_SNAPSHOT 1` (dev console)
-- Dev builds only: `LV_USE_SYSMON 1` + `LV_USE_PERF_MONITOR 1`
+| Setting | Value | Note |
+|---|---|---|
+| `LV_COLOR_DEPTH` | 16 | RGB565; `swap_bytes` set in the port |
+| `LV_DEF_REFR_PERIOD` | 16 | one-shot anims up to 60 fps; continuous motion uses the 33 ms ticker |
+| `LV_DPI_DEF` | 194 | physical density; raises the buttonmatrix extra-click cap to 19 px |
+| `LV_USE_DRAW_SW` / `LV_DRAW_SW_COMPLEX` | 1 / 1 | needed for radii, arcs, round line caps |
+| `LV_DRAW_SW_DRAW_UNIT_CNT` | 1 | core 0 stays free for Wi-Fi and audio |
+| `LV_USE_DRAW_SW_COMPLEX_GRADIENTS` | 0 | – |
+| `LV_DRAW_SW_SHADOW_CACHE_SIZE` / `LV_DRAW_SW_CIRCLE_CACHE_SIZE` | 0 / 8 | the orb uses several radii |
+| `LV_USE_STDLIB_MALLOC` | `LV_STDLIB_CUSTOM` | `lv_malloc_core` → `heap_caps_malloc(sz, MALLOC_CAP_SPIRAM \| MALLOC_CAP_8BIT)` (and realloc/free), so small LVGL objects do not eat internal RAM |
+| `LV_USE_OBSERVER` | 1 | – |
+| `LV_USE_LABEL`, `LV_USE_ARC`, `LV_USE_BUTTONMATRIX`, `LV_USE_KEYBOARD`, `LV_USE_TEXTAREA`, `LV_USE_CANVAS`, `LV_USE_QRCODE` | 1 | xiaozhi sets `LV_USE_KEYBOARD=n`; do not copy that |
+| `LV_USE_LIST`, `LV_USE_MENU`, `LV_USE_WIN`, `LV_USE_TILEVIEW`, `LV_USE_ROLLER`, `LV_USE_SWITCH`, `LV_USE_SPINNER`, `LV_USE_MSGBOX`, `LV_USE_ARCLABEL`, `LV_USE_LOTTIE`, `LV_USE_THORVG_INTERNAL`, `LV_USE_VECTOR_GRAPHIC` | 0 | not used |
+| `LV_FONT_MONTSERRAT_*` | all 0 | saves flash |
+| `LV_FONT_CUSTOM_DECLARE` / `LV_FONT_DEFAULT` | `LV_FONT_DECLARE(ui_16) LV_FONT_DECLARE(ui_20) LV_FONT_DECLARE(ui_28) LV_FONT_DECLARE(ui_48)` / `&ui_20` | – |
+| `LV_USE_FONT_PLACEHOLDER` | 1 | – |
+| `LV_TXT_ENC` | `LV_TXT_ENC_UTF8` | – |
+| `LV_USE_THEME_DEFAULT` | 0 | own shared styles (§7.4) |
+| `LV_USE_SNAPSHOT` | 1 | dev-console screenshots |
+| `LV_USE_SYSMON`, `LV_USE_PERF_MONITOR`, `LV_USE_MEM_MONITOR` | 1 in debug builds | – |
+| `LV_ATTRIBUTE_FAST_MEM_USE_IRAM` | y | – |
+| Compiler | `COMPILER_OPTIMIZATION_PERF` | – |
+| Indev timing | `long_press_time` 400 ms, `long_press_repeat_time` 100 ms, scroll limit 10 px, scroll throw 10 % | via `lv_indev_set_*` after creation |
 
-Disable:
-- `LV_USE_LIST 0`, `LV_USE_MENU 0`, `LV_USE_WIN 0` (all deprecated in 9.6), `LV_USE_ROLLER 0` (INFINITE mode duplicates options), `LV_USE_TILEVIEW 0`, `LV_USE_TABVIEW 0`, `LV_USE_LOTTIE 0`, `LV_USE_THORVG_INTERNAL 0`, `LV_USE_VECTOR_GRAPHIC 0`
-- `LV_USE_DRAW_SW_COMPLEX_GRADIENTS 0`, `LV_DRAW_SW_SHADOW_CACHE_SIZE 0`
-- `LV_USE_FONT_COMPRESSED 0`
-- `LV_USE_THEME_DEFAULT 0` (it adds 80 ms press transitions); use `LV_USE_THEME_SIMPLE 1` plus our styles
+### 7.2 esp_lvgl_port 2.9
 
-Also:
-- `LV_DRAW_SW_CIRCLE_CACHE_SIZE 16`, because orb radii cycle through about 8 values.
-- `LV_DRAW_SW_DRAW_UNIT_CNT 1` (core 0 belongs to Wi-Fi and audio).
-- `LV_USE_STDLIB_MALLOC LV_STDLIB_CUSTOM`, implementing `lv_malloc_core/realloc_core/free_core` with `heap_caps_*(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)`. With `SPIRAM_USE_MALLOC`, allocations under 16 KB would otherwise land in internal RAM.
+```c
+const lvgl_port_cfg_t port_cfg = {
+    .task_priority = 4, .task_stack = 8192, .task_affinity = 1,   /* LVGL on core 1 */
+    .task_max_sleep_ms = 500, .timer_period_ms = 5 };
+const lvgl_port_display_cfg_t disp_cfg = {
+    .io_handle = lcd_io, .panel_handle = lcd_panel,
+    .buffer_size = 360 * 40, .double_buffer = true,               /* 2 × 28.8 KB */
+    .hres = 360, .vres = 360, .monochrome = false,
+    .color_format = LV_COLOR_FORMAT_RGB565,
+    .flags = { .buff_dma = 1, .buff_spiram = 0, .swap_bytes = 1 } };
+/* touch: CST816T on I2C1 (SDA1/SCL3), INT GPIO4 → lvgl_port_add_touch(); the task wakes on the IRQ */
+```
 
-### 7.2 Port
-
-- Display: `lvgl_port_display_cfg_t` with `buffer_size = 360*40`, `double_buffer = true`, `flags.buff_dma = 1`, `flags.buff_spiram = 0`, `flags.swap_bytes = 1`, `hres = vres = 360`.
-- Task: `lvgl_port_cfg_t` with `task_affinity = 1`, `task_priority = 4`, `task_stack = 8192`, internal stack caps.
-- Touch: `lvgl_port_add_touch` with CST816 on I2C1. Set `lv_indev_set_gesture_min_distance(indev, 60)` and `lv_indev_set_gesture_min_velocity(indev, 4)`.
-- If the ST77916 shows odd-alignment artefacts, add an `LV_EVENT_INVALIDATE_AREA` rounder on the display (x1 &= ~1; x2 |= 1) or use esp_lvgl_port's `rounder_cb`.
-- During development a second virtual `LV_INDEV_TYPE_POINTER` reads injected touches from the USB dev console.
+- If the ST77916 shows odd-alignment artefacts, add an invalidate-area rounder: `x1 &= ~1; x2 |= 1;` and the same for y. Use the esp_lvgl_port `rounder_cb` (2.7.1+) or `LV_EVENT_INVALIDATE_AREA`.
+- Tearing: QSPI has no TE coordination in these drivers (TEON is not sent). Animated regions are small, so treat TE as a later research spike, not a dependency.
+- Keep NVS writes out of animations: PSRAM is inaccessible while the flash cache is disabled, so a write freezes LVGL for a moment. Settings saves are debounced and run when `s_ui_state == IDLE` and no animation is active.
 
 ### 7.3 Widget choices
 
-| Need | Widget |
+| Need | Implementation |
 |---|---|
-| Orb / mini orb | plain `lv_obj` with `LV_EVENT_DRAW_MAIN` custom draw + `ADV_HITTEST` |
-| Lists | `lv_obj` flex column + scroll snap + fade callback (no `lv_list`) |
-| Chat | `lv_obj` flex column → row `lv_obj` → bubble `lv_obj` + `lv_label` (WRAP, `LV_SIZE_CONTENT` with `max_width`) |
-| Keyboard | `lv_keyboard` (one instance) + `lv_textarea` one-line |
-| Sliders | `lv_arc` (volume/brightness, scroll indicator, rim timer, off-ring) |
-| Loading | `lv_spinner` 32×32 in list rows only |
-| QR | `lv_qrcode` (I1 canvas) |
-| Rim text | `lv_arclabel` (coach mark only) |
-| Toggles | `lv_switch` 44×24 |
+| Orb | one `lv_obj` (style removed, transparent) with `LV_EVENT_DRAW_MAIN`. It draws with `lv_draw_rect` (circles via `LV_RADIUS_CIRCLE`, vertical gradient core), `lv_draw_arc` (progress, thinking, echo rings, hollow outline) and `lv_draw_line` (bars, round caps, `lv_point_precise_t`). Plus one child `lv_label` for the label or icon, and a custom `LV_EVENT_HIT_TEST` with `LV_OBJ_FLAG_ADV_HITTEST` and `LV_OBJ_FLAG_PRESS_LOCK`. All parameters live in a struct (`orb_params_t`); the ticker and the anims write it and call `lv_obj_invalidate(orb)`. |
+| Pill, round buttons, rows, cards, dialog buttons | `lv_obj` + `lv_label`, with shared styles and `LV_OBJ_FLAG_CLICKABLE`. `lv_button` brings nothing extra once the theme is off. |
+| Chat, lists | `lv_obj` with `LV_FLEX_FLOW_COLUMN`, `LV_DIR_VER`, `LV_SCROLLBAR_MODE_OFF`, plus a rim `lv_arc` indicator |
+| Keyboard | `lv_keyboard` + `lv_textarea` (§4.5) |
+| Adjuster, rim indicator, PWR ring | `lv_arc` (indicator-only ones are non-clickable) |
+| QR | `lv_qrcode`: I1 draw buffer of size²/8 + 8 B palette, ECC M |
+| Toggles | text "Вкл/Выкл" in the row's right slot; the whole 252×64 row is the target |
+| Busy indicator | small `lv_arc` rotated by a 33 ms timer (no `lv_spinner`) |
 
-### 7.4 Shared styles
+### 7.4 Styles
 
-All are `static lv_style_t`, initialised once in `ui_styles_init()` and attached with `lv_obj_add_style`. Local styles are used only for per-row `opa`, which the fade writes.
+All styles are static `lv_style_t` objects initialised once in `ui_theme_init()`. Objects add them with `lv_obj_add_style(obj, &st_x, selector)`. No per-object styles are used except the animated local properties (`opa`, `translate_y`, colours on the orb struct). Token colours come from §1.1/§1.2, and the accent styles are re-initialised on a mode change with `lv_obj_report_style_change(&st_accent)`.
 
-| Style | Contents |
-|---|---|
-| `st_screen` | bg `#000`, opa cover, pad 0, border 0, radius 0, text font_20, TEXT_1 |
-| `st_pill` | radius `LV_RADIUS_CIRCLE`, bg SURFACE_1, border 1 OUTLINE, pad_hor 16 |
-| `st_pill_pressed` | bg SURFACE_2 |
-| `st_pill_accent` | bg `#7B8CFF`, text COL_ON_ACCENT |
-| `st_circle_btn` | radius circle, bg SURFACE_1, `ADV_HITTEST` |
-| `st_bubble_ai` / `st_bubble_user` | radius 16, pad 10/12, bg SURFACE_1 / USER_BUBBLE |
-| `st_card_a` / `st_card_b` | translator card tints |
-| `st_caption`, `st_value` | font_16, TEXT_2 |
-| `st_title` | font_24 |
-| `st_key`, `st_key_ctrl`, `st_key_pressed` | §4.5 |
-| `st_fade_top` / `st_fade_bottom` | vertical gradients, not clickable |
+Shared styles:
+- `st_screen`: bg `#000`, `opa_cover`, pad 0, border 0, not scrollable.
+- `st_pill`, `st_pill_pr`.
+- `st_btn_round` / `_pr`.
+- `st_row` / `_pr`.
+- `st_title20`, `st_body20`, `st_caption16`, `st_hint16`.
+- `st_bubble_user`, `st_reply`, `st_turn`, `st_card[status]`.
+- `st_key` / `st_key_pr` / `st_key_dis` (`LV_PART_ITEMS`).
+- `st_field`.
+- `st_arc_main` / `st_arc_ind` / `st_arc_knob`.
+- `st_stadium_primary` / `_secondary`.
+- `st_fade_top` / `st_fade_bottom`.
+- One `lv_style_transition_dsc_t trans_tap` (bg_color, 80 ms), referenced by every `_pr` style.
 
-### 7.5 Orb custom draw
+### 7.5 Subjects (observer) and the 9.6-safe wrapper
 
-The glow masks are **A8 images**. `halo_200` is 200×200 = 40,000 B with alpha(r) = 255·(1 − smoothstep(56, 100, r)). `halo_120` is 120×120 = 14,400 B with alpha(r) = 255·(1 − smoothstep(26, 60, r)). They are generated offline as `lv_image_dsc_t` (`LV_COLOR_FORMAT_A8`) in flash. The software renderer paints an A8 image with `recolor` as its colour.
+| Subject (int) | Values | Written by (via `ui_post`) | Observed by |
+|---|---|---|---|
+| `s_ui_state` | IDLE, REC, REC_LATCHED, REC_CANCEL, UPLOAD, THINK, SPEAK, ANSWERED, ERROR, OFFLINE | app FSM | orb, pill/status, ⚙ visibility, ticker on/off |
+| `s_mode` | 0 assistant, 1 translator | UI (M) | orb colours, pill, chat model |
+| `s_voice_out`, `s_speaker` | 0/1 | UI | 🔊 button, FSM |
+| `s_fault` | NONE, NO_WIFI, BAD_KEY, NO_CREDIT, LOW_CREDIT, REGION, MODEL, MIC | net/app | pill, orb OFFLINE, H routing |
+| `s_net`, `s_rssi` | OFF/CONNECTING/OK/FAIL; dBm | Wi-Fi task | W, D, fault logic |
+| `s_upload_pct` | 0–100 | net task | orb progress, status |
+| `s_volume`, `s_brightness` | 0–100 / 5–100 | UI | A, backlight observer → LEDC, audio (atomic copy) |
+| `s_ui_lang` | 0 ru / 1 en | UI | i18n rebuild of H + the current screen |
+| `s_lang_a`, `s_lang_b`, `s_tr_dir` | index; 0 auto / 1 A→B / 2 B→A | UI | pill, prompt builder |
+| `s_battery`, `s_charging` | −1 USB, 0–100; 0/1 | power task | ambient, toasts |
+| `s_portal` | OFF, AP_UP, PHONE_JOINED, DATA_RX, DONE, FAIL | portal task | Q |
+| `s_clock_min` | 0–1439 | RTC/SNTP task, once a minute | Z |
+| `s_hints` | 0–3 | app | orb label, hint strings |
 
-Draw order: halo, bars/arcs, core, optional sheen disc (r = 0.45R, offset (−0.28R, −0.32R), white opa 26), error glyph.
-
-```c
-static void orb_draw(lv_event_t *e) {
-  lv_obj_t *obj = lv_event_get_current_target(e);
-  orb_t *o = lv_obj_get_user_data(obj);
-  lv_layer_t *layer = lv_event_get_layer(e);
-  lv_area_t a; lv_obj_get_coords(obj, &a);
-  int32_t cx = (a.x1 + a.x2) / 2 + o->shake_dx, cy = (a.y1 + a.y2) / 2, R = o->r_core;
-  lv_color_t acc = lv_color_mix(lv_color_hex(ORB_PAL[o->st].accent), lv_color_hex(ORB_PAL[o->prev].accent), o->mix);
-
-  lv_draw_image_dsc_t h; lv_draw_image_dsc_init(&h);
-  h.src = o->mini ? &halo_120 : &halo_200; h.recolor = acc; h.recolor_opa = LV_OPA_COVER; h.opa = o->halo_opa;
-  int32_t hs = o->mini ? 60 : 100; lv_area_t ha = {cx - hs, cy - hs, cx + hs - 1, cy + hs - 1};
-  lv_draw_image(layer, &h, &ha);
-
-  if (o->bars_on) { lv_draw_line_dsc_t l; lv_draw_line_dsc_init(&l);
-    l.color = acc; l.width = o->mini ? 3 : 4; l.round_start = l.round_end = 1;
-    for (int i = 0; i < 32; i++) { int32_t r0 = o->bar_r0, r1 = r0 + o->bars[i];
-      l.p1.x = cx + (COS32[i] * r0 >> 15); l.p1.y = cy + (SIN32[i] * r0 >> 15);
-      l.p2.x = cx + (COS32[i] * r1 >> 15); l.p2.y = cy + (SIN32[i] * r1 >> 15);
-      lv_draw_line(layer, &l); } }
-
-  if (o->arcs_on) { lv_draw_arc_dsc_t ar; lv_draw_arc_dsc_init(&ar); ar.center.x = cx; ar.center.y = cy;
-    ar.color = acc; ar.rounded = 1;
-    ar.radius = R + 19; ar.width = 6; ar.start_angle = o->arc_a; ar.end_angle = o->arc_a + o->arc_len; lv_draw_arc(layer, &ar);
-    ar.radius = R + 29; ar.width = 3; ar.opa = 180; ar.start_angle = o->arc_b; ar.end_angle = o->arc_b + 40; lv_draw_arc(layer, &ar); }
-
-  lv_draw_rect_dsc_t c; lv_draw_rect_dsc_init(&c); c.radius = LV_RADIUS_CIRCLE;
-  c.bg_grad.dir = LV_GRAD_DIR_VER; c.bg_grad.stops_count = 2;
-  c.bg_grad.stops[0] = (lv_grad_stop_t){ .color = mix_top(o),    .opa = LV_OPA_COVER, .frac = 0   };
-  c.bg_grad.stops[1] = (lv_grad_stop_t){ .color = mix_bottom(o), .opa = LV_OPA_COVER, .frac = 255 };
-  lv_area_t ca = {cx - R, cy - R, cx + R - 1, cy + R - 1}; lv_draw_rect(layer, &c, &ca);
-}
-static void orb_hit(lv_event_t *e) {  /* LV_EVENT_HIT_TEST, needs LV_OBJ_FLAG_ADV_HITTEST */
-  lv_hit_test_info_t *hi = lv_event_get_hit_test_info(e); orb_t *o = lv_event_get_user_data(e);
-  lv_area_t a; lv_obj_get_coords(lv_event_get_current_target(e), &a);
-  int32_t dx = hi->point->x - (a.x1 + a.x2) / 2, dy = hi->point->y - (a.y1 + a.y2) / 2;
-  hi->res = (dx * dx + dy * dy) <= o->hit_r * o->hit_r;
-}
-```
-
-The orb obj has `bg_opa 0`. It handles PRESSED / PRESSING (distance check for cancel) / RELEASED / PRESS_LOST itself and forwards them to the same PTT state machine as BOOT.
-
-### 7.6 Curved-list fade
+**Bindings.** Use only `lv_subject_add_observer_obj()`, which exists in 9.5 and 9.6. Do **not** use `lv_obj_bind_flag_if_*` or `lv_obj_bind_state_if_*`: they are deprecated in 9.6. Mic and TTS levels are **not** subjects; they are `atomic_int` values read by the ticker.
 
 ```c
-static void rlist_scroll_cb(lv_event_t *e) {
-  lv_obj_t *cont = lv_event_get_target(e);
-  for (uint32_t i = 0; i < lv_obj_get_child_count(cont); i++) {
-    lv_obj_t *row = lv_obj_get_child(cont, i); lv_area_t a; lv_obj_get_coords(row, &a);
-    int32_t c = LV_ABS((a.y1 + a.y2) / 2 - 180);
-    lv_opa_t opa = c <= 96 ? LV_OPA_COVER : c >= 156 ? LV_OPA_TRANSP : (lv_opa_t)(255 * (156 - c) / 60);
-    lv_obj_set_style_opa(row, opa, 0);
-    if (opa < 20) lv_obj_add_flag(row, LV_OBJ_FLAG_HIDDEN); else lv_obj_remove_flag(row, LV_OBJ_FLAG_HIDDEN);
-  }
-}
-/* lv_obj_add_event_cb(cont, rlist_scroll_cb, LV_EVENT_SCROLL, NULL); call once after build */
-```
-
-Hiding rows while scrolling does not change scroll extents if the hidden row keeps its size. To be safe, use `LV_OBJ_FLAG_IGNORE_LAYOUT`-free rows and set opa 0 instead of HIDDEN if measurement shows layout jumps.
-
-### 7.7 Observer / subjects (wrapped for the 9.6 upgrade)
-
-LVGL 9.6 replaces `lv_subject_init_*`/`deinit` with `lv_subject_create(type)`/`lv_subject_delete`. It also replaces `lv_obj_bind_flag_if_*` / `bind_state_if_*`. Therefore:
-1. Subjects are created through one wrapper and always handled as pointers.
-2. **Only `lv_subject_add_observer_obj()` with our own callbacks is used.** It exists in both versions. No `bind_flag_if_*`.
-
-```c
-/* ui_subject.h */
+/* ui_subjects.h — the only place that knows the LVGL observer API version */
+#include "lvgl.h"
 typedef lv_subject_t *ui_subj_t;
-#if LVGL_VERSION_MAJOR == 9 && LVGL_VERSION_MINOR < 6
-static inline ui_subj_t ui_subj_int(int32_t v){ lv_subject_t *s = lv_malloc_zeroed(sizeof *s); lv_subject_init_int(s, v); return s; }
-static inline void ui_subj_free(ui_subj_t s){ lv_subject_deinit(s); lv_free(s); }
+
+ui_subj_t ui_subj_int(int32_t init, int32_t min, int32_t max);
+void      ui_set(ui_subj_t s, int32_t v);              /* clamps; LVGL task only */
+static inline int32_t ui_get(ui_subj_t s) { return lv_subject_get_int(s); }
+static inline lv_observer_t *ui_watch(ui_subj_t s, lv_observer_cb_t cb, lv_obj_t *obj, void *ud) {
+    return lv_subject_add_observer_obj(s, cb, obj, ud);   /* auto-removed when obj is deleted */
+}
+
+/* ui_subjects.c */
+typedef struct { lv_subject_t *s; int32_t min, max; } ui_subj_meta_t;
+ui_subj_t ui_subj_int(int32_t v, int32_t min, int32_t max) {
+#if LV_VERSION_CHECK(9, 6, 0)
+    lv_subject_t *s = lv_subject_create(LV_SUBJECT_TYPE_INT);   /* 9.6: LVGL owns it */
+    lv_subject_set_int(s, v);
 #else
-static inline ui_subj_t ui_subj_int(int32_t v){ lv_subject_t *s = lv_subject_create(LV_SUBJECT_TYPE_INT); lv_subject_set_int(s, v); return s; }
-static inline void ui_subj_free(ui_subj_t s){ lv_subject_delete(s); }
+    lv_subject_t *s = lv_malloc_zeroed(sizeof(lv_subject_t));   /* 9.5: caller-owned, heap */
+    lv_subject_init_int(s, v);
 #endif
-#define ui_set(s, v)              lv_subject_set_int((s), (v))
-#define ui_get(s)                 lv_subject_get_int(s)
-#define ui_observe(s, obj, cb, u) lv_subject_add_observer_obj((s), (cb), (obj), (u))
+    meta_register(s, min, max);       /* own clamping: identical behaviour on both versions */
+    return s;
+}
+void ui_set(ui_subj_t s, int32_t v) { v = meta_clamp(s, v); if (v != ui_get(s)) lv_subject_set_int(s, v); }
 ```
 
-| Subject | Values | Observers |
-|---|---|---|
-| `S_ORB` | IDLE, LISTEN, CANCEL_ARMED, UPLOAD, THINK, SPEAK, ERROR | both orbs (start A3 + loop), hint label, chips |
-| `S_POSE` | FACE, CHAT | timeline A10/A11 |
-| `S_MODE` | ASSISTANT, TRANSLATOR | dial highlight, active screen |
-| `S_VOICE`, `S_SPEAKER` | 0/1 | dial tile, voice chip, mute glyph, settings rows |
-| `S_WIFI` | OFF, CONNECTING, ONLINE, NO_INTERNET | status glyph, error overlay |
-| `S_BATT` | 0–100 (+1000 when charging) | status glyph |
-| `S_ERR` | error enum | error overlay |
-| `S_VOL`, `S_BRIGHT` | 0–100 | S9 arc / labels, audio gain, LEDC |
-| `S_LANG_A`, `S_LANG_B`, `S_UI_LANG` | indices | translator codes, hint, rebuild |
-| `S_CLOCK` | minute of day or −1 | clock label |
+Observer callbacks have the 9.5 signature `void cb(lv_observer_t *o, lv_subject_t *s)`. Get the target with `lv_observer_get_target_obj(o)` and the user data with `lv_observer_get_user_data(o)`.
 
-### 7.8 Thread-safety rule
+### 7.6 Thread-safety rules
 
-1. **Only the LVGL task touches LVGL**, including `lv_subject_set_int`.
-2. Wi-Fi, HTTP, audio, button and portal tasks `xQueueSend(g_ui_q, &msg, 0)` a 16-byte `ui_msg_t {type, a, b, char *text}`. Text is a PSRAM copy; the UI frees it after `lv_label_set_text` copies it. Then they call `lvgl_port_task_wake(LVGL_PORT_EVENT_USER, NULL)`. A 10 ms `lv_timer` drains up to 16 messages per tick.
-3. Continuous values (mic dBFS, TTS dBFS, upload bytes) are `_Atomic` variables read by the orb timer. They are never queued.
-4. Escape hatch for init code and the dev console: `if (lvgl_port_lock(100)) { …; lvgl_port_unlock(); }`. Never hold the lock across network or flash I/O, and never take it inside LVGL callbacks.
-5. NVS commits are debounced 2 s and deferred until `S_ORB == IDLE`. Flash writes stall the cache, and with it PSRAM and LVGL (≈30–50 ms per sector erase), which would hitch animations. OTA shows a static progress screen updated at ≤ 5 Hz.
+1. **Only the LVGL task touches `lv_*` objects, anims, timers and subjects.**
+2. Other tasks call **`ui_post(&msg)`**: a FreeRTOS queue of 24 × `ui_msg_t`, sent with `xQueueSend(q, &m, 0)`. If the queue is full, non-critical messages are dropped and counted. Text payloads are `heap_caps_malloc(MALLOC_CAP_SPIRAM)` buffers whose ownership passes to the UI, which frees them. The queue is drained by `lv_timer_create(ui_pump_cb, 20, NULL)`, which calls `ui_set()` and the chat model functions.
+3. High-rate values (mic RMS, TTS RMS, upload bytes) are `atomic_int` written by their producers and read by the ticker. No locks, no queue.
+4. Use `lvgl_port_lock(50)` / `lvgl_port_unlock()` only for rare direct calls from other tasks: the dev-console snapshot and touch injection. Never hold it across I/O or other mutexes, never call it from an ISR, and never call it from the LVGL task.
+5. LVGL event handlers never block. They post commands to the app FSM (`app_post(CMD_TALK_DOWN)`, …).
+6. Physical buttons: a GPIO ISR (any edge, active low) sends to the input task. That task debounces (20 ms), measures the 400 ms tap/hold, detects the 3 s PWR hold, and calls `app_post()` and `ui_post()`.
 
-### 7.9 Memory per screen (estimates)
+```c
+typedef struct { uint16_t type; int32_t a, b; char *text; } ui_msg_t;   /* text owned by UI after post */
+static void ui_pump_cb(lv_timer_t *t) {
+    ui_msg_t m;
+    while (xQueueReceive(ui_q, &m, 0) == pdTRUE) { ui_dispatch(&m); if (m.text) heap_caps_free(m.text); }
+}
+```
 
-| Item | RAM | Where |
-|---|---|---|
-| Draw buffers 2 × 360×40×2 | 57,600 B | internal DMA |
-| LVGL task stack | 8 KB | internal |
-| Fonts (4 sizes) | ~200 KB | flash (rodata) |
-| Halo masks | 40,000 + 14,400 B | flash (optionally copied to PSRAM) |
-| Base styles + theme | ~4 KB | PSRAM (LVGL heap) |
-| S1 face + S1c chat (40 rows × ~650 B) | ~30 KB | PSRAM, persistent |
-| S2 / S2c | ~30 KB | PSRAM, persistent |
-| S3 dial | ~2.5 KB | PSRAM, persistent |
-| S4 settings (13 rows × 4 objs) | ~9 KB | on demand |
-| S5 Wi-Fi (15 rows) | ~9 KB + scan 1.2 KB | on demand |
-| S6 keyboard + textarea + echo | ~3 KB | on demand |
-| S7 model picker | ~8 KB rows + ~60 KB transient JSON/cJSON | on demand |
-| S10 QR (I1 164×164 → 21 B × 164 = 3,444 B) | ~4 KB + qrcodegen temp ~8 KB during update | on demand |
-| S11 diagnostics | ~8 KB | on demand |
-| Chat text ring | 64 KB | PSRAM |
-| Last recording (retry / redo) | ≤ 960 KB | PSRAM |
-| Dev snapshot | 259,200 B | PSRAM, dev only |
+### 7.7 Screen lifecycle and memory per screen
 
-Persistent UI is about 70 KB. Peak with a secondary screen plus JSON is about 150 KB. Budget the LVGL heap at 512 KB and warn at 75%.
+- **H is permanent.** Every other screen is built on entry with `ui_nav_push(builder)` and deleted on exit with `ui_nav_back()`, which runs `lv_screen_load(prev)` and then `lv_obj_delete(cur)`. The stack depth is at most 4.
+- Deleting a screen removes its observers automatically (`ui_watch` is object-bound).
+- Estimates below assume about 100 B per `lv_obj` including its style list, plus label text.
 
-On-demand screens are built on enter and deleted on back: `lv_screen_load(prev)` then `lv_obj_delete(cur)`. Faces and the dial are never deleted.
+| Screen | Objects | LVGL heap (PSRAM) | Other |
+|---|---|---|---|
+| H (permanent) | 14 + ≤ 2 per message (≤ 54) | ≈ 8 KB + ≤ 20 messages × ≈ 0.9 KB ≈ **26 KB** | chat text models for both modes ≤ 40 KB PSRAM; cached last clip ≤ 1 MB PSRAM |
+| M / L / S | ≈ 26 / ≈ 20 / ≈ 50 | ≈ 5 / 4 / 9 KB | – |
+| W (≤ 20 networks) | ≈ 90 | ≈ 16 KB | scan records 20 × 80 B |
+| AI / V / language list | ≤ 60 | ≤ 11 KB | `/models` JSON parse buffer ≤ 100 KB PSRAM, freed once the curated list is built |
+| K | 8 + keyboard (≤ 31 buttons: areas 8 B + ctrl 2 B each) | ≈ 3 KB | textarea ≤ 512 B |
+| A | 7 | ≈ 2 KB | – |
+| Q | 9 + qrcode | ≈ 3 KB + I1 buffer (150²/8 + 8 ≈ 2.9 KB) + encoder temp ≈ 1 KB | portal HTTP server in its own task |
+| D | ≈ 70 | ≈ 13 KB | – |
+| C / O-step / Z / T_READ | 7 / 10 / 4 / 5 | ≤ 2 KB each | – |
 
-### 7.10 Testability
+**Fixed costs:**
+- internal SRAM: draw buffers 2 × 28.8 KB (DMA) + LVGL task stack 8 KB;
+- flash: fonts ≈ 145 KB, L2 key maps ≈ 3 KB;
+- debug only: snapshot 259.2 KB PSRAM, transient.
 
-- Every interactive object gets `lv_obj_set_name()`, for example `orb`, `mini_orb`, `mode_chip`, `chat`, `dial_assistant`, `kb`, `kb_field`, `vol_arc`, `qr`.
-- The dev console resolves names with `lv_obj_find_by_name(lv_screen_active(), …)` and injects press/hold/release at the object centre.
-- `lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_RGB565)` is sent over USB and converted to PNG on the PC.
-- The same `ui/` code builds in the LVGL Windows simulator at 360×360. The simulator overlays the r=168 circle (dev overlay only, not `clip_corner`).
+Peak LVGL heap (H + the largest sub-screen + layers) stays below 80 KB. The custom PSRAM allocator has no fixed pool limit.
+
+### 7.8 Test hooks and simulator
+
+- **Dev console** (USB serial), per the requirements:
+
+  | Command | What it does |
+  |---|---|
+  | `ui shot` | `lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_RGB565)` → PNG on the PC |
+  | `ui tap x y [ms]` | drives a second, virtual `LV_INDEV_TYPE_POINTER` |
+  | `ui btn boot\|pwr down\|up` | goes through the same input-task path as the real buttons |
+  | `ui state <n>` | forces orb states for screenshots |
+  | `ui fps on\|off` | toggles lv_sysmon |
+  | `ui lang ru\|en` | switches the UI language |
+
+- **Simulator:** `lv_port_pc_visual_studio` at 360×360. The UI code is hardware-free. A **simulator-only** overlay on `lv_layer_top()` draws black outside r = 180 (the bezel) and an optional r = 168 guide circle.
+- **String-fit test (CI):** measure every i18n string with `lv_text_get_size()` against its slot width:
+
+  | Slot | Width (px) |
+  |---|---|
+  | pill | 124 |
+  | status line, empty state | 200 |
+  | status line, conversation | 180 |
+  | header | 118 |
+  | row title | 164 |
+  | row subtitle | 184 |
+  | prompt label | 150 |
+  | key labels | key width − 8 |
+
+  The test fails the build if a Russian or English string overflows.
+
+### 7.9 File layout
+
+```
+main/ui/
+  ui.c/.h            init, nav stack, ui_post queue + pump timer, dim/ambient timers
+  ui_theme.c/.h      colour tokens, shared styles, motion tokens
+  ui_subjects.c/.h   subjects + 9.5/9.6 wrapper
+  ui_orb.c/.h        custom-draw orb, presets, ticker, state timelines
+  ui_list.c/.h       curved list (fade, rim indicator), row builders
+  ui_kb.c/.h         keyboard layouts, action tables, handler, draw-task styling
+  scr_home.c scr_mode.c scr_settings.c scr_picker.c scr_wifi.c scr_text.c
+  scr_adjust.c scr_qr.c scr_provider.c scr_diag.c scr_dialog.c scr_onboard.c
+  scr_ambient.c scr_reader.c
+  i18n/strings.h strings_ru.c strings_en.c
+  fonts/ui_16.c ui_20.c ui_28.c ui_48.c   (generated, committed)
+```
 
 ---
 
-## 8. Acceptance gates
+## 8. To verify on the hardware (before freezing this spec)
 
-1. **Visible circle:** draw rings at r = 160 / 168 / 176 on the device and confirm r=168 is fully visible. If not, change `R_SAFE` and re-run `ui_geom_check`.
-2. **FPS** (SYSMON):
-   - A4/A7/A8 ≥ 30 fps at ≤ 60% LVGL-core CPU.
-   - A10, A13, A18 ≥ 25 fps.
-   - If a gate fails: ring-band invalidation first, then a 20 Hz loop, then dropping the sheen and arc B.
-3. **Keyboard:** scripted touch injection at every key centre and at points 2 px inside every key edge selects the right index. The echo never exceeds Rmax 166.
-4. **PTT:** tap < 350 ms latches. Hold sends on release. Slide 80 px cancels. BOOT and the orb behave identically. Barge-in stops audio within 50 ms.
-5. **No-speaker path:** all flows work with `S_SPEAKER`=0 and never request TTS.
-6. **QR:** an Android and an iPhone camera both join the AP from 10–15 cm.
-
----
-
-## 9. Sources checked for API names (LVGL release/v9.5 and esp-bsp)
-
-- `src/widgets/keyboard/lv_keyboard.c`: `set_map` re-applies immediately; `set_mode` returns early if unchanged; the default callback strings.
-- `lv_keyboard.h` (modes USER_1..4, TEXT_ARABIC), `lv_buttonmatrix.h` (ctrl flags 0x0010–0x8000, width 1–15).
-- `lv_qrcode.h/.c` (I1 canvas, `set_quiet_zone`, off by default).
-- `lv_observer.h` (9.5) and the 9.6 migration guide (`lv_subject_create/delete`, bind_* replaced).
-- `lv_arclabel.h`, `lv_anim.h`, `lv_anim_timeline.h`.
-- `lv_indev.c` (gesture skipped while scrolling; gesture limit 50, min velocity 3, long press 400 / repeat 100).
-- `lv_obj_event.h` (`lv_event_get_hit_test_info`, `lv_event_get_layer`, `lv_event_get_draw_task`).
-- `lv_conf_template.h` (`LV_USE_OBJ_NAME`, `LV_DEF_REFR_PERIOD 33`, circle cache 4).
-- esp_lvgl_port.h (`lvgl_port_lock/unlock/stop/resume/task_wake`, `lvgl_port_cfg_t`).
-- LVGL docs on A8 images taking the recolor colour.
+1. **Real render throughput** of LVGL 9.5 without S3 SIMD at 360×360. Measure every row of §6.2 with lv_sysmon at 80 MHz and at 40 MHz QSPI, and apply the §6.1 fallbacks if a row drops below 30 fps.
+2. **CST816T behaviour during a long stationary hold.** Does it keep reporting "pressed" (auto-sleep or report-mode registers), so that on-screen hold-to-talk works? Latched mode and BOOT are the fallbacks.
+3. **Physical position of the BOOT and PWR keys** on the case. Hints say only "кнопка BOOT" until this is known.
+4. **ST77916 partial-flush alignment** (whether the rounder is needed), and visible tearing during chat or list scrolling without TE.
+5. **Inter glyph coverage** of every requested code point. Check the lv_font_conv warnings, especially U+0218–021B and U+20B8.
+6. **QR scan reliability** at 5 px/module (version 3) on iOS and Android cameras from 10–20 cm, and whether captive-portal auto-open works with our DNS hijack.
+7. **Streamed structured output.** Does the `transcript` field arrive early enough to show the user bubble during THINKING?
+8. **Backlight PWM** at 15 % duty: no visible flicker (choose the LEDC frequency, e.g. ≥ 20 kHz).
