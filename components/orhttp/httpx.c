@@ -1,4 +1,6 @@
+// One-shot HTTPS client for the "net get" smoke test (any URL, own socket, not the shared pool).
 #include "httpx.h"
+#include "orhttp.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,7 +22,8 @@ esp_http_client_handle_t httpx_client(const char *url, esp_http_client_method_t 
         .keep_alive_enable = true,
         .buffer_size = 4096,
         .buffer_size_tx = 2048,
-        .user_agent = "RoundAssistant/1.0 (ESP32-S3)",
+        .disable_auto_redirect = true,
+        .user_agent = "RoundAssistant/1.0 (ESP32-S3; ESP-IDF 6.1)",
     };
     esp_http_client_handle_t h = esp_http_client_init(&cfg);
     if (!h) {
@@ -30,9 +33,12 @@ esp_http_client_handle_t httpx_client(const char *url, esp_http_client_method_t 
         char auth[230];
         snprintf(auth, sizeof(auth), "Bearer %s", api_key);
         esp_http_client_set_header(h, "Authorization", auth);
+        memset(auth, 0, sizeof(auth));
     }
-    esp_http_client_set_header(h, "HTTP-Referer", "https://github.com/round-assistant");
-    esp_http_client_set_header(h, "X-OpenRouter-Title", "Round Assistant");
+    // Attribution only towards OpenRouter (directly or through the relay), protocol §1.2.
+    if (or_is_openrouter(url)) {
+        esp_http_client_set_header(h, "X-OpenRouter-Title", "ESP32 Round Assistant");
+    }
     return h;
 }
 
@@ -65,7 +71,7 @@ esp_err_t httpx_probe(const char *url, const char *api_key, int *status, size_t 
         }
         free(buf);
     } else {
-        ESP_LOGW(TAG, "GET %s: %s", url, esp_err_to_name(err));
+        ESP_LOGW(TAG, "GET failed: %s", esp_err_to_name(err));   // the URL may carry a relay secret
     }
     esp_http_client_close(h);
     esp_http_client_cleanup(h);

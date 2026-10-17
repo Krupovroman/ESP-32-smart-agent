@@ -1,6 +1,6 @@
 idf_component_register(
-    SRCS "httpx.c"
+    SRCS "httpx.c" "orconn.c" "orerr.c"
     INCLUDE_DIRS "."
     REQUIRES esp_http_client
-    PRIV_REQUIRES esp-tls mbedtls esp_timer
+    PRIV_REQUIRES esp-tls mbedtls esp_timer espressif__cjson
 )
