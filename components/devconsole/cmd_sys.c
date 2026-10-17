@@ -207,14 +207,46 @@ static void do_restart(void *arg)
     esp_restart();
 }
 
+// reboot [dl] [after=<s>]: after= restarts later from a timer, e.g. to unplug USB first and check
+// that the battery latch (GPIO7) holds the board on through a software reset.
 static int cmd_reboot(int argc, char **argv)
 {
-    bool dl = argc > 1 && !strcmp(argv[1], "dl");
-    if (argc > 1 && !dl) {
-        return dc_fail("usage: reboot [dl]");
+    static esp_timer_handle_t s_later;
+    bool dl = false;
+    int after = 0;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "dl")) {
+            dl = true;
+        } else if (!strncmp(argv[i], "after=", 6)) {
+            after = atoi(argv[i] + 6);
+        } else {
+            return dc_fail("usage: reboot [dl] [after=<s>]");
+        }
     }
-    printf("{\"reboot\":\"%s\"}\n", dl ? "download" : "app");
-    dc_defer(do_restart, dl ? (void *)1 : NULL);
+    if (after < 0 || after > 600) {
+        return dc_fail("after=0..600 s");
+    }
+    void *arg = dl ? (void *)1 : NULL;
+    if (after == 0) {
+        printf("{\"reboot\":\"%s\"}\n", dl ? "download" : "app");
+        dc_defer(do_restart, arg);
+        return 0;
+    }
+    if (s_later) {   // a newer request replaces a pending one
+        esp_timer_stop(s_later);
+        esp_timer_delete(s_later);
+        s_later = NULL;
+    }
+    const esp_timer_create_args_t ta = { .callback = do_restart, .arg = arg, .name = "reboot" };
+    esp_err_t e = esp_timer_create(&ta, &s_later);
+    if (e == ESP_OK) {
+        e = esp_timer_start_once(s_later, (uint64_t)after * 1000000);
+    }
+    if (e != ESP_OK) {
+        dc_fail("timer: %s", esp_err_to_name(e));
+        return e;
+    }
+    printf("{\"reboot\":\"%s\",\"after_s\":%d}\n", dl ? "download" : "app", after);
     return 0;
 }
 
@@ -226,5 +258,5 @@ void cmd_sys_register(void)
     dc_register_early("heap", "Heap statistics (JSON)", cmd_heap);
     dc_register_early("tasks", "tasks [ms] - task list with stack high-water marks and CPU use", cmd_tasks);
     dc_register_early("log", "log <tag|*> <none|error|warn|info|debug|verbose>", cmd_log);
-    dc_register_early("reboot", "reboot [dl] - restart (dl: into the ROM download mode)", cmd_reboot);
+    dc_register_early("reboot", "reboot [dl] [after=<s>] - restart (dl: into the ROM download mode)", cmd_reboot);
 }
