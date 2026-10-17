@@ -7,7 +7,7 @@
 #include "net.h"
 #include "settings.h"
 #include "touch.h"
-#include "ui_test.h"
+#include "ui.h"
 
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -47,10 +47,11 @@ void app_main(void)
     audio_out_set_volume((uint8_t)settings_get_int("volume"));
     audio_in_set_format(settings_get_int("mic_slot") == 0, settings_get_int("mic_shift"));
 
-    ui_test_create();
+    ESP_ERROR_CHECK(ui_init(display_get()));     // Home H; the bring-up screen is "ui goto test"
     vTaskDelay(pdMS_TO_TICKS(80));   // let the first frame reach the panel before lighting it
     board_backlight_set((uint8_t)settings_get_int("bright"));
 
+    ui_console_register();
     ESP_ERROR_CHECK(devconsole_start());
     confirm_running_image();
 
