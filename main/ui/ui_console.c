@@ -281,6 +281,15 @@ static int cmd_ui(int argc, char **argv)
         ui_unlock();
         return 0;
     }
+    if (!strcmp(sub, "intro")) {
+        // replays the A31 boot splash on the Home orb
+        if (!ui_lock(LOCK_MS)) {
+            return dc_fail("lvgl busy");
+        }
+        ui_orb_intro(scr_home_orb());
+        ui_unlock();
+        return 0;
+    }
     if (!strcmp(sub, "user")) {
         // ui user [-a|-b] <text...>   ("-" alone: waveform placeholder)
         int first = 2, side = UI_SIDE_AUTO;
@@ -317,6 +326,9 @@ static int cmd_ui(int argc, char **argv)
     }
     if (!strcmp(sub, "clear")) {
         return post(UI_CLEAR, 0, NULL);
+    }
+    if (!strcmp(sub, "divider")) {
+        return post(UI_DIVIDER, 0, join(argc, argv, 2));     // ui divider [15:10]
     }
     if (!strcmp(sub, "tree")) {
         return cmd_tree();
@@ -383,8 +395,9 @@ static int cmd_ui(int argc, char **argv)
     if (!strcmp(sub, "back")) {
         return post(UI_BACK, 0, NULL);
     }
-    return dc_fail("usage: ui screens | goto <name> | state <s> | mood <m> | expr <e> [ms] | user [-a|-b] <text> | "
-                   "bot <text> | append <text> | wave | clear | tree | tap <name> [ms] | audit | fit | mode 0|1 | "
+    return dc_fail("usage: ui screens | goto <name> | state <s> | mood <m> | expr <e> [ms] | intro | "
+                   "user [-a|-b] <text> | bot <text> | append <text> | wave | clear | divider [hh:mm] | tree | "
+                   "tap <name> [ms] | audit | fit | mode 0|1 | "
                    "error <card> [body] | fault <f> | net <n> | toast <text> | upload <pct> | retry <n> | "
                    "lang ru|en | langs a|b | speaker 0|1 | textonly 0|1 | hints <n> | back | btn boot|pwr [short|down|up]");
 }

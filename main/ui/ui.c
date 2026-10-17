@@ -301,6 +301,7 @@ static void dispatch(const ui_msg_t *m)
     case UI_SET_SPEAKER: ui_set(g_s_speaker, m->i ? 1 : 0); break;
     case UI_SET_LANGS: set_langs(m->s); break;
     case UI_SET_HINTS: ui_set(g_s_hints, LV_CLAMP(0, m->i, 3)); break;
+    case UI_DIVIDER: scr_home_divider(m->s); break;
     default: break;
     }
 }
@@ -451,6 +452,7 @@ esp_err_t ui_init(lv_display_t *disp)
     lv_screen_load(home);
     ui_rim_init();
     scr_home_resume();
+    ui_orb_intro(scr_home_orb());           // S0 boot splash (A31) on the permanent Home orb
     lv_timer_create(pump_cb, PUMP_MS, NULL);
     ctx_update();
     s_ready = true;

@@ -31,6 +31,8 @@ void ui_orb_set_face(lv_obj_t *orb, bool on);
 void ui_orb_set_upload(lv_obj_t *orb, int32_t pct);
 // Short press-in pulse (busy-state tap feedback).
 void ui_orb_pulse(lv_obj_t *orb);
+// A31 boot splash: the core forms, the halos rise, the eyes open and glance left and right (about 2 s).
+void ui_orb_intro(lv_obj_t *orb);
 // Absolute centre and the touch radii of the current preset (hit = core + 10; cancel arms beyond it).
 void ui_orb_center(lv_obj_t *orb, lv_point_t *c);
 int32_t ui_orb_hit_radius(lv_obj_t *orb);

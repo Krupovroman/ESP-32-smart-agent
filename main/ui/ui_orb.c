@@ -13,6 +13,17 @@
 #define TICK_FAST   UI_TICK_MS
 #define TICK_IDLE   100     // breathing check: redraw only when an integer halo radius changes
 
+// A31 boot splash: core r 0 -> full (500 ms ease_out), halos black -> halo (600 ms), eyes open from BLINK at
+// 450 ms (110 ms ease_out), then a glance left and right
+#define INTRO_CORE_MS   500
+#define INTRO_HALO_MS   600
+#define INTRO_FACE_MS   200     // face hidden while the core is still small
+#define INTRO_EYES_MS   450
+#define INTRO_LEFT_MS   700
+#define INTRO_RIGHT_MS  1250
+#define INTRO_BACK_MS   1800
+#define INTRO_END_MS    2100
+
 // ---- Presets (ui.md 5.3). Hero values; compact/mini are the bracketed values of the spec. Radii of
 // lv_draw_arc are outer edges; every r_out + stroke/2 stays inside box/2.
 typedef struct {
@@ -148,6 +159,8 @@ typedef struct {
     uint32_t gz_until;
     int glance_flip, target_side;
     uint32_t squish_t0, shake_t0, flash_t0;
+    uint32_t intro_t0;          // A31 boot splash start
+    uint8_t intro_step;         // 0 = not running, 1..4 = glance sequence position
     float mic, spk, spk_d1, spk_d2;
     int16_t last_h1, last_h2;
     bool was_active;
@@ -444,6 +457,15 @@ static void draw_face(const orb_t *o, lv_layer_t *layer, float cx, float cy, flo
         as_arc = ce->arc;
     }
     float b = blink_val(o, now);
+    if (o->intro_step) {
+        // A31: the eyes stay closed until 450 ms, then open like the second half of a blink
+        uint32_t iel = now - o->intro_t0;
+        float closed = iel < INTRO_EYES_MS ? 1.0f
+                       : iel < INTRO_EYES_MS + UI_T_BLINK_OUT
+                           ? 1.0f - ease((float)(iel - INTRO_EYES_MS) / UI_T_BLINK_OUT, E_OUT)
+                           : 0.0f;
+        b = b > closed ? b : closed;
+    }
     if (!as_arc) {
         h = h + (BLINK_H - h) * b;
     }
@@ -517,6 +539,11 @@ static void orb_draw_cb(lv_event_t *e)
         float s = el < 90 ? ease((float)el / 90.0f, E_OUT) : 1.0f - ease((float)(el - 90) / 110.0f, E_OUT);
         core -= 6.0f * k * s;
     }
+    uint32_t iel = now - o->intro_t0;
+    bool intro = o->intro_step != 0;
+    if (intro && iel < INTRO_CORE_MS) {
+        core *= ease((float)iel / INTRO_CORE_MS, E_OUT);   // A31: the core forms
+    }
 
     float h1 = g.h1, h2 = g.h2;
     if (st_idle_like(o->state)) {
@@ -532,8 +559,14 @@ static void orb_draw_cb(lv_event_t *e)
     }
 
     lv_color_t black = lv_color_black();
-    if (!lv_color_eq(p.h2, black) && h2 > 0) {
-        circle(layer, cx, cy, LV_MIN(h2, half), p.h2, p.h2, false);
+    lv_color_t h2c = p.h2;
+    if (intro && iel < INTRO_HALO_MS) {
+        uint8_t mix = (uint8_t)(255.0f * ease((float)iel / INTRO_HALO_MS, E_OUT));   // halos rise out of black
+        h1c = lv_color_mix(h1c, black, mix);
+        h2c = lv_color_mix(h2c, black, mix);
+    }
+    if (!lv_color_eq(h2c, black) && h2 > 0) {
+        circle(layer, cx, cy, LV_MIN(h2, half), h2c, h2c, false);
     }
     if (!lv_color_eq(h1c, black) && h1 > 0) {
         circle(layer, cx, cy, LV_MIN(h1, half), h1c, h1c, false);
@@ -603,7 +636,7 @@ static void orb_draw_cb(lv_event_t *e)
         break;
     default: break;
     }
-    if (face_visible(o, &g)) {
+    if (face_visible(o, &g) && !(intro && iel < INTRO_FACE_MS)) {
         draw_face(o, layer, cx + dx, cy, k, now);
     }
 }
@@ -730,9 +763,29 @@ static void orb_tick(lv_timer_t *t)
     if (tw_val(&o->gz_w, now) > 0.99f && o->gz_w.to > 0.5f && (int32_t)(now - o->gz_until) >= 0) {
         tw_go(&o->gz_w, 0, 260, E_INOUT, now);
     }
+    if (o->intro_step) {
+        // A31 glance: left, right, back to the centre
+        uint32_t iel = now - o->intro_t0;
+        if (o->intro_step == 1 && iel >= INTRO_LEFT_MS) {
+            tw_go(&o->gz_x, -6.0f, 260, E_INOUT, now);
+            tw_go(&o->gz_y, 0, 260, E_INOUT, now);
+            tw_go(&o->gz_w, 1, 260, E_INOUT, now);
+            o->gz_until = now + INTRO_END_MS;   // the sequence returns the gaze itself
+            o->intro_step = 2;
+        } else if (o->intro_step == 2 && iel >= INTRO_RIGHT_MS) {
+            tw_go(&o->gz_x, 6.0f, 260, E_INOUT, now);
+            o->intro_step = 3;
+        } else if (o->intro_step == 3 && iel >= INTRO_BACK_MS) {
+            tw_go(&o->gz_w, 0, 260, E_INOUT, now);
+            o->intro_step = 4;
+        } else if (o->intro_step == 4 && iel >= INTRO_END_MS) {
+            o->intro_step = 0;
+        }
+    }
 
     bool fx = (now - o->squish_t0 < 200) || (o->state == UI_ST_ERROR && now - o->shake_t0 < 360) ||
-              (o->state == UI_ST_ANSWERED && now - o->flash_t0 < 900);
+              (o->state == UI_ST_ANSWERED && now - o->flash_t0 < 900) ||
+              (o->intro_step && now - o->intro_t0 < INTRO_EYES_MS + UI_T_BLINK_OUT);
     bool tweens = morph || tw_busy(&o->col, now) || tw_busy(&o->bars, now) || tw_busy(&o->arcs, now) ||
                   tw_busy(&o->echo, now) || tw_busy(&o->prog, now) || tw_busy(&o->pct, now);
     // a held glance does not move: only blinks and running tweens need face-box redraws
@@ -766,6 +819,10 @@ static void orb_tick(lv_timer_t *t)
             lv_obj_invalidate(o->obj);
         }
         lv_timer_set_period(t, TICK_IDLE);
+        return;
+    }
+    if (o->intro_step) {
+        lv_timer_set_period(t, TICK_IDLE);  // finish the glance sequence
         return;
     }
     lv_timer_pause(t);
@@ -998,6 +1055,19 @@ void ui_orb_set_upload(lv_obj_t *orb, int32_t pct)
     pct = LV_CLAMP(0, pct, 100);
     tw_go(&o->pct, (float)pct, 200, E_OUT, lv_tick_get());
     orb_kick(o);
+}
+
+void ui_orb_intro(lv_obj_t *orb)
+{
+    orb_t *o = get(orb);
+    if (o) {
+        uint32_t now = lv_tick_get();
+        o->intro_t0 = now;
+        o->intro_step = 1;
+        o->blinking = false;
+        o->next_blink = now + INTRO_END_MS + lv_rand(1000, 3000);
+        orb_kick(o);
+    }
 }
 
 void ui_orb_pulse(lv_obj_t *orb)

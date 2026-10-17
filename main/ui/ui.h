@@ -35,6 +35,7 @@ typedef enum {
     UI_SET_SPEAKER,     // i = 1 a speaker is connected, 0 none (replay disabled, voice button dot)
     UI_SET_LANGS,       // s = "ru|en": translator language A | B (ISO 639-1)
     UI_SET_HINTS,       // i = 0..3 remaining first-use hints
+    UI_DIVIDER,         // s = "15:10": "— новый разговор · 15:10 —" line (model context reset after 15 min idle)
     UI_MSG__N
 } ui_msg_type_t;
 

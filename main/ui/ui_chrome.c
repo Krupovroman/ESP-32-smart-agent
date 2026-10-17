@@ -67,15 +67,15 @@ static void title_draw_cb(lv_event_t *e)
     }
 
     lv_layer_t *layer = lv_event_get_layer(e);
-    int32_t lh = lv_font_get_line_height(f), bl = f->base_line;
     float s = -(float)total / 2.0f;     // arc length from 12 o'clock, clockwise positive
     for (int i = 0; i < n; i++) {
         float mid = s + (float)adv[i] / 2.0f;
         float th = -1.5707963f + mid / TITLE_RB;          // 12 o'clock is -90 deg
         float px = (float)UI_CX + TITLE_RB * cosf(th);
         float py = (float)UI_CY + TITLE_RB * sinf(th);
-        // lv_draw_letter rotates around the baseline centre of the glyph box placed at `point`
-        lv_point_t p = { (int32_t)lroundf(px - (float)adv[i] / 2.0f), (int32_t)lroundf(py - (float)(lh - bl)) };
+        // lv_draw_letter puts the glyph's baseline centre (pivot adv/2, line_height - base_line) on `point`
+        // and rotates around it (lv_draw_label.c / lv_draw_sw_letter.c, as lv_arclabel does)
+        lv_point_t p = { (int32_t)lroundf(px), (int32_t)lroundf(py) };
         d.unicode = cps[i];
         d.rotation = (int32_t)lroundf((th * 57.29578f + 90.0f) * 10.0f);
         if (cps[i] != ' ') {

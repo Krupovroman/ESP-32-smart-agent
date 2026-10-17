@@ -376,11 +376,19 @@ static void layout_exec(void *var, int32_t v)
     }
 }
 
+// The rim follows the chat only while H is the active screen (HIST / RD own it otherwise)
+static void rim_follow_chat(void)
+{
+    if (ui_nav_current() == UI_SCR_HOME) {
+        ui_rim_attach_scroll(s_conv ? s_chat : NULL);
+    }
+}
+
 static void layout_done(lv_anim_t *a)
 {
     (void)a;
     s_layout_anim = NULL;
-    ui_rim_attach_scroll(s_conv && ui_nav_current() == UI_SCR_HOME ? s_chat : NULL);
+    rim_follow_chat();
     hint_refresh();
 }
 
@@ -399,7 +407,7 @@ static void set_layout(bool conv, bool anim)
         fade(s_hint1, false, 100);
         fade(s_hint2, false, 100);
     } else {
-        ui_rim_attach_scroll(NULL);
+        rim_follow_chat();      // the thumb goes with the chat
     }
     int32_t target = conv ? 460 : 0;
     if (!anim || s_layout_v == target) {
@@ -657,6 +665,22 @@ void scr_home_clear(bool anim)
     hint_refresh();
 }
 
+void scr_home_divider(const char *hhmm)
+{
+    // 3.3: "— новый разговор · 15:10 —" after 15 min idle; nothing to separate in an empty chat
+    int m = mode();
+    if (cm_count(m) == 0) {
+        return;
+    }
+    close_open_reply(m);
+    char buf[96];
+    snprintf(buf, sizeof(buf), ui_s(S_DIVIDER), hhmm ? hhmm : "");
+    cm_entry_t *e = cm_add(m, CM_DIVIDER);
+    e->new_turn = true;
+    cm_set(&e->text, buf);
+    add_widget(e, 0);
+}
+
 void scr_home_toast(const char *text)
 {
     transient(text, 2000, false);
@@ -690,7 +714,7 @@ void scr_home_langs_changed(void)
 
 void scr_home_resume(void)
 {
-    ui_rim_attach_scroll(s_conv ? s_chat : NULL);
+    rim_follow_chat();
 }
 
 // ---- Input: orb (5.1), side buttons / chips (5.2, 5.5), pill

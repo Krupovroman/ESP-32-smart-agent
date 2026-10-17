@@ -74,6 +74,7 @@ void scr_home_bot_append(const char *chunk);
 void scr_home_wave(const uint8_t *env32);
 void scr_home_error(int32_t card, const char *body);
 void scr_home_clear(bool anim);
+void scr_home_divider(const char *hhmm);
 void scr_home_toast(const char *text);
 void scr_home_status_text(const char *text, uint32_t ms);
 void scr_home_retry(int32_t n);

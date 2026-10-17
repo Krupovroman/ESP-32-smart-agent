@@ -85,10 +85,12 @@ static lv_obj_t *button(lv_obj_t *scr, const char *name, const char *sym, int32_
 
 lv_obj_t *scr_reader_build(uint32_t entry_id)
 {
-    const cm_entry_t *en = cm_find(entry_id);
+    // entry 0 ("ui goto reader"): the newest translated turn
+    const cm_entry_t *en = entry_id ? cm_find(entry_id) : cm_last_of(1, CM_TURN);
     if (!en || en->kind != CM_TURN) {
         return NULL;
     }
+    entry_id = en->id;
     s_entry = entry_id;
     s_flipped = false;
     lv_obj_t *scr = ui_chrome_screen();
