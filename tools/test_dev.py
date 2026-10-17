@@ -331,6 +331,14 @@ class DevTests(unittest.TestCase):
 
 
 class ParserTests(unittest.TestCase):
+    def test_log_listen_vs_device_command(self):
+        self.assertTrue(dev.is_local_listen(["log"]))
+        self.assertTrue(dev.is_local_listen(["log", "10"]))
+        self.assertTrue(dev.is_local_listen(["events", "2.5"]))
+        self.assertFalse(dev.is_local_listen(["log", "*", "warn"]))
+        self.assertFalse(dev.is_local_listen(["log", "wifi"]))
+        self.assertFalse(dev.is_local_listen(["info"]))
+
     def test_loads_tolerates_garbage(self):
         self.assertEqual(dev._loads(""), {})
         self.assertEqual(dev._loads("{\"a\":1}"), {"a": 1})

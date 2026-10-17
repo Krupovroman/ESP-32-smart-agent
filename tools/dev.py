@@ -539,6 +539,20 @@ def print_result(res):
         _say(json.dumps(rest, ensure_ascii=False))
 
 
+def _is_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+def is_local_listen(parts):
+    """'log [s]' / 'events [s]' listen on the PC; 'log <tag> <level>' is the device command."""
+    return bool(parts) and parts[0] in ("log", "events") and (
+        len(parts) == 1 or (len(parts) == 2 and _is_number(parts[1])))
+
+
 def run_one(dev, text, args):
     parts = text.split()
     if not parts:
@@ -579,7 +593,7 @@ def run_one(dev, text, args):
         _say(json.dumps(dev.wait_ready(timeout), ensure_ascii=False))
     elif head == "sleep":
         time.sleep(float(parts[1]))
-    elif head in ("log", "events"):
+    elif is_local_listen(parts):
         secs = float(parts[1]) if len(parts) > 1 else 5.0
         mark = dev.event_mark()
         end = time.time() + secs
@@ -612,7 +626,7 @@ def main():
     if a.command[0] == "reset":
         esptool_reset(a.port)
         return 0
-    passive = a.command[0] in ("log", "events", "wait-ready")
+    passive = a.command[0] == "wait-ready" or is_local_listen(a.command)
     log_cb = None if a.no_logs else (lambda line: _say(line))
     try:
         dev = Device(a.port, on_log=log_cb, check=not (a.no_check or passive))
