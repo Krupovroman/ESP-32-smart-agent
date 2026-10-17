@@ -261,13 +261,15 @@ static void set_lang(int lang)
     if (lang == ui_str_lang()) {
         return;
     }
-    // strings are baked into the widgets: rebuild H (the model survives) and drop the stack
+    // strings are baked into the widgets: rebuild H (the model survives) and drop the stack. The old H goes
+    // at once (this runs in the pump, never inside one of its events): until it is gone its subject observers
+    // would run a second time against the new screen's widgets.
     ui_str_set_lang(lang);
     ui_nav_home();
     lv_obj_t *old = s_nav[0].scr;
     s_nav[0].scr = scr_home_create();
     lv_screen_load(s_nav[0].scr);
-    lv_obj_delete_async(old);
+    lv_obj_delete(old);
     scr_home_resume();
 }
 
@@ -442,7 +444,9 @@ esp_err_t ui_init(lv_display_t *disp)
     g_s_state = ui_subj_int(UI_ST_IDLE, 0, UI_ST__N - 1);
     g_s_mode = ui_subj_int(mode ? 1 : 0, 0, 1);
     g_s_text_only = ui_subj_int(text_only ? 1 : 0, 0, 1);
-    g_s_speaker = ui_subj_int(0, 0, 1);         // no speaker until the app says so (requirements 5)
+    // speakers are now connected on the bench board; the app posts UI_SET_SPEAKER 0 once a stored
+    // "no speaker" flag exists (onboarding O4 / S -> Динамик)
+    g_s_speaker = ui_subj_int(1, 0, 1);
     g_s_fault = ui_subj_int(UI_FAULT_NONE, 0, UI_FAULT__N - 1);
     g_s_net = ui_subj_int(UI_NET_CONNECTING, 0, UI_NET_FAILED);
     g_s_upload = ui_subj_int(0, 0, 100);

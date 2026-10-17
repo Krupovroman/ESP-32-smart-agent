@@ -252,6 +252,26 @@ size_t ui_str_cp_count(const char *s)
     return n;
 }
 
+size_t ui_str_copy(char *dst, size_t len, const char *src)
+{
+    if (!dst || len == 0) {
+        return 0;
+    }
+    size_t n = src ? strlen(src) : 0;
+    if (n >= len) {
+        // truncated: back off over continuation bytes so a 2-4 byte sequence is never split
+        n = len - 1;
+        while (n > 0 && ((uint8_t)src[n] & 0xC0) == 0x80) {
+            n--;
+        }
+    }
+    if (n) {
+        memcpy(dst, src, n);
+    }
+    dst[n] = 0;
+    return n;
+}
+
 // ---- Fit test (ui.md 7.9): every string measured against its slot, both languages
 
 typedef struct {

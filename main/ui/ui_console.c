@@ -100,7 +100,15 @@ static void tree_line(lv_obj_t *obj, void *ctx)
     float rmax = vis ? ui_obj_rmax(obj, &va) : 0;
     char text[40] = "";
     if (lv_obj_check_type(obj, &lv_label_class)) {
-        snprintf(text, sizeof(text), " \"%.32s\"", lv_label_get_text(obj));
+        // first 32 bytes on one line: newlines would split the record, a cut UTF-8 sequence garbles it
+        char snip[33];
+        ui_str_copy(snip, sizeof(snip), lv_label_get_text(obj));
+        for (char *c = snip; *c; c++) {
+            if ((unsigned char)*c < 0x20) {
+                *c = ' ';
+            }
+        }
+        snprintf(text, sizeof(text), " \"%s\"", snip);
     }
     if (t->o + 160 >= t->len) {
         return;

@@ -68,6 +68,7 @@ static lv_timer_t *s_swap_timer;    // A21: side buttons <-> chips swap at 50 %
 static lv_anim_t *s_layout_anim;
 static int32_t s_layout_v;          // 0 = empty hero layout, 460 = conversation layout
 static char s_status_txt[96];
+static bool s_status_err;           // s_status_txt is an error (coral)
 
 static int mode(void) { return ui_get(g_s_mode); }
 static int32_t state(void) { return ui_get(g_s_state); }
@@ -159,6 +160,13 @@ static void fade(lv_obj_t *o, bool show, uint32_t ms)
     lv_anim_start(&a);
 }
 
+// Text and colour change together, while the label is invisible (the old text never flashes coral)
+static void status_apply(void)
+{
+    lv_obj_set_style_text_color(s_status, ui_col(s_status_err ? ui_accent(UI_ACC_ERROR)->top : UI_COL_TEXT2), 0);
+    lv_label_set_text(s_status, s_status_txt);
+}
+
 static void status_in(lv_anim_t *a)
 {
     // A22 second half: swap the text while invisible, then fade the new one in (or stay hidden when the
@@ -168,25 +176,29 @@ static void status_in(lv_anim_t *a)
         lv_obj_add_flag(s_status, LV_OBJ_FLAG_HIDDEN);
         return;
     }
-    lv_label_set_text(s_status, s_status_txt);
+    status_apply();
     fade(s_status, true, 160);
 }
 
 static void status_set(const char *txt, bool error)
 {
-    lv_obj_set_style_text_color(s_status, ui_col(error ? ui_accent(UI_ACC_ERROR)->top : UI_COL_TEXT2), 0);
     if (!txt || !txt[0]) {
         s_status_txt[0] = 0;
         fade(s_status, false, 100);
         return;
     }
-    if (strcmp(txt, s_status_txt) == 0 && !lv_obj_has_flag(s_status, LV_OBJ_FLAG_HIDDEN)) {
+    // compare the stored (possibly truncated) form, or an over-long text would restart A22 on every tick
+    char t[sizeof(s_status_txt)];
+    ui_str_copy(t, sizeof(t), txt);
+    bool hidden = lv_obj_has_flag(s_status, LV_OBJ_FLAG_HIDDEN);
+    if (strcmp(t, s_status_txt) == 0 && error == s_status_err && !hidden) {
         return;
     }
-    bool shown = !lv_obj_has_flag(s_status, LV_OBJ_FLAG_HIDDEN) && s_status_txt[0];
-    snprintf(s_status_txt, sizeof(s_status_txt), "%s", txt);
+    bool shown = !hidden && s_status_txt[0];
+    memcpy(s_status_txt, t, sizeof(t));
+    s_status_err = error;
     if (!shown) {
-        lv_label_set_text(s_status, s_status_txt);
+        status_apply();
         fade(s_status, true, 160);
         return;
     }
@@ -312,7 +324,8 @@ static void status_refresh(void)
         case UI_ST_REC:
         case UI_ST_REC_LATCHED:
             if (rec_el >= 25000) {
-                snprintf(buf, sizeof(buf), ui_s(S_ST_LEFT_S), (int)((30000 - LV_MIN(rec_el, 29999)) / 1000 + 1));
+                // whole seconds left, rounded up: 5 at 25.0 s ... 1 during the last second
+                snprintf(buf, sizeof(buf), ui_s(S_ST_LEFT_S), (int)((30000 - LV_MIN(rec_el, 29999) + 999) / 1000));
                 txt = buf;
             } else if (st == UI_ST_REC_LATCHED) {
                 txt = ui_s(S_ST_LATCHED);
@@ -349,7 +362,7 @@ static void status_refresh(void)
 
 static void transient(const char *txt, uint32_t ms, bool error)
 {
-    snprintf(s_trans, sizeof(s_trans), "%s", txt ? txt : "");
+    ui_str_copy(s_trans, sizeof(s_trans), txt);
     s_trans_until = lv_tick_get() + ms;
     s_trans_error = error;
     lv_timer_resume(s_tick);
@@ -501,8 +514,14 @@ static void chat_click_cb(lv_event_t *e)
 static void chat_scroll_cb(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_SCROLL_BEGIN && lv_event_get_scroll_anim(e) == NULL) {
-        s_autoscroll = false;       // a manual scroll suspends auto-scroll until the next turn
+    if (code == LV_EVENT_SCROLL_BEGIN) {
+        // A manual scroll suspends auto-scroll until the next turn. Only a finger drag counts: LVGL also
+        // sends SCROLL_BEGIN without an anim for LV_ANIM_OFF scrolls and for the readjust after the oldest
+        // message is trimmed, and those must not switch auto-scroll off.
+        lv_indev_t *in = lv_indev_active();
+        if (in && lv_indev_get_scroll_obj(in) == s_chat) {
+            s_autoscroll = false;
+        }
     } else if (code == LV_EVENT_SCROLL_END) {
         s_scroll_end_t = lv_tick_get();
     }
@@ -673,6 +692,23 @@ static void err_timer_cb(lv_timer_t *t)
     }
 }
 
+// ERROR lasts 2.4 s (then IDLE or OFFLINE) and shows a one-line coral text for the card just added; the
+// card title itself may wrap
+static void error_begin(void)
+{
+    if (!s_err_timer) {
+        s_err_timer = lv_timer_create(err_timer_cb, 2400, NULL);
+        lv_timer_set_auto_delete(s_err_timer, false);
+    }
+    lv_timer_set_repeat_count(s_err_timer, 1);
+    lv_timer_reset(s_err_timer);
+    lv_timer_resume(s_err_timer);
+    const cm_entry_t *c = cm_last_of(mode(), CM_CARD);
+    static const ui_sid_t shorts[UI_CARD__N] = { S_E_GENERIC, S_F_NO_WIFI, S_F_BAD_KEY, S_F_NO_CREDIT, S_F_REGION,
+                                                 S_F_MODEL, S_E_RATE, S_E_SERVER, S_E_TLS, S_E_MIC, S_E_SPK };
+    transient(ui_s(c && c->card < UI_CARD__N ? shorts[c->card] : S_E_GENERIC), 2400, true);
+}
+
 static void add_card(int32_t card, const char *body)
 {
     // the first card switches an empty H to the conversation layout (3.14)
@@ -690,7 +726,11 @@ static void add_card(int32_t card, const char *body)
 void scr_home_error(int32_t card, const char *body)
 {
     add_card(card, body);
-    ui_set(g_s_state, UI_ST_ERROR);
+    if (state() == UI_ST_ERROR) {
+        error_begin();      // a second error restarts the 2.4 s and shows its own short text
+    } else {
+        ui_set(g_s_state, UI_ST_ERROR);
+    }
 }
 
 void scr_home_clear(bool anim)
@@ -982,18 +1022,7 @@ static void state_obs(lv_observer_t *o, lv_subject_t *s)
         s_state_t0 = now;
     }
     if (st == UI_ST_ERROR) {
-        if (!s_err_timer) {
-            s_err_timer = lv_timer_create(err_timer_cb, 2400, NULL);
-            lv_timer_set_auto_delete(s_err_timer, false);
-        }
-        lv_timer_set_repeat_count(s_err_timer, 1);
-        lv_timer_reset(s_err_timer);
-        lv_timer_resume(s_err_timer);
-        // short error in coral for the card just added (one line; the card title itself may wrap)
-        const cm_entry_t *c = cm_last_of(mode(), CM_CARD);
-        static const ui_sid_t shorts[UI_CARD__N] = { S_E_GENERIC, S_F_NO_WIFI, S_F_BAD_KEY, S_F_NO_CREDIT, S_F_REGION,
-                                                     S_F_MODEL, S_E_RATE, S_E_SERVER, S_E_TLS, S_E_MIC, S_E_SPK };
-        transient(ui_s(c && c->card < UI_CARD__N ? shorts[c->card] : S_E_GENERIC), 2400, true);
+        error_begin();
     }
     if (st == UI_ST_ANSWERED || (st == UI_ST_IDLE && prev != UI_ST_IDLE)) {
         close_open_reply(mode());
@@ -1157,6 +1186,7 @@ lv_obj_t *scr_home_create(void)
     lv_obj_set_size(s_status, STATUS_W_EMPTY, STATUS_H);
     lv_obj_add_flag(s_status, LV_OBJ_FLAG_HIDDEN);
     s_status_txt[0] = 0;
+    s_status_err = false;
 
     // Orb: a sibling of the chat, never a child, so a drag on it never scrolls (2.4)
     s_orb = ui_orb_create(s_scr, ORB_HERO);

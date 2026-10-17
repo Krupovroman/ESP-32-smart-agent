@@ -61,3 +61,5 @@ size_t ui_str_sanitize(const char *in, char *out, size_t out_len, const lv_font_
 bool ui_str_font_has_all(const char *s, const lv_font_t *font);
 // Number of UTF-8 code points in s.
 size_t ui_str_cp_count(const char *s);
+// Copies src into dst (always NUL-terminated), cutting only at a code point boundary; returns the length.
+size_t ui_str_copy(char *dst, size_t len, const char *src);
