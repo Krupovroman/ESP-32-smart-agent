@@ -3359,6 +3359,15 @@ CONFIG_VFS_INITIALIZE_DEV_NULL=y
 # end of Round Assistant OTA and self-test
 
 #
+# cJSON
+#
+# default:
+CONFIG_CJSON_NESTING_LIMIT=1000
+# default:
+CONFIG_CJSON_CIRCULAR_LIMIT=10000
+# end of cJSON
+
+#
 # CMake Utilities
 #
 # default:

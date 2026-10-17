@@ -1,3 +1,5 @@
+#include "ai_client.h"
+#include "ai_cmds.h"
 #include "audio_in.h"
 #include "audio_out.h"
 #include "board.h"
@@ -26,6 +28,7 @@ void app_main(void)
     // the console comes this early so a board that fails later is still reachable. Its own
     // failure is not fatal (an abort here would boot-loop even in safe mode); the self-test
     // rejects a pending OTA image without a console.
+    ai_console_register();   // answers "not ready" until selftest_ready() (and in safe mode)
     if (devconsole_start() != ESP_OK) {
         ESP_LOGE(TAG, "dev console unavailable");
     }
@@ -82,6 +85,9 @@ void app_main(void)
         selftest_run(&st);
         if (st.wifi == ESP_OK) {
             net_start();
+        }
+        if (ai_client_init() != ESP_OK) {
+            ESP_LOGE(TAG, "ai client unavailable");
         }
     } else {
         ota_selftest_skipped("safe mode");
