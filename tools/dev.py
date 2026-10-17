@@ -5,6 +5,7 @@
     python tools/dev.py shot shots/home.png        # screenshot -> PNG
     python tools/dev.py tap 180 260
     python tools/dev.py swipe 300 180 60 180 300
+    python tools/dev.py mic dump shots/rec.wav     # last recording -> WAV
     python tools/dev.py log 10                     # print device output for 10 s
     python tools/dev.py run "tap 180 260" "shot shots/after.png"
 
@@ -104,29 +105,50 @@ def rgb565le_to_png(path, w, h, data):
         f.write(png)
 
 
+def fetch_blob(con, command, timeout=30.0):
+    """Run a command that answers with BLOB:BEGIN/BLOB:END; return (kind, meta, bytes)."""
+    ok, lines = con.cmd(command, timeout=timeout, echo=False)
+    if not ok:
+        sys.exit(f"{command} failed: " + " | ".join(lines[-3:]))
+    header = next((l for l in lines if l.startswith("BLOB:BEGIN")), None)
+    if not header:
+        sys.exit("no BLOB:BEGIN in response")
+    parts = header.split()
+    kind, n, crc, meta = parts[1], int(parts[2]), int(parts[3], 16), parts[4:]
+    payload = "".join(l[5:] for l in lines if l.startswith("BLOB:") and not l.startswith(("BLOB:BEGIN", "BLOB:END")))
+    data = base64.b64decode(payload)
+    if len(data) != n:
+        sys.exit(f"size mismatch {len(data)} != {n}")
+    if zlib.crc32(data) & 0xFFFFFFFF != crc:
+        sys.exit("CRC mismatch")
+    for l in lines:
+        if not l.startswith("BLOB:"):
+            print(l)
+    return kind, meta, data
+
+
 def do_shot(con, path):
     t0 = time.time()
-    ok, lines = con.cmd("shot", timeout=20.0, echo=False)
-    if not ok:
-        sys.exit("shot failed: " + " | ".join(lines[-3:]))
-    header = next((l for l in lines if l.startswith("SHOT:BEGIN")), None)
-    if not header:
-        sys.exit("no SHOT:BEGIN in response")
-    _, w, h, fmt, n, crc = header.split()
-    payload = "".join(l[5:] for l in lines if l.startswith("SHOT:") and not l.startswith(("SHOT:BEGIN", "SHOT:END")))
-    data = base64.b64decode(payload)
-    if len(data) != int(n):
-        sys.exit(f"size mismatch {len(data)} != {n}")
-    if zlib.crc32(data) & 0xFFFFFFFF != int(crc, 16):
-        sys.exit("CRC mismatch")
-    rgb565le_to_png(path, int(w), int(h), data)
+    _, meta, data = fetch_blob(con, "shot")
+    w, h = int(meta[0]), int(meta[1])
+    rgb565le_to_png(path, w, h, data)
     print(f"saved {path} ({w}x{h}, {time.time() - t0:.1f}s)")
+
+
+def do_save_blob(con, command, path):
+    _, _, data = fetch_blob(con, command)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+    print(f"saved {path} ({len(data)} bytes)")
 
 
 def run_one(con, text):
     parts = text.split()
     if parts[0] == "shot":
         do_shot(con, parts[1] if len(parts) > 1 else "shots/shot.png")
+    elif parts[:2] == ["mic", "dump"]:
+        do_save_blob(con, "mic dump", parts[2] if len(parts) > 2 else "shots/mic.wav")
     elif parts[0] == "sleep":
         time.sleep(float(parts[1]))
     elif parts[0] == "log":
@@ -139,7 +161,7 @@ def run_one(con, text):
         except TimeoutError:
             pass
     else:
-        ok, _ = con.cmd(text)
+        ok, _ = con.cmd(text, timeout=60.0)
         if not ok:
             sys.exit(f"command failed: {text}")
 

@@ -1,4 +1,5 @@
 #include "ui_test.h"
+#include "audio_in.h"
 #include "display.h"
 
 #include <stdio.h>
@@ -7,7 +8,9 @@
 static lv_obj_t *s_touch_label;
 static lv_obj_t *s_dot;
 static lv_obj_t *s_btn_label;
-static int s_taps;
+static lv_obj_t *s_level_arc;
+static uint32_t s_rec_until;
+static bool s_rec_shown = true;
 
 static void screen_touch_cb(lv_event_t *e)
 {
@@ -24,7 +27,29 @@ static void screen_touch_cb(lv_event_t *e)
 
 static void btn_cb(lv_event_t *e)
 {
-    lv_label_set_text_fmt(s_btn_label, "Taps: %d", ++s_taps);
+    if (audio_in_recording()) {
+        return;
+    }
+    audio_in_start(5000);
+    s_rec_until = lv_tick_get() + 5000;
+    s_rec_shown = false;
+    lv_label_set_text(s_btn_label, "Speak now...");
+}
+
+// 20 Hz: live mic level on the ring, and the result once a recording finishes
+static void level_timer_cb(lv_timer_t *t)
+{
+    lv_arc_set_value(s_level_arc, audio_in_level());
+    if (!s_rec_shown && !audio_in_recording()) {
+        const audio_clip_t *c = audio_in_last();
+        if (c) {
+            lv_label_set_text_fmt(s_btn_label, "%.1f dB  pk %d", c->rms_dbfs_x10 / 10.0, c->peak);
+        }
+        s_rec_shown = true;
+    } else if (!s_rec_shown) {
+        int left = (int)(s_rec_until - lv_tick_get()) / 1000 + 1;
+        lv_label_set_text_fmt(s_btn_label, "Speak now... %d", left < 0 ? 0 : left);
+    }
 }
 
 static lv_obj_t *bar(lv_obj_t *parent, lv_color_t c, int x)
@@ -53,11 +78,15 @@ void ui_test_create(void)
     lv_obj_set_size(ring, 352, 352);
     lv_obj_center(ring);
     lv_arc_set_bg_angles(ring, 0, 360);
+    lv_arc_set_range(ring, 0, 100);
     lv_arc_set_value(ring, 0);
     lv_obj_remove_style(ring, NULL, LV_PART_KNOB);
     lv_obj_remove_flag(ring, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_arc_width(ring, 4, LV_PART_MAIN);
     lv_obj_set_style_arc_color(ring, lv_color_hex(0x1E3A5F), LV_PART_MAIN);
+    lv_obj_set_style_arc_width(ring, 4, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(ring, lv_color_hex(0x66BB6A), LV_PART_INDICATOR);
+    s_level_arc = ring;
 
     // Spinner: animation / frame-rate check
     lv_obj_t *spin = lv_spinner_create(scr);
@@ -73,7 +102,7 @@ void ui_test_create(void)
     lv_obj_t *title = lv_label_create(scr);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(title, lv_color_hex(0xE8EEF7), 0);
-    lv_label_set_text(title, "Round Assistant M1");
+    lv_label_set_text(title, "Round Assistant M2");
     lv_obj_align(title, LV_ALIGN_CENTER, 0, -88);
 
     const display_info_t *d = display_info();
@@ -97,14 +126,14 @@ void ui_test_create(void)
     lv_obj_align(s_touch_label, LV_ALIGN_CENTER, 0, 22);
 
     lv_obj_t *btn = lv_button_create(scr);
-    lv_obj_set_size(btn, 150, 56);
+    lv_obj_set_size(btn, 190, 56);
     lv_obj_align(btn, LV_ALIGN_CENTER, 0, 80);
     lv_obj_set_style_radius(btn, 28, 0);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x2962FF), 0);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(0xC62828), 0);
     lv_obj_add_event_cb(btn, btn_cb, LV_EVENT_CLICKED, NULL);
     s_btn_label = lv_label_create(btn);
     lv_obj_set_style_text_font(s_btn_label, &lv_font_montserrat_20, 0);
-    lv_label_set_text(s_btn_label, "Taps: 0");
+    lv_label_set_text(s_btn_label, "REC 5 s");
     lv_obj_center(s_btn_label);
 
     s_dot = lv_obj_create(scr);
@@ -115,5 +144,7 @@ void ui_test_create(void)
     lv_obj_set_style_bg_opa(s_dot, LV_OPA_COVER, 0);
     lv_obj_add_flag(s_dot, LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(s_dot, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_timer_create(level_timer_cb, 50, NULL);
     lvgl_port_unlock();
 }

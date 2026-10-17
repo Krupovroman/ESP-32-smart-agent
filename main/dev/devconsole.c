@@ -3,6 +3,8 @@
 #include "display.h"
 #include "inject.h"
 #include "touch.h"
+#include "audio_in.h"
+#include "audio_out.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -91,7 +93,7 @@ static void print_b64_line(const uint8_t *p, size_t n)
 {
     char line[8 + 4 * 32 + 2];
     size_t o = 0;
-    memcpy(line, "SHOT:", 5);
+    memcpy(line, "BLOB:", 5);
     o = 5;
     for (size_t i = 0; i < n; i += 3) {
         uint32_t v = (uint32_t)p[i] << 16;
@@ -107,23 +109,104 @@ static void print_b64_line(const uint8_t *p, size_t n)
     fputs(line, stdout);
 }
 
+// Binary payloads go out as base64 lines between BLOB:BEGIN and BLOB:END, with a CRC32.
+static void dump_blob(const char *kind, const uint8_t *p, size_t len, const char *meta)
+{
+    uint32_t crc = esp_rom_crc32_le(0, p, len);
+    printf("BLOB:BEGIN %s %u %08lx %s\n", kind, (unsigned)len, (unsigned long)crc, meta);
+    for (size_t i = 0; i < len; i += 96) {
+        print_b64_line(p + i, len - i < 96 ? len - i : 96);
+    }
+    printf("BLOB:END\n");
+    fflush(stdout);
+}
+
 static int cmd_shot(int argc, char **argv)
 {
     const uint16_t *fb = display_capture();
     if (!fb) {
         return err("no shadow buffer");
     }
-    const uint8_t *p = (const uint8_t *)fb;
-    const size_t len = SCREEN_W * SCREEN_H * 2;
-    uint32_t crc = esp_rom_crc32_le(0, p, len);
-    printf("SHOT:BEGIN %d %d RGB565LE %u %08lx\n", SCREEN_W, SCREEN_H, (unsigned)len, (unsigned long)crc);
-    for (size_t i = 0; i < len; i += 96) {
-        size_t n = len - i < 96 ? len - i : 96;
-        print_b64_line(p + i, n);
-    }
-    printf("SHOT:END\n");
-    fflush(stdout);
+    dump_blob("shot", (const uint8_t *)fb, SCREEN_W * SCREEN_H * 2, "360 360 RGB565LE");
     return ok();
+}
+
+static void print_clip(const audio_clip_t *c)
+{
+    printf("clip ms=%u samples=%u peak=%d rms_dbfs=%.1f\n", (unsigned)c->ms, (unsigned)c->samples, c->peak,
+           c->rms_dbfs_x10 / 10.0);
+}
+
+static int cmd_mic(int argc, char **argv)
+{
+    const char *sub = argc > 1 ? argv[1] : "";
+    if (!strcmp(sub, "probe")) {
+        audio_probe_t pr;
+        uint32_t ms = argc > 2 ? (uint32_t)atoi(argv[2]) : 600;
+        if (audio_in_probe(ms, &pr) != ESP_OK) {
+            return err("busy");
+        }
+        printf("right rms_dbfs=%.1f zero=%.3f\n", pr.rms_dbfs_x10[0] / 10.0, pr.zero_permille[0] / 1000.0);
+        printf("left  rms_dbfs=%.1f zero=%.3f\n", pr.rms_dbfs_x10[1] / 10.0, pr.zero_permille[1] / 1000.0);
+        return ok();
+    }
+    if (!strcmp(sub, "rec")) {
+        uint32_t ms = argc > 2 ? (uint32_t)atoi(argv[2]) : 3000;
+        audio_in_start(ms);
+        while (audio_in_recording()) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
+        print_clip(audio_in_last());
+        return ok();
+    }
+    if (!strcmp(sub, "dump")) {
+        const audio_clip_t *c = audio_in_last();
+        if (!c) {
+            return err("no clip");
+        }
+        size_t len = 0;
+        uint8_t *wav = audio_clip_to_wav(c, &len);
+        if (!wav) {
+            return err("no memory");
+        }
+        dump_blob("wav", wav, len, "16000 1 s16le");
+        free(wav);
+        return ok();
+    }
+    if (!strcmp(sub, "level")) {
+        printf("level %d\n", audio_in_level());
+        return ok();
+    }
+    if (!strcmp(sub, "fmt") && argc > 3) {
+        audio_in_set_format(!strcmp(argv[2], "right"), atoi(argv[3]));
+        return ok();
+    }
+    return err("usage: mic probe [ms] | rec <ms> | dump | level | fmt right|left <shift>");
+}
+
+static int cmd_spk(int argc, char **argv)
+{
+    const char *sub = argc > 1 ? argv[1] : "";
+    if (!strcmp(sub, "tone")) {
+        uint32_t hz = argc > 2 ? (uint32_t)atoi(argv[2]) : 440;
+        uint32_t ms = argc > 3 ? (uint32_t)atoi(argv[3]) : 500;
+        uint8_t amp = argc > 4 ? (uint8_t)atoi(argv[4]) : 50;
+        audio_out_tone(hz, ms, amp);
+        return ok();
+    }
+    if (!strcmp(sub, "vol") && argc > 2) {
+        audio_out_set_volume((uint8_t)atoi(argv[2]));
+        return ok();
+    }
+    if (!strcmp(sub, "stat")) {
+        audio_out_stats_t st;
+        audio_out_get_stats(&st);
+        printf("rate=%u played=%llu queued=%u write_errors=%u volume=%u busy=%d\n", (unsigned)st.rate,
+               (unsigned long long)st.bytes_played, (unsigned)st.queued_bytes, (unsigned)st.write_errors, st.volume,
+               audio_out_busy());
+        return ok();
+    }
+    return err("usage: spk tone <hz> <ms> [amp] | vol <0-100> | stat");
 }
 
 static bool parse_xy(int argc, char **argv, int first, int *x, int *y)
@@ -244,6 +327,8 @@ esp_err_t devconsole_start(void)
     reg("bl", "bl 0-100 - backlight", cmd_bl);
     reg("invert", "invert 0|1 - panel colour inversion", cmd_invert);
     reg("touchlog", "touchlog 0|1 - log raw touch points", cmd_touchlog);
+    reg("mic", "mic probe [ms] | rec <ms> | dump | level | fmt right|left <shift>", cmd_mic);
+    reg("spk", "spk tone <hz> <ms> [amp] | vol <0-100> | stat", cmd_spk);
     reg("reboot", "Restart the chip", cmd_reboot);
     return esp_console_start_repl(repl);
 }

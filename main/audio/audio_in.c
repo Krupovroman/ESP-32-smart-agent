@@ -1,0 +1,241 @@
+#include "audio_in.h"
+#include "board_pins.h"
+
+#include <math.h>
+#include <string.h>
+#include "driver/i2s_std.h"
+#include "esp_check.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+
+static const char *TAG = "audio_in";
+
+#define FRAME_SAMPLES  320                       // 20 ms at 16 kHz
+#define REC_CAP        (AUDIO_IN_RATE * AUDIO_IN_MAX_MS / 1000)
+
+static i2s_chan_handle_t s_rx;
+static SemaphoreHandle_t s_lock;
+static int16_t *s_rec;                           // PSRAM, REC_CAP samples
+static size_t s_rec_len, s_rec_max;
+static volatile bool s_recording;
+static volatile int s_level;
+static volatile bool s_right_slot = true;
+static volatile int s_shift = 12;
+static volatile bool s_reconfig;
+static audio_clip_t s_last;
+static bool s_have_last;
+static int16_t s_peak;
+static double s_sum_sq;
+
+static esp_err_t apply_slot(bool right)
+{
+    i2s_std_slot_config_t slot = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO);
+    slot.slot_mask = right ? I2S_STD_SLOT_RIGHT : I2S_STD_SLOT_LEFT;
+    i2s_channel_disable(s_rx);
+    esp_err_t err = i2s_channel_reconfig_std_slot(s_rx, &slot);
+    i2s_channel_enable(s_rx);
+    return err;
+}
+
+static int dbfs_x10(double sum_sq, size_t n)
+{
+    if (n == 0 || sum_sq <= 0) {
+        return -960;
+    }
+    double rms = sqrt(sum_sq / n) / 32768.0;
+    return (int)lrint(200.0 * log10(rms));
+}
+
+static void capture_task(void *arg)
+{
+    int32_t *raw = heap_caps_malloc(FRAME_SAMPLES * sizeof(int32_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    int16_t pcm[FRAME_SAMPLES];
+    float dc_x1 = 0, dc_y1 = 0;
+    for (;;) {
+        if (s_reconfig) {
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            apply_slot(s_right_slot);
+            s_reconfig = false;
+            xSemaphoreGive(s_lock);
+        }
+        size_t got = 0;
+        if (i2s_channel_read(s_rx, raw, FRAME_SAMPLES * sizeof(int32_t), &got, pdMS_TO_TICKS(200)) != ESP_OK) {
+            continue;
+        }
+        size_t n = got / sizeof(int32_t);
+        int shift = s_shift;
+        double sum_sq = 0;
+        int16_t peak = 0;
+        for (size_t i = 0; i < n; i++) {
+            int32_t v = raw[i] >> shift;
+            // DC blocker: y = x - x1 + 0.995 * y1
+            float y = (float)v - dc_x1 + 0.995f * dc_y1;
+            dc_x1 = (float)v;
+            dc_y1 = y;
+            int32_t s = (int32_t)y;
+            if (s > 32767) s = 32767;
+            if (s < -32768) s = -32768;
+            pcm[i] = (int16_t)s;
+            sum_sq += (double)s * s;
+            int16_t a = s < 0 ? (int16_t)(s == -32768 ? 32767 : -s) : (int16_t)s;
+            if (a > peak) peak = a;
+        }
+        int db = dbfs_x10(sum_sq, n);
+        int lvl = (db + 600) * 100 / 500;
+        s_level = lvl < 0 ? 0 : lvl > 100 ? 100 : lvl;
+
+        if (s_recording) {
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            size_t room = s_rec_max - s_rec_len;
+            size_t take = n < room ? n : room;
+            memcpy(&s_rec[s_rec_len], pcm, take * sizeof(int16_t));
+            s_rec_len += take;
+            s_sum_sq += sum_sq;
+            if (peak > s_peak) s_peak = peak;
+            if (s_rec_len >= s_rec_max) {
+                s_recording = false;
+            }
+            xSemaphoreGive(s_lock);
+        }
+    }
+}
+
+esp_err_t audio_in_init(void)
+{
+    s_lock = xSemaphoreCreateMutex();
+    s_rec = heap_caps_malloc(REC_CAP * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    ESP_RETURN_ON_FALSE(s_rec, ESP_ERR_NO_MEM, TAG, "rec buffer");
+
+    i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
+    chan.dma_desc_num = 6;
+    chan.dma_frame_num = 240;
+    ESP_RETURN_ON_ERROR(i2s_new_channel(&chan, NULL, &s_rx), TAG, "channel");
+
+    i2s_std_config_t std = {
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(AUDIO_IN_RATE),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO),
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED,
+            .bclk = BOARD_PIN_MIC_SCK,
+            .ws = BOARD_PIN_MIC_WS,
+            .dout = I2S_GPIO_UNUSED,
+            .din = BOARD_PIN_MIC_SD,
+        },
+    };
+    std.slot_cfg.slot_mask = s_right_slot ? I2S_STD_SLOT_RIGHT : I2S_STD_SLOT_LEFT;
+    ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(s_rx, &std), TAG, "std");
+    ESP_RETURN_ON_ERROR(i2s_channel_enable(s_rx), TAG, "enable");
+
+    xTaskCreatePinnedToCore(capture_task, "audio_in", 4096, NULL, 7, NULL, 0);
+    ESP_LOGI(TAG, "mic ready (slot %s, shift %d)", s_right_slot ? "right" : "left", s_shift);
+    return ESP_OK;
+}
+
+esp_err_t audio_in_start(uint32_t max_ms)
+{
+    if (max_ms == 0 || max_ms > AUDIO_IN_MAX_MS) {
+        max_ms = AUDIO_IN_MAX_MS;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_rec_len = 0;
+    s_rec_max = (size_t)AUDIO_IN_RATE * max_ms / 1000;
+    s_sum_sq = 0;
+    s_peak = 0;
+    s_have_last = false;
+    s_recording = true;
+    xSemaphoreGive(s_lock);
+    return ESP_OK;
+}
+
+static void finish_clip(void)
+{
+    s_last.pcm = s_rec;
+    s_last.samples = s_rec_len;
+    s_last.ms = (uint32_t)(s_rec_len * 1000 / AUDIO_IN_RATE);
+    s_last.peak = s_peak;
+    s_last.rms_dbfs_x10 = dbfs_x10(s_sum_sq, s_rec_len);
+    s_have_last = true;
+}
+
+esp_err_t audio_in_stop(audio_clip_t *out)
+{
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_recording = false;
+    finish_clip();
+    if (out) {
+        *out = s_last;
+    }
+    xSemaphoreGive(s_lock);
+    return ESP_OK;
+}
+
+bool audio_in_recording(void) { return s_recording; }
+
+const audio_clip_t *audio_in_last(void)
+{
+    if (!s_have_last && !s_recording && s_rec_len > 0) {
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        finish_clip();   // recording ended by reaching max_ms
+        xSemaphoreGive(s_lock);
+    }
+    return s_have_last ? &s_last : NULL;
+}
+
+int audio_in_level(void) { return s_level; }
+
+void audio_in_set_format(bool right_slot, int shift)
+{
+    if (shift >= 0 && shift <= 20) {
+        s_shift = shift;
+    }
+    if (right_slot != s_right_slot) {
+        s_right_slot = right_slot;
+        s_reconfig = true;
+    }
+}
+
+esp_err_t audio_in_probe(uint32_t ms, audio_probe_t *out)
+{
+    ESP_RETURN_ON_FALSE(!s_recording, ESP_ERR_INVALID_STATE, TAG, "recording");
+    bool orig = s_right_slot;
+    for (int i = 0; i < 2; i++) {
+        bool right = (i == 0);
+        audio_in_set_format(right, s_shift);
+        vTaskDelay(pdMS_TO_TICKS(120));      // let the slot switch and the DC blocker settle
+        audio_in_start(ms);
+        vTaskDelay(pdMS_TO_TICKS(ms + 40));
+        audio_clip_t c;
+        audio_in_stop(&c);
+        size_t zeros = 0;
+        for (size_t k = 0; k < c.samples; k++) {
+            if (c.pcm[k] == 0) zeros++;
+        }
+        out->rms_dbfs_x10[i] = c.rms_dbfs_x10;
+        out->zero_permille[i] = c.samples ? (int)(zeros * 1000 / c.samples) : 1000;
+    }
+    audio_in_set_format(orig, s_shift);
+    return ESP_OK;
+}
+
+uint8_t *audio_clip_to_wav(const audio_clip_t *clip, size_t *len)
+{
+    size_t data = clip->samples * 2;
+    uint8_t *w = heap_caps_malloc(44 + data, MALLOC_CAP_SPIRAM);
+    if (!w) {
+        return NULL;
+    }
+    uint32_t rate = AUDIO_IN_RATE, byte_rate = AUDIO_IN_RATE * 2, riff = 36 + data, d32 = data, fmt_len = 16;
+    uint16_t pcm = 1, ch = 1, align = 2, bits = 16;
+    memcpy(w, "RIFF", 4);           memcpy(w + 4, &riff, 4);
+    memcpy(w + 8, "WAVEfmt ", 8);   memcpy(w + 16, &fmt_len, 4);
+    memcpy(w + 20, &pcm, 2);        memcpy(w + 22, &ch, 2);
+    memcpy(w + 24, &rate, 4);       memcpy(w + 28, &byte_rate, 4);
+    memcpy(w + 32, &align, 2);      memcpy(w + 34, &bits, 2);
+    memcpy(w + 36, "data", 4);      memcpy(w + 40, &d32, 4);
+    memcpy(w + 44, clip->pcm, data);
+    *len = 44 + data;
+    return w;
+}

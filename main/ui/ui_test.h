@@ -1,4 +1,4 @@
 #pragma once
 
-// M1 bring-up screen: colour bars, rim ring, spinner, touch tracker and a counter button.
+// Bring-up screen: colour bars, mic level ring, spinner, touch tracker and a 5 s REC button.
 void ui_test_create(void);

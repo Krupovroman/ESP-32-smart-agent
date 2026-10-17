@@ -1,3 +1,5 @@
+#include "audio_in.h"
+#include "audio_out.h"
 #include "board.h"
 #include "devconsole.h"
 #include "display.h"
@@ -33,6 +35,12 @@ void app_main(void)
         ESP_LOGE(TAG, "touch unavailable");
     }
     inject_init(display_get());
+    if (audio_in_init() != ESP_OK) {
+        ESP_LOGE(TAG, "microphone unavailable");
+    }
+    if (audio_out_init() != ESP_OK) {
+        ESP_LOGE(TAG, "speaker output unavailable");
+    }
 
     ui_test_create();
     vTaskDelay(pdMS_TO_TICKS(80));   // let the first frame reach the panel before lighting it
