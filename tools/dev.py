@@ -9,6 +9,8 @@
     python tools/dev.py ota push build/round_assistant.bin   # also: ota-push <bin> [noreboot]
     python tools/dev.py wait-ready 10              # wait for "@! READY" (or a booted device)
     python tools/dev.py events 10                  # print events for 10 s
+    python tools/dev.py --until ev=selftest events 15   # ... or until a matching one arrives
+    python tools/dev.py cmd "settings reset"       # one device line as typed
     python tools/dev.py log 10                     # print everything the device prints for 10 s
     python tools/dev.py run "tap 180 260" "sleep 0.5" "shot shots/after.png"
     python tools/dev.py --out tests/audio/hi.wav ai fetch -l ru "Привет"   # save any command's blob
@@ -602,10 +604,12 @@ def run_one(dev, text, args):
         files = [p for p in rest if p != "nomask"]
         path = files[0] if files else "shots/shot.png"
         t0 = time.time()
-        meta = dev.shot(path, mask="nomask" not in rest, region=region)
+        mask = "nomask" not in rest and not getattr(args, "no_mask", False)
+        meta = dev.shot(path, mask=mask, region=region)
         _say(f"saved {path} ({meta['w']}x{meta['h']}, {time.time() - t0:.1f}s)")
-    elif parts[:2] == ["mic", "dump"]:
-        path = parts[2] if len(parts) > 2 else "shots/mic.wav"
+    elif parts[:2] == ["mic", "dump"] or head == "mic-dump":
+        rest = parts[2:] if head == "mic" else parts[1:]
+        path = rest[0] if rest else "shots/mic.wav"
         _say(f"saved {path} ({dev.mic_dump(path)} bytes)")
     elif (parts[:2] == ["mic", "load"] and len(parts) > 2 and not parts[2].startswith("bytes=")) or head == "wav":
         path = parts[-1]
@@ -631,14 +635,20 @@ def run_one(dev, text, args):
         time.sleep(float(parts[1]))
     elif is_local_listen(parts):
         secs = float(parts[1]) if len(parts) > 1 else 5.0
+        until = parse_until(getattr(args, "until", None))
         mark = dev.event_mark()
         end = time.time() + secs
         while time.time() < end:
             time.sleep(0.05)
             while mark < len(dev.events):  # log lines print themselves through on_log
-                ev = json.dumps(dev.events[mark], ensure_ascii=False)
+                e = dev.events[mark]
+                ev = json.dumps(e, ensure_ascii=False)
                 _say(ev if head == "events" else "@! EVT " + ev)
                 mark += 1
+                if until and event_matches(e, until):
+                    return
+        if until:
+            raise DevError("TIMEOUT", f"no event with {args.until} within {secs:g} s")
     elif getattr(args, "out", None):
         # any command that sends a blob (e.g. "ai fetch -l ru <text>" -> WAV)
         meta, data, res = dev.blob(text, timeout=args.timeout)
@@ -650,6 +660,26 @@ def run_one(dev, text, args):
         if res.get("reboot") or res.get("rollback"):
             args.last_reboot = time.time()
         print_result(res)
+
+
+def parse_until(spec):
+    """'ev=state,to=idle' -> {'ev': 'state', 'to': 'idle'} (None/'' -> None)."""
+    if not spec:
+        return None
+    out = {}
+    for part in spec.split(","):
+        k, sep, v = part.partition("=")
+        if not sep or not k:
+            raise ValueError(f"--until wants key=value[,key=value], got '{spec}'")
+        out[k.strip()] = v.strip()
+    return out
+
+
+def event_matches(ev, want):
+    """Values compare as text, so 'turn=7' and 'ok=true' match JSON numbers and booleans."""
+    def text(v):
+        return json.dumps(v) if isinstance(v, bool) or v is None else str(v)
+    return all(k in ev and text(ev[k]) == v for k, v in want.items())
 
 
 def join_argv(args):
@@ -678,15 +708,26 @@ def main():
     ap.add_argument("--no-logs", action="store_true", help="do not print device log lines")
     ap.add_argument("--no-check", action="store_true", help="skip the CRC handshake on connect")
     ap.add_argument("--out", metavar="FILE", help="save the blob the command sends (e.g. ai fetch) to FILE")
-    ap.add_argument("command", nargs="+")
+    ap.add_argument("--mask", action="store_true", help="shot: dim pixels outside the round glass (default)")
+    ap.add_argument("--no-mask", action="store_true", help="shot: keep the corners as captured")
+    ap.add_argument("--until", metavar="K=V[,K=V]", help="events: stop at the first event with these values")
+    # REMAINDER: everything from the first word on is the command, so device options such as
+    # "ai fetch -l ru ..." or "ai ask -a ..." are not taken for dev.py options (those go first)
+    ap.add_argument("command", nargs=argparse.REMAINDER)
     a = ap.parse_args()
+    if not a.command:
+        ap.error("a command is required")
+    try:
+        parse_until(a.until)
+    except ValueError as e:
+        ap.error(str(e))
     if a.command[0] == "reset":
         esptool_reset(a.port)
         return 0
     passive = a.command[0] == "wait-ready" or is_local_listen(a.command)
     log_cb = None if a.no_logs else (lambda line: _say(line))
     # right after a flash or reset the port re-enumerates: wait-ready also waits for it to appear
-    open_wait = 5.0
+    open_wait = min(5.0, a.timeout)
     if a.command[0] == "wait-ready":
         open_wait = float(a.command[1]) if len(a.command) > 1 and _is_number(a.command[1]) else a.timeout
     try:
@@ -698,7 +739,12 @@ def main():
         print(f"error: cannot open {a.port}: {e}", file=sys.stderr)
         return 2
     try:
-        cmds = a.command[1:] if a.command[0] == "run" else [join_argv(a.command)]
+        if a.command[0] == "run":
+            cmds = a.command[1:]
+        elif a.command[0] == "cmd":   # dev.py cmd "settings reset": the argument is the device line
+            cmds = [a.command[1] if len(a.command) == 2 else join_argv(a.command[1:])]
+        else:
+            cmds = [join_argv(a.command)]
         for c in cmds:
             run_one(dev, c, a)
         time.sleep(0.1)  # let trailing log lines print

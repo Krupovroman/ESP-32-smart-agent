@@ -381,6 +381,28 @@ class DevTests(unittest.TestCase):
         self.assertTrue(hasattr(args, "last_reboot"))
         dev.run_one(self.dev, "wait-ready 3", args)   # satisfied by the READY the fake sends
 
+    def test_events_until(self):
+        import time as _t
+        threading.Timer(0.3, lambda: self.fake.emit(
+            '@! EVT {"t":1,"ev":"state","to":"idle","turn":7,"ok":true}')).start()
+        args = types.SimpleNamespace(timeout=5.0, until="ev=state,turn=7,ok=true")
+        t0 = _t.time()
+        dev.run_one(self.dev, "events 5", args)
+        self.assertLess(_t.time() - t0, 3.0)   # returned at the matching event, not after 5 s
+        args.until = "ev=nothing"
+        with self.assertRaises(dev.DevError):
+            dev.run_one(self.dev, "events 0.3", args)
+        self.assertEqual(dev.parse_until("a=1, b = x"), {"a": "1", "b": "x"})
+        with self.assertRaises(ValueError):
+            dev.parse_until("novalue")
+        self.assertFalse(dev.event_matches({"ok": False}, {"ok": "true"}))
+        self.assertFalse(dev.event_matches({}, {"ok": "None"}))
+
+    def test_mic_dump_alias(self):
+        path = os.path.join(self.tmp, "alias.wav")
+        dev.run_one(self.dev, f"mic-dump {path}", types.SimpleNamespace(timeout=5.0))
+        self.assertTrue(os.path.exists(path))
+
     def test_secrets_push_never_prints_values(self):
         import secrets_push
         data = {"ai_key": "sk-or-v1-SECRET", "ai_url": "https://relay/HIDDEN/api/v1", "bad_key": "x1",
@@ -479,6 +501,21 @@ class TransportTests(unittest.TestCase):
             self.assertIn("cannot open COMX", sys.stderr.getvalue())
         finally:
             sys.argv, sys.stderr = saved_argv, saved_err
+
+    def test_cli_device_options_are_not_dev_options(self):
+        def busy():
+            raise OSError("access denied")
+        sys.modules["serial"] = types.SimpleNamespace(Serial=busy, SerialException=OSError)
+        saved_argv, saved_err = sys.argv, sys.stderr
+        # parsing must succeed (then the open fails): "-l" and "-a" belong to the device command
+        for argv in (["--out", "x.wav", "ai", "fetch", "-l", "ru", "hi"], ["ai", "ask", "-a", "hello"],
+                     ["--until", "ev=ready", "events", "0.1"]):
+            sys.argv, sys.stderr = ["dev.py", "--port", "COMX", "--timeout", "0.1"] + argv, io.StringIO()
+            try:
+                self.assertEqual(dev.main(), 2)
+                self.assertIn("cannot open COMX", sys.stderr.getvalue())
+            finally:
+                sys.argv, sys.stderr = saved_argv, saved_err
 
     def test_write_reopens_after_failure(self):
         self.t.s.closed = True                # the board re-enumerated
