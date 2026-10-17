@@ -5,3 +5,6 @@
 // "OK" or "ERR <reason>" so tools/dev.py can script it. Commands: help, info, heap,
 // shot, tap, press, move, release, swipe, bl, invert, touchlog, mic, spk, reboot.
 esp_err_t devconsole_start(void);
+
+// Settings, Wi-Fi, portal and HTTPS commands (cmd_net.c).
+void cmd_net_register(void);

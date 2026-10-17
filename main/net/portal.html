@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Round Assistant</title>
+<style>
+:root{--bg:#05070d;--card:#0e1420;--line:#1e2a3d;--text:#e8eef7;--muted:#8fa3bf;--accent:#4fc3f7;--ok:#66bb6a;--err:#ef5350}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:460px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:22px;margin:4px 0 2px}
+p.sub{color:var(--muted);margin:0 0 20px}
+section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:16px}
+h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 12px}
+label{display:block;font-size:14px;color:var(--muted);margin:12px 0 6px}
+input,select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0a0f18;color:var(--text);font-size:16px}
+input:focus,select:focus{outline:2px solid var(--accent);border-color:transparent}
+.row{display:flex;gap:8px}
+.row>*{flex:1}
+button{width:100%;padding:14px;border:0;border-radius:12px;background:var(--accent);color:#04121c;font-size:17px;font-weight:600;margin-top:4px}
+button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line);font-weight:500;padding:10px}
+.hint{font-size:13px;color:var(--muted);margin-top:6px}
+#status{min-height:24px;margin-top:12px;font-size:15px}
+.ok{color:var(--ok)}.err{color:var(--err)}
+</style>
+</head>
+<body>
+<main>
+<h1>Round Assistant</h1>
+<p class="sub">Настройка устройства</p>
+<form id="f" method="post" action="/save" autocomplete="off">
+<section>
+<h2>Wi-Fi</h2>
+<label for="ssid">Сеть</label>
+<div class="row"><select id="ssid_sel"><option value="">Поиск сетей…</option></select></div>
+<input id="ssid" name="ssid" placeholder="или введите имя сети" maxlength="32" style="margin-top:8px">
+<label for="pass">Пароль</label>
+<input id="pass" name="pass" type="password" maxlength="64" placeholder="пусто — открытая сеть">
+<button type="button" class="ghost" id="rescan" style="margin-top:12px">Обновить список</button>
+</section>
+<section>
+<h2>Искусственный интеллект</h2>
+<label for="ai_key">Ключ OpenRouter</label>
+<input id="ai_key" name="ai_key" type="password" maxlength="200" placeholder="sk-or-…">
+<div class="hint" id="key_hint">Оставьте пустым, чтобы не менять сохранённый ключ.</div>
+<label for="ai_model">Модель</label>
+<input id="ai_model" name="ai_model" maxlength="96">
+<label for="ai_url">Адрес API</label>
+<input id="ai_url" name="ai_url" maxlength="128">
+</section>
+<button type="submit">Сохранить</button>
+<div id="status"></div>
+</form>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+async function scan(){
+  $('ssid_sel').innerHTML='<option value="">Поиск сетей…</option>';
+  try{
+    const r=await fetch('/scan.json');const j=await r.json();
+    let h='<option value="">— выберите сеть —</option>';
+    for(const a of j.aps){const bars=a.rssi>-55?'▂▄▆█':a.rssi>-67?'▂▄▆':a.rssi>-78?'▂▄':'▂';
+      h+=`<option value="${a.ssid.replace(/"/g,'&quot;')}">${a.ssid.replace(/</g,'&lt;')}  ${bars}${a.auth?' 🔒':''}</option>`}
+    $('ssid_sel').innerHTML=h;
+  }catch(e){$('ssid_sel').innerHTML='<option value="">Не удалось найти сети</option>'}
+}
+async function status(){
+  try{
+    const j=await (await fetch('/status.json')).json();
+    if(!$('ai_model').value)$('ai_model').value=j.ai_model;
+    if(!$('ai_url').value)$('ai_url').value=j.ai_url;
+    $('key_hint').textContent=j.ai_key_set?'Ключ сохранён. Оставьте пустым, чтобы не менять.':'Ключ ещё не задан.';
+    const s=$('status');
+    if(j.net==='up'){s.className='ok';s.textContent='Подключено к «'+j.ssid+'»'}
+    else if(j.net==='connecting'){s.className='';s.textContent='Подключаюсь к «'+j.ssid+'»…'}
+    else if(j.net==='failed'){s.className='err';s.textContent='Не удалось подключиться к «'+j.ssid+'»'}
+  }catch(e){}
+}
+$('ssid_sel').onchange=e=>{if(e.target.value)$('ssid').value=e.target.value};
+$('rescan').onclick=scan;
+$('f').onsubmit=async e=>{
+  e.preventDefault();
+  const s=$('status');s.className='';s.textContent='Сохраняю…';
+  try{
+    const r=await fetch('/save',{method:'POST',body:new URLSearchParams(new FormData($('f')))});
+    const t=await r.text();
+    s.className=r.ok?'ok':'err';s.textContent=t;
+    $('pass').value='';$('ai_key').value='';
+  }catch(e){s.className='err';s.textContent='Связь с устройством потеряна — переподключитесь к его сети.'}
+};
+scan();status();setInterval(status,3000);
+</script>
+</body>
+</html>

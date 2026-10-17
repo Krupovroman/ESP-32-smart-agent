@@ -339,5 +339,6 @@ esp_err_t devconsole_start(void)
     reg("mic", "mic probe [ms] | rec <ms> | dump | level | fmt right|left <shift>", cmd_mic);
     reg("spk", "spk tone <hz> <ms> [amp] | vol <0-100> | stat", cmd_spk);
     reg("reboot", "Restart the chip", cmd_reboot);
+    cmd_net_register();
     return esp_console_start_repl(repl);
 }

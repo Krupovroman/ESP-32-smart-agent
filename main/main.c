@@ -4,6 +4,8 @@
 #include "devconsole.h"
 #include "display.h"
 #include "inject.h"
+#include "net.h"
+#include "settings.h"
 #include "touch.h"
 #include "ui_test.h"
 
@@ -29,6 +31,7 @@ static void confirm_running_image(void)
 void app_main(void)
 {
     board_power_latch_on();
+    ESP_ERROR_CHECK(settings_init());
     ESP_ERROR_CHECK(board_init());
     ESP_ERROR_CHECK(display_init());
     if (touch_init(display_get()) != ESP_OK) {
@@ -41,11 +44,19 @@ void app_main(void)
     if (audio_out_init() != ESP_OK) {
         ESP_LOGE(TAG, "speaker output unavailable");
     }
+    audio_out_set_volume((uint8_t)settings_get_int("volume"));
+    audio_in_set_format(settings_get_int("mic_slot") == 0, settings_get_int("mic_shift"));
 
     ui_test_create();
     vTaskDelay(pdMS_TO_TICKS(80));   // let the first frame reach the panel before lighting it
-    board_backlight_set(80);
+    board_backlight_set((uint8_t)settings_get_int("bright"));
 
     ESP_ERROR_CHECK(devconsole_start());
     confirm_running_image();
+
+    if (net_init() == ESP_OK) {
+        net_start();
+    } else {
+        ESP_LOGE(TAG, "wifi unavailable");
+    }
 }
