@@ -44,6 +44,9 @@ static void clear_locked(void)
 
 void hist_clear(void)
 {
+    if (!s_lock) {
+        return;    // before ai_client_init() (the console starts first): nothing stored yet
+    }
     xSemaphoreTake(s_lock, portMAX_DELAY);
     clear_locked();
     xSemaphoreGive(s_lock);
