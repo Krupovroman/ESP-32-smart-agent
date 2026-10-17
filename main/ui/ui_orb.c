@@ -954,7 +954,8 @@ void ui_orb_set_state(lv_obj_t *orb, int32_t st)
     tw_go(&o->bars, rec ? 1 : 0, rec ? 180 : 160, rec ? E_OUT : E_IN, now);
     tw_go(&o->prog, st == UI_ST_UPLOAD ? 1 : 0, 150, E_OUT, now);
     tw_go(&o->arcs, st == UI_ST_THINK ? 1 : 0, 150, st == UI_ST_THINK ? E_OUT : E_IN, now);
-    tw_go(&o->echo, st == UI_ST_SPEAK ? 1 : 0, st == UI_ST_SPEAK ? 250 : 200, E_OUT, now);
+    // echo rings: in with the 250 ms speak morph (A11), out 200 ms ease_in (A13)
+    tw_go(&o->echo, st == UI_ST_SPEAK ? 1 : 0, st == UI_ST_SPEAK ? 250 : 200, st == UI_ST_SPEAK ? E_OUT : E_IN, now);
     if (st == UI_ST_UPLOAD && prev != UI_ST_UPLOAD) {
         tw_set(&o->pct, 0, now);
     }

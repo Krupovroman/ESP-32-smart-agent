@@ -206,7 +206,9 @@ void ui_chrome_toast(const char *text)
         lv_obj_set_size(s_toast, TOAST_W, TOAST_H);
         lv_obj_remove_flag(s_toast, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_t *l = lv_label_create(s_toast);
-        lv_obj_set_width(l, LV_PCT(100));
+        // one fixed ui_16 line: DOTS only truncates when the height is fixed, else a long app toast wraps
+        // and its second line is cut by the 40 px stadium
+        lv_obj_set_size(l, LV_PCT(100), lv_font_get_line_height(&ui_16));
         lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
         lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_center(l);
