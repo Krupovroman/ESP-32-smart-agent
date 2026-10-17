@@ -1,0 +1,4 @@
+# Bootloader rollback test build (docs/architecture.md §10 test 6.3): the image panics inside the
+# self-test, before it is confirmed; the bootloader marks it ABORTED and boots the previous slot.
+#   .\tools\idf.ps1 -B build-fp -D SDKCONFIG=build-fp/sdkconfig -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;tests/sdkconfig.forcepanic" build
+CONFIG_RA_SELFTEST_FORCE_PANIC=y

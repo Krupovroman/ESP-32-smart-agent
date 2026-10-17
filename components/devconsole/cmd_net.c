@@ -1,5 +1,5 @@
 // Console commands for settings, Wi-Fi, the phone portal and HTTPS checks.
-#include "devconsole.h"
+#include "dc_internal.h"
 #include "httpx.h"
 #include "net.h"
 #include "portal.h"
@@ -162,9 +162,10 @@ static void reg(const char *name, const char *help, dc_cmd_fn fn)
 
 void cmd_net_register(void)
 {
-    reg("get", "get <key> - read a setting (secrets masked)", cmd_get);
-    reg("set", "set <key> [value] - write a setting", cmd_set);
-    reg("settings", "settings [reset] - list all settings", cmd_settings);
+    // settings are loaded before the console starts, so these work during boot
+    dc_register_early("get", "get <key> - read a setting (secrets masked)", cmd_get);
+    dc_register_early("set", "set <key> [value] - write a setting", cmd_set);
+    dc_register_early("settings", "settings [reset] - list all settings", cmd_settings);
     reg("wifi", "wifi scan | connect <ssid> [pass] | disconnect | forget <ssid> | saved | status", cmd_wifi);
     reg("portal", "portal start | stop | status - phone setup network", cmd_portal);
     reg("net", "net get <https-url> [auth] - HTTPS check", cmd_net);

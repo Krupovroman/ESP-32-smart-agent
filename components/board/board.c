@@ -22,17 +22,24 @@ static uint8_t s_backlight = 0;
 
 void board_power_latch_on(void)
 {
+    // level before direction: the bootloader hook already drives it high, never let it dip
+    gpio_set_level(BOARD_PIN_PWR_LATCH, 1);
     gpio_config_t cfg = {
         .pin_bit_mask = 1ULL << BOARD_PIN_PWR_LATCH,
         .mode = GPIO_MODE_OUTPUT,
     };
     gpio_config(&cfg);
     gpio_set_level(BOARD_PIN_PWR_LATCH, 1);
+    // keep the pad latched high through software, watchdog and panic resets (reboot, OTA,
+    // rollback): on battery the board would otherwise lose power before the bootloader hook
+    // drives GPIO7 again. A power-on reset clears the hold.
+    gpio_hold_en(BOARD_PIN_PWR_LATCH);
 }
 
 void board_power_off(void)
 {
     board_backlight_set(0);
+    gpio_hold_dis(BOARD_PIN_PWR_LATCH);
     gpio_set_level(BOARD_PIN_PWR_LATCH, 0);
 }
 

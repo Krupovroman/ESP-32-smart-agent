@@ -1,4 +1,5 @@
 #include "audio_in.h"
+#include "audio_inject_priv.h"
 #include "board_pins.h"
 
 #include <math.h>
@@ -51,6 +52,18 @@ static int dbfs_x10(double sum_sq, size_t n)
     return (int)lrint(200.0 * log10(rms));
 }
 
+static void frame_stats(const int16_t *pcm, size_t n, double *sum_sq, int16_t *peak)
+{
+    *sum_sq = 0;
+    *peak = 0;
+    for (size_t i = 0; i < n; i++) {
+        int32_t s = pcm[i];
+        *sum_sq += (double)s * s;
+        int16_t a = s < 0 ? (int16_t)(s == -32768 ? 32767 : -s) : (int16_t)s;
+        if (a > *peak) *peak = a;
+    }
+}
+
 static void capture_task(void *arg)
 {
     int32_t *raw = heap_caps_malloc(FRAME_SAMPLES * sizeof(int32_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
@@ -73,14 +86,19 @@ static void capture_task(void *arg)
             s_reconfig = false;
             xSemaphoreGive(s_lock);
         }
-        size_t got = 0;
-        if (i2s_channel_read(s_rx, raw, FRAME_SAMPLES * sizeof(int32_t), &got, pdMS_TO_TICKS(200)) != ESP_OK) {
-            continue;
-        }
-        size_t n = got / sizeof(int32_t);
-        int shift = s_shift;
+        size_t n = 0;
         double sum_sq = 0;
         int16_t peak = 0;
+        // fast injection fills a recording without waiting for the I2S clock
+        bool skip_mic = s_recording && audio_inject_fast();
+        size_t got = 0;
+        if (!skip_mic) {
+            if (i2s_channel_read(s_rx, raw, FRAME_SAMPLES * sizeof(int32_t), &got, pdMS_TO_TICKS(200)) != ESP_OK) {
+                continue;
+            }
+        }
+        n = got / sizeof(int32_t);
+        int shift = s_shift;
         for (size_t i = 0; i < n; i++) {
             int32_t v = raw[i] >> shift;
             // DC blocker: y = x - x1 + 0.995 * y1
@@ -95,23 +113,29 @@ static void capture_task(void *arg)
             int16_t a = s < 0 ? (int16_t)(s == -32768 ? 32767 : -s) : (int16_t)s;
             if (a > peak) peak = a;
         }
-        int db = dbfs_x10(sum_sq, n);
-        int lvl = (db + 600) * 100 / 500;
-        s_level = lvl < 0 ? 0 : lvl > 100 ? 100 : lvl;
-
         if (s_recording) {
             xSemaphoreTake(s_lock, portMAX_DELAY);
+            bool inject_end = false;
+            if (s_recording && audio_inject_active()) {
+                // injected samples replace the mic bit-exact: no shift, no DC blocker
+                n = audio_inject_read(pcm, FRAME_SAMPLES);
+                inject_end = n < FRAME_SAMPLES;
+                frame_stats(pcm, n, &sum_sq, &peak);
+            }
             size_t room = s_rec_max - s_rec_len;
             size_t take = n < room ? n : room;
             memcpy(&s_rec[s_rec_len], pcm, take * sizeof(int16_t));
             s_rec_len += take;
             s_sum_sq += sum_sq;
             if (peak > s_peak) s_peak = peak;
-            if (s_rec_len >= s_rec_max) {
+            if (s_rec_len >= s_rec_max || inject_end) {
                 s_recording = false;
             }
             xSemaphoreGive(s_lock);
         }
+        int db = dbfs_x10(sum_sq, n);
+        int lvl = (db + 600) * 100 / 500;
+        s_level = lvl < 0 ? 0 : lvl > 100 ? 100 : lvl;
     }
 }
 
@@ -160,6 +184,7 @@ esp_err_t audio_in_start(uint32_t max_ms)
     s_sum_sq = 0;
     s_peak = 0;
     s_have_last = false;
+    audio_inject_rewind();
     s_recording = true;
     xSemaphoreGive(s_lock);
     return ESP_OK;
@@ -228,6 +253,7 @@ void audio_in_set_format(bool right_slot, int shift)
 esp_err_t audio_in_probe(uint32_t ms, audio_probe_t *out)
 {
     ESP_RETURN_ON_FALSE(!s_recording, ESP_ERR_INVALID_STATE, TAG, "recording");
+    ESP_RETURN_ON_FALSE(!audio_inject_active(), ESP_ERR_INVALID_STATE, TAG, "source is inject");
     bool orig = s_right_slot;
     for (int i = 0; i < 2; i++) {
         bool right = (i == 0);
