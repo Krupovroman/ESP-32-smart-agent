@@ -12,7 +12,9 @@
 
 static const char *TAG = "audio_out";
 
-#define RING_BYTES   (256 * 1024)
+// 2 MB in PSRAM (~43 s at 24 kHz) so a whole TTS reply can be fetched while it plays
+// and the shared HTTPS connection is released early (architecture 1.6)
+#define RING_BYTES   (2 * 1024 * 1024)
 #define CHUNK_SAMPLES 240
 
 static i2s_chan_handle_t s_tx;
