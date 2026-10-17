@@ -150,7 +150,11 @@ class Device:
         self._th = threading.Thread(target=self._reader, name="dev-reader", daemon=True)
         self._th.start()
         if check:
-            self.check_protocol()
+            try:
+                self.check_protocol()
+            except Exception:
+                self.close()  # free the port for the next tool
+                raise
 
     # -- reader thread
 
@@ -581,10 +585,10 @@ def run_one(dev, text, args):
         end = time.time() + secs
         while time.time() < end:
             time.sleep(0.05)
-            if head == "events":
-                while mark < len(dev.events):
-                    _say(json.dumps(dev.events[mark], ensure_ascii=False))
-                    mark += 1
+            while mark < len(dev.events):  # log lines print themselves through on_log
+                ev = json.dumps(dev.events[mark], ensure_ascii=False)
+                _say(ev if head == "events" else "@! EVT " + ev)
+                mark += 1
     else:
         print_result(dev.cmd(text, timeout=args.timeout))
 

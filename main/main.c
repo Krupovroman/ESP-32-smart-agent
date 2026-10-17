@@ -29,17 +29,25 @@ void app_main(void)
     selftest_inputs_t st = {
         .audio_in = ESP_ERR_INVALID_STATE, .audio_out = ESP_ERR_INVALID_STATE, .wifi = ESP_ERR_INVALID_STATE,
     };
+    // in safe mode a broken board or panel must not abort: the console has to stay reachable
     st.board = board_init();
-    ESP_ERROR_CHECK(st.board);
+    if (!safe) {
+        ESP_ERROR_CHECK(st.board);
+    }
     devconsole_heap_stage("after_board");
-    st.display = display_init();
-    ESP_ERROR_CHECK(st.display);
+    st.display = st.board == ESP_OK ? display_init() : ESP_ERR_INVALID_STATE;
+    if (!safe) {
+        ESP_ERROR_CHECK(st.display);
+    }
     devconsole_heap_stage("after_display");
-    st.touch = touch_init(display_get());
+    bool have_ui = st.display == ESP_OK;
+    st.touch = have_ui ? touch_init(display_get()) : ESP_ERR_INVALID_STATE;
     if (st.touch != ESP_OK) {
         ESP_LOGE(TAG, "touch unavailable");
     }
-    inject_init(display_get());
+    if (have_ui) {
+        inject_init(display_get());
+    }
     if (!safe) {
         st.audio_in = audio_in_init();
         if (st.audio_in != ESP_OK) {
@@ -54,9 +62,11 @@ void app_main(void)
         devconsole_heap_stage("after_audio");
     }
 
-    ui_test_create();
-    vTaskDelay(pdMS_TO_TICKS(80));   // let the first frame reach the panel before lighting it
-    board_backlight_set((uint8_t)settings_get_int("bright"));
+    if (have_ui) {
+        ui_test_create();
+        vTaskDelay(pdMS_TO_TICKS(80));   // let the first frame reach the panel before lighting it
+        board_backlight_set((uint8_t)settings_get_int("bright"));
+    }
 
     if (!safe) {
         st.wifi = net_init();

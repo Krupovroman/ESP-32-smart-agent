@@ -38,7 +38,8 @@ static const char *TAG = "devcon";
 
 static TaskHandle_t s_task;
 static SemaphoreHandle_t s_wr;               // recursive: a log from inside the writer must not deadlock
-static volatile bool s_stalled;              // host stopped reading; drop until the TX ring drains
+static volatile bool s_stalled;              // host stopped reading; drop logs until the TX ring drains
+static bool s_cmd_stalled;                   // the running command's output already timed out once
 static volatile uint32_t s_dropped;
 static bool s_drv;
 static volatile bool s_ready;
@@ -95,7 +96,9 @@ static bool in_isr_or_no_sched(void)
 }
 
 // Pushes bytes into the driver's TX ring. Never waits forever: without a host the bytes are
-// dropped at once, and after one timeout the rest is dropped until the host reads again.
+// dropped at once, and after one timeout logs are dropped until the host reads again. Command
+// output (a host just sent the command) still gets one bounded wait per command, because the
+// ring may hold stale logs from before the port was opened.
 static void usb_out(const char *p, size_t n)
 {
     if (!s_drv || n == 0) {
@@ -105,18 +108,21 @@ static void usb_out(const char *p, size_t n)
         s_dropped++;
         return;
     }
-    const bool can_wait = !in_isr_or_no_sched();
+    const bool can_wait = !in_isr_or_no_sched() && (s_line_important ? !s_cmd_stalled : !s_stalled);
     while (n > 0) {
         size_t k = n > USB_CHUNK ? USB_CHUNK : n;
         int w = usb_serial_jtag_write_bytes(p, k, 0);
         if (w <= 0) {
-            if (s_stalled || !can_wait) {
+            if (!can_wait) {
                 s_dropped++;
                 return;
             }
             w = usb_serial_jtag_write_bytes(p, k, pdMS_TO_TICKS(s_line_important ? WAIT_CMD_MS : WAIT_LOG_MS));
             if (w <= 0) {
                 s_stalled = true;
+                if (s_line_important) {
+                    s_cmd_stalled = true;
+                }
                 s_dropped++;
                 return;
             }
@@ -538,6 +544,7 @@ static void send_err(uint16_t id, const char *name, const char *msg)
 static void run_command(uint16_t id, const char *cmdline)
 {
     s_cur_id = id;
+    s_cmd_stalled = false;
     s_cap_len = 0;
     s_cap_trunc = false;
     s_fail_msg[0] = 0;
