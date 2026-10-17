@@ -20,7 +20,8 @@ const display_info_t *display_info(void);
 // Must not be called with the LVGL lock held.
 esp_err_t display_set_invert(bool on);
 
-// Re-renders the whole screen and returns a 360x360 RGB565 copy (PSRAM, native byte order)
-// of exactly what is sent to the panel, including top and system layers.
+// Re-renders the whole screen (in the LVGL task) and returns a 360x360 RGB565 copy (PSRAM,
+// native byte order), or NULL after a 3 s timeout. It is
+// exactly what is sent to the panel, including top and system layers.
 // Must not be called with the LVGL lock held. The buffer is reused by the next call.
 const uint16_t *display_capture(void);

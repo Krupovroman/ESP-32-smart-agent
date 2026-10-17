@@ -10,6 +10,8 @@
 #include "esp_lcd_st77916.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 #include "st77916_init_new.inc"
 
@@ -26,6 +28,9 @@ static esp_lcd_panel_handle_t s_panel;
 static display_info_t s_info;
 static uint16_t *s_shadow;
 static volatile bool s_capture;
+static SemaphoreHandle_t s_capture_done;
+
+static void refr_ready_cb(lv_event_t *e);
 
 static void probe_panel_id(void)
 {
@@ -140,8 +145,10 @@ esp_err_t display_init(void)
     ESP_RETURN_ON_FALSE(s_disp, ESP_FAIL, TAG, "add disp");
 
     s_shadow = heap_caps_calloc(BOARD_LCD_H_RES * BOARD_LCD_V_RES, sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    s_capture_done = xSemaphoreCreateBinary();
     lvgl_port_lock(0);
     lv_display_add_event_cb(s_disp, flush_start_cb, LV_EVENT_FLUSH_START, NULL);
+    lv_display_add_event_cb(s_disp, refr_ready_cb, LV_EVENT_REFR_READY, NULL);
     lvgl_port_unlock();
     return ESP_OK;
 }
@@ -157,16 +164,34 @@ esp_err_t display_set_invert(bool on)
     return err;
 }
 
-const uint16_t *display_capture(void)
+// Runs in the LVGL task: arms the copy and invalidates the screen; the next regular
+// refresh renders it (on the LVGL task's stack, not the caller's) and REFR_READY ends it.
+static void capture_arm(void *arg)
 {
-    if (!s_shadow) {
-        return NULL;
-    }
-    lvgl_port_lock(0);
     s_capture = true;
     lv_obj_invalidate(lv_screen_active());
-    lv_refr_now(s_disp);
-    s_capture = false;
+}
+
+static void refr_ready_cb(lv_event_t *e)
+{
+    if (s_capture) {
+        s_capture = false;
+        xSemaphoreGive(s_capture_done);
+    }
+}
+
+const uint16_t *display_capture(void)
+{
+    if (!s_shadow || !s_capture_done) {
+        return NULL;
+    }
+    xSemaphoreTake(s_capture_done, 0);   // drop a stale give from a timed-out capture
+    lvgl_port_lock(0);
+    lv_async_call(capture_arm, NULL);
     lvgl_port_unlock();
+    if (xSemaphoreTake(s_capture_done, pdMS_TO_TICKS(3000)) != pdTRUE) {
+        s_capture = false;
+        return NULL;
+    }
     return s_shadow;
 }
