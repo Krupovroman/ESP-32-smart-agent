@@ -590,7 +590,8 @@ def run_one(dev, text, args):
             print_result(dev.cmd("ota info"))
     elif head == "wait-ready":
         timeout = float(parts[1]) if len(parts) > 1 else args.timeout
-        _say(json.dumps(dev.wait_ready(timeout), ensure_ascii=False))
+        # after a reboot in the same run, a ping must come from the new boot
+        _say(json.dumps(dev.wait_ready(timeout, after=getattr(args, "last_reboot", None)), ensure_ascii=False))
     elif head == "sleep":
         time.sleep(float(parts[1]))
     elif is_local_listen(parts):
@@ -604,7 +605,10 @@ def run_one(dev, text, args):
                 _say(ev if head == "events" else "@! EVT " + ev)
                 mark += 1
     else:
-        print_result(dev.cmd(text, timeout=args.timeout))
+        res = dev.cmd(text, timeout=args.timeout)
+        if res.get("reboot") or res.get("rollback"):
+            args.last_reboot = time.time()
+        print_result(res)
 
 
 def esptool_reset(port):

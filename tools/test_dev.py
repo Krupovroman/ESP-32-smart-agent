@@ -323,6 +323,20 @@ class DevTests(unittest.TestCase):
         # no READY arrives, but ping reports a booted device
         self.assertTrue(self.dev.wait_ready(timeout=2)["booted"])
 
+    def test_wait_ready_after_reboot_ignores_old_uptime(self):
+        # the fake reports uptime 500 ms: a reboot requested 0.1 s ago is "fresh" enough
+        # (uptime <= elapsed + 1 s), one requested in the future is not and needs READY
+        import time as _t
+        self.assertTrue(self.dev.wait_ready(timeout=1, after=_t.time() - 0.1)["booted"])
+        with self.assertRaises(dev.DevError):
+            self.dev.wait_ready(timeout=0.8, after=_t.time() + 5)
+
+    def test_run_reboot_then_wait_ready(self):
+        args = types.SimpleNamespace(timeout=5.0)
+        dev.run_one(self.dev, "reboot", args)
+        self.assertTrue(hasattr(args, "last_reboot"))
+        dev.run_one(self.dev, "wait-ready 3", args)   # satisfied by the READY the fake sends
+
     def test_unrouted_frames_are_logs(self):
         self.fake.emit("@0 OK {}")
         self.fake.emit("@999 ERR ESP_FAIL {\"msg\":\"late\"}")
