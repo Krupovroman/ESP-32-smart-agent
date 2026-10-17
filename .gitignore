@@ -17,3 +17,4 @@ backups/*.bin
 .vscode/
 *.swp
 Thumbs.db
+shots/
