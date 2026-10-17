@@ -15,6 +15,7 @@
 #include "esp_console.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_rom_crc.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -32,6 +33,7 @@ static const char *TAG = "devcon";
 #define USB_CHUNK       512
 #define FMT_BYTES       640
 #define LOGBUF_BYTES    512
+#define CAPLINE_BYTES   512      // captured line held back until it is known not to be "BLOB:"
 #define WAIT_CMD_MS     1000     // command output: the host is reading, allow it to lag
 #define WAIT_LOG_MS     100
 #define LOCK_WAIT_MS    2000
@@ -67,6 +69,18 @@ static bool s_cap_trunc;
 static char s_fail_msg[200];
 static void (*s_defer_fn)(void *);
 static void *s_defer_arg;
+
+// the captured line being printed (PSRAM); spilled = too long to be a legacy BLOB line, the
+// rest of it goes straight to s_cap
+static char *s_cl;
+static size_t s_cl_len;
+static bool s_cl_spilled;
+
+// legacy "BLOB:" transfer of the running command (protocol v1, still printed by ai fetch)
+static struct {
+    bool active;
+    uint32_t seq, bytes, crc;
+} s_lb;
 
 // stdout lines of other tasks (and of id-0 commands)
 static char *s_ob;
@@ -316,6 +330,108 @@ static void cap_putc(char c)
     }
 }
 
+static void cap_put(const char *s, size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        cap_putc(s[i]);
+    }
+}
+
+// Protocol v1 blobs ("BLOB:BEGIN <kind> <bytes> <crc32> [args]", "BLOB:<base64>", "BLOB:END"),
+// printed by commands written for the old console, become v2 BEGIN/D/END frames, so
+// Device.blob() receives them like any other blob.
+static void legacy_blob_line(const char *p, size_t n)
+{
+    uint16_t id = s_cur_id;
+    if (n >= 6 && !memcmp(p, "BEGIN ", 6)) {
+        char kind[16] = "", crc[12] = "", args[48] = "";
+        unsigned bytes = 0;
+        char tmp[96];
+        size_t k = n - 6 < sizeof(tmp) - 1 ? n - 6 : sizeof(tmp) - 1;
+        memcpy(tmp, p + 6, k);
+        tmp[k] = 0;
+        int got = sscanf(tmp, "%15s %u %11s %47[^\n]", kind, &bytes, crc, args);
+        s_lb.active = got >= 3;
+        s_lb.seq = s_lb.bytes = s_lb.crc = 0;
+        if (!s_lb.active || !dc_line_begin(true)) {
+            return;
+        }
+        dc_line_printf("@%u BEGIN %s {", id, kind);
+        unsigned rate = 0, ch = 0;
+        char fmt[12];
+        if (!strcmp(kind, "wav") && sscanf(args, "%u %u %11s", &rate, &ch, fmt) == 3) {
+            dc_line_printf("\"rate\":%u,\"ch\":%u,\"fmt\":\"%s\",", rate, ch, fmt);
+        } else if (args[0]) {
+            dc_line_puts("\"args\":");
+            dc_line_json_str(args, strlen(args));
+            dc_line_put(",", 1);
+        }
+        dc_line_printf("\"bytes\":%u,\"crc32\":\"%s\",\"legacy\":true}", bytes, crc);
+        dc_line_end();
+        return;
+    }
+    if (!s_lb.active) {
+        return;
+    }
+    if (n == 3 && !memcmp(p, "END", 3)) {
+        s_lb.active = false;
+        if (dc_line_begin(true)) {
+            dc_line_printf("@%u END {\"bytes\":%u,\"crc32\":\"%08lx\",\"lines\":%u}", id, (unsigned)s_lb.bytes,
+                           (unsigned long)s_lb.crc, (unsigned)s_lb.seq);
+            dc_line_end();
+        }
+        return;
+    }
+    // data line: forwarded as-is (the PC checks it); size and CRC are counted for END
+    static uint8_t raw[CAPLINE_BYTES / 4 * 3];   // devcon task only
+    int m = dc_b64_decode(p, n, raw, sizeof(raw));
+    if (m > 0) {
+        s_lb.crc = esp_rom_crc32_le(s_lb.crc, raw, (size_t)m);
+        s_lb.bytes += (uint32_t)m;
+    }
+    if (dc_line_begin(true)) {
+        dc_line_printf("@%u D %u ", id, (unsigned)s_lb.seq);
+        dc_line_put(p, n);
+        dc_line_end();
+    }
+    s_lb.seq++;
+}
+
+// Output of the running command: complete lines go to s_cap, legacy blob lines to the wire.
+static void cap_char(char c)
+{
+    if (c == '\n') {
+        if (!s_cl_spilled && s_cl_len >= 5 && !memcmp(s_cl, "BLOB:", 5)) {
+            legacy_blob_line(s_cl + 5, s_cl_len - 5);
+        } else {
+            cap_put(s_cl, s_cl_len);
+            cap_putc('\n');
+        }
+        s_cl_len = 0;
+        s_cl_spilled = false;
+    } else if (s_cl_spilled) {
+        cap_putc(c);
+    } else if (s_cl_len < CAPLINE_BYTES) {
+        s_cl[s_cl_len++] = c;
+    } else {
+        cap_put(s_cl, s_cl_len);
+        s_cl_len = 0;
+        s_cl_spilled = true;
+        cap_putc(c);
+    }
+}
+
+// End of a command: an unterminated last line still belongs to the output.
+static void cap_finish(void)
+{
+    if (s_cl_len > 0) {
+        cap_put(s_cl, s_cl_len);
+    }
+    s_cl_len = 0;
+    s_cl_spilled = false;
+    s_lb.active = false;
+}
+
 static int out_putc(char c, FILE *f)
 {
     (void)f;
@@ -324,7 +440,7 @@ static int out_putc(char c, FILE *f)
     }
     const bool mine = xTaskGetCurrentTaskHandle() == s_task;
     if (mine && s_capture && s_cur_id != 0) {
-        cap_putc(c);
+        cap_char(c);
         return 0;
     }
     // s_ob is shared by every task that prints: only touch it under the writer lock
@@ -580,10 +696,13 @@ static void run_command(uint16_t id, const char *cmdline)
     s_cap_trunc = false;
     s_fail_msg[0] = 0;
     s_defer_fn = NULL;
+    s_cl_len = 0;
+    s_cl_spilled = false;
     s_capture = true;
     int ret = 0;
     esp_err_t e = esp_console_run(cmdline, &ret);
     fflush(stdout);
+    cap_finish();
     s_capture = false;
     if (e == ESP_ERR_NOT_FOUND) {
         char msg[64];
@@ -851,7 +970,9 @@ esp_err_t devconsole_start(void)
     s_stage = heap_caps_malloc(USB_CHUNK, MALLOC_CAP_SPIRAM);
     s_fmt = heap_caps_malloc(FMT_BYTES, MALLOC_CAP_SPIRAM);
     s_logbuf = heap_caps_malloc(LOGBUF_BYTES, MALLOC_CAP_SPIRAM);
-    ESP_RETURN_ON_FALSE(s_line && s_cap && s_ob && s_stage && s_fmt && s_logbuf, ESP_ERR_NO_MEM, TAG, "buffers");
+    s_cl = heap_caps_malloc(CAPLINE_BYTES, MALLOC_CAP_SPIRAM);
+    ESP_RETURN_ON_FALSE(s_line && s_cap && s_ob && s_stage && s_fmt && s_logbuf && s_cl, ESP_ERR_NO_MEM, TAG,
+                        "buffers");
     // the writer stays inert (all output dropped) until the mutex exists
     s_wr = xSemaphoreCreateRecursiveMutex();
     ESP_RETURN_ON_FALSE(s_wr, ESP_ERR_NO_MEM, TAG, "writer lock");

@@ -11,6 +11,7 @@
     python tools/dev.py events 10                  # print events for 10 s
     python tools/dev.py log 10                     # print everything the device prints for 10 s
     python tools/dev.py run "tap 180 260" "sleep 0.5" "shot shots/after.png"
+    python tools/dev.py --out tests/audio/hi.wav ai fetch -l ru "Привет"   # save any command's blob
 
 Port: COM7 by default, override with --port or the RA_PORT environment variable.
 Library use: Device(port).cmd("heap") -> dict, .blob(), .shot(), .upload(), .wait_event().
@@ -638,6 +639,12 @@ def run_one(dev, text, args):
                 ev = json.dumps(dev.events[mark], ensure_ascii=False)
                 _say(ev if head == "events" else "@! EVT " + ev)
                 mark += 1
+    elif getattr(args, "out", None):
+        # any command that sends a blob (e.g. "ai fetch -l ru <text>" -> WAV)
+        meta, data, res = dev.blob(text, timeout=args.timeout)
+        _write(args.out, data)
+        print_result(res)
+        _say(f"saved {args.out} ({len(data)} bytes, {meta.get('kind')})")
     else:
         res = dev.cmd(text, timeout=args.timeout)
         if res.get("reboot") or res.get("rollback"):
@@ -670,6 +677,7 @@ def main():
     ap.add_argument("--timeout", type=float, default=60.0, help="seconds of silence before a command fails")
     ap.add_argument("--no-logs", action="store_true", help="do not print device log lines")
     ap.add_argument("--no-check", action="store_true", help="skip the CRC handshake on connect")
+    ap.add_argument("--out", metavar="FILE", help="save the blob the command sends (e.g. ai fetch) to FILE")
     ap.add_argument("command", nargs="+")
     a = ap.parse_args()
     if a.command[0] == "reset":

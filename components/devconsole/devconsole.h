@@ -37,6 +37,8 @@ const char *dc_arg(int argc, char **argv, const char *key);
 // Sends a binary payload as "@id BEGIN <kind> {meta,"bytes","crc32"}", "@id D <seq> <base64>"
 // lines (3072 bytes each) and "@id END {...}". meta is a JSON member list without braces
 // (e.g. "\"w\":360,\"h\":360") or NULL. Returns 0, or 1 after dc_fail().
+// (Lines a command prints in the v1 format "BLOB:BEGIN <kind> <bytes> <crc32> [args]",
+// "BLOB:<base64>", "BLOB:END" are converted to these frames as well.)
 int dc_blob(const char *kind, const void *data, size_t len, const char *meta);
 
 // Receives an upload from the PC (tools/dev.py Device.upload): prints "@id READY {"chunk","window"}",

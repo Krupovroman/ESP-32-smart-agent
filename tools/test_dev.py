@@ -134,6 +134,16 @@ class FakeTransport:
             self.emit(f"@{fid} D 0 " + base64.b64encode(data).decode()[:123])
             self.emit(f'@{fid} END {{"bytes":300,"crc32":"{crc_hex(data)}"}}')
             self.emit(f"@{fid} OK {{}}")
+        elif name == "legacyblob":  # what the firmware makes of a v1 "BLOB:" command (96-byte lines)
+            wavb = dev.wav_bytes(bytes(range(256)) * 3, rate=24000)
+            self.emit(f'@{fid} BEGIN wav {{"rate":24000,"ch":1,"fmt":"s16le","bytes":{len(wavb)},'
+                      f'"crc32":"{crc_hex(wavb)}","legacy":true}}')
+            seq = 0
+            for off in range(0, len(wavb), 96):
+                self.emit(f"@{fid} D {seq} " + base64.b64encode(wavb[off:off + 96]).decode())
+                seq += 1
+            self.emit(f'@{fid} END {{"bytes":{len(wavb)},"crc32":"{crc_hex(wavb)}","lines":{seq}}}')
+            self.emit(f'@{fid} OK {{"out":["tts 24000 Hz"]}}')
         elif name == "mic" and argv[1:2] == ["dump"]:
             wavb = dev.wav_bytes(b"\x10\x00\xf0\xff" * 4000)
             self.blob(fid, "wav", wavb, '"rate":16000,"ch":1,"fmt":"s16le"')
@@ -277,6 +287,20 @@ class DevTests(unittest.TestCase):
             self.dev.blob("cutblob")
         self.assertEqual(cm.exception.err, "PROTOCOL")
         self.assertEqual(self.dev.cmd("ping")["proto"], 2)  # still usable afterwards
+
+    def test_legacy_blob_lines_any_size(self):
+        meta, data, res = self.dev.blob("legacyblob")
+        self.assertEqual((meta["kind"], meta["rate"]), ("wav", 24000))
+        self.assertEqual(data[:4], b"RIFF")
+        self.assertEqual(len(data), 44 + 768)
+        self.assertEqual(res["out"], ["tts 24000 Hz"])
+
+    def test_cli_out_saves_blob(self):
+        path = os.path.join(self.tmp, "fetch.wav")
+        args = types.SimpleNamespace(timeout=5.0, out=path)
+        dev.run_one(self.dev, "legacyblob", args)
+        with wave.open(path, "rb") as w:
+            self.assertEqual((w.getframerate(), w.getnframes()), (24000, 384))
 
     def test_mic_dump(self):
         path = os.path.join(self.tmp, "m.wav")
