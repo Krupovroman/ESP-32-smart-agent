@@ -49,6 +49,9 @@ static uint32_t s_boot_ms;
 static char s_stage[USB_CHUNK];
 static size_t s_stage_len;
 static bool s_line_important;
+static bool s_line_sent;                     // part of the current line already reached the driver
+static bool s_line_broken;                   // a part was dropped: drop the rest of this line
+static bool s_need_nl;                       // a cut line is still unterminated on the wire
 static char s_fmt[640];
 static int s_wr_depth;                       // >0 while this task is inside a write
 
@@ -99,14 +102,16 @@ static bool in_isr_or_no_sched(void)
 // dropped at once, and after one timeout logs are dropped until the host reads again. Command
 // output (a host just sent the command) still gets one bounded wait per command, because the
 // ring may hold stale logs from before the port was opened.
-static void usb_out(const char *p, size_t n)
+// Returns false when (part of) the bytes were dropped. The driver's ring takes a write whole
+// or not at all, so a failed chunk leaves nothing half-written.
+static bool usb_out(const char *p, size_t n)
 {
     if (!s_drv || n == 0) {
-        return;
+        return true;
     }
     if (!usb_serial_jtag_is_connected()) {
         s_dropped++;
-        return;
+        return false;
     }
     const bool can_wait = !in_isr_or_no_sched() && (s_line_important ? !s_cmd_stalled : !s_stalled);
     while (n > 0) {
@@ -115,7 +120,7 @@ static void usb_out(const char *p, size_t n)
         if (w <= 0) {
             if (!can_wait) {
                 s_dropped++;
-                return;
+                return false;
             }
             w = usb_serial_jtag_write_bytes(p, k, pdMS_TO_TICKS(s_line_important ? WAIT_CMD_MS : WAIT_LOG_MS));
             if (w <= 0) {
@@ -124,18 +129,25 @@ static void usb_out(const char *p, size_t n)
                     s_cmd_stalled = true;
                 }
                 s_dropped++;
-                return;
+                return false;
             }
         }
         s_stalled = false;
         p += k;
         n -= k;
     }
+    return true;
 }
 
 static void stage_flush(void)
 {
-    usb_out(s_stage, s_stage_len);
+    if (s_stage_len > 0 && !s_line_broken) {
+        if (usb_out(s_stage, s_stage_len)) {
+            s_line_sent = true;
+        } else {
+            s_line_broken = true;
+        }
+    }
     s_stage_len = 0;
 }
 
@@ -144,8 +156,11 @@ static bool wr_lock(void)
     if (!s_wr || xPortInIsrContext()) {
         return false;
     }
+    // the mutex exists only once the scheduler runs; with the scheduler suspended the other
+    // core may be mid-line in the shared buffers, so the output is dropped
     if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING) {
-        return true;                // single-threaded: nothing to lock against
+        s_dropped++;
+        return false;
     }
     if (xSemaphoreTakeRecursive(s_wr, pdMS_TO_TICKS(LOCK_WAIT_MS)) != pdTRUE) {
         s_dropped++;
@@ -156,9 +171,7 @@ static bool wr_lock(void)
 
 static void wr_unlock(void)
 {
-    if (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING) {
-        xSemaphoreGiveRecursive(s_wr);
-    }
+    xSemaphoreGiveRecursive(s_wr);
 }
 
 bool dc_line_begin(bool important)
@@ -169,6 +182,11 @@ bool dc_line_begin(bool important)
     if (s_wr_depth++ == 0) {
         s_stage_len = 0;
         s_line_important = important;
+        s_line_sent = false;
+        s_line_broken = false;
+        if (s_need_nl) {
+            dc_line_put("\n", 1);   // terminate the line that was cut before
+        }
     }
     return true;
 }
@@ -231,6 +249,12 @@ void dc_line_end(void)
     if (--s_wr_depth == 0) {
         dc_line_put("\n", 1);
         stage_flush();
+        if (s_line_broken && s_line_sent) {
+            // the head of the line went out: end it, so it cannot merge with the next line
+            s_need_nl = usb_serial_jtag_write_bytes("\n", 1, 0) <= 0;
+        } else if (s_line_sent) {
+            s_need_nl = false;
+        }
     }
     wr_unlock();
 }
@@ -295,19 +319,23 @@ static int out_putc(char c, FILE *f)
     if (c == '\r') {
         return 0;
     }
-    if (s_capture && s_cur_id != 0 && xTaskGetCurrentTaskHandle() == s_task) {
+    const bool mine = xTaskGetCurrentTaskHandle() == s_task;
+    if (mine && s_capture && s_cur_id != 0) {
         cap_putc(c);
         return 0;
     }
+    // s_ob is shared by every task that prints: only touch it under the writer lock
+    if (!wr_lock()) {
+        return 0;
+    }
     if (c == '\n' || s_ob_len >= OUT_LINE_BYTES) {
-        bool mine = xTaskGetCurrentTaskHandle() == s_task;
         emit_raw(s_ob, s_ob_len, mine);
         s_ob_len = 0;
-        if (c == '\n') {
-            return 0;
-        }
     }
-    s_ob[s_ob_len++] = c;
+    if (c != '\n') {
+        s_ob[s_ob_len++] = c;
+    }
+    wr_unlock();
     return 0;
 }
 
@@ -565,6 +593,9 @@ static void run_command(uint16_t id, const char *cmdline)
     } else {
         send_ok(id);
     }
+    // errors raised outside a command (bad line) must not carry this command's output
+    s_cap_len = 0;
+    s_cap_trunc = false;
     s_cur_id = 0;
     void (*fn)(void *) = s_defer_fn;
     s_defer_fn = NULL;
@@ -603,6 +634,10 @@ static void handle_line(char *p, size_t len)
             p++;
         }
         len = strlen(p);
+        if (len == 0) {
+            send_err(id, "ESP_ERR_INVALID_ARG", "empty command");
+            return;
+        }
     }
     if (len == 0) {
         return;
@@ -636,6 +671,13 @@ int dc_read_line(char **line, uint32_t timeout_ms)
                 s_line_over = false;
                 *line = s_line;
                 return over ? -2 : (int)n;
+            }
+            if (c == '\b' || c == 0x7f) {
+                // a human in idf.py monitor (no echo) corrects a typo; never part of the protocol
+                if (s_line_len > 0) {
+                    s_line_len--;
+                }
+                continue;
             }
             if (s_line_len < DC_LINE_MAX) {
                 s_line[s_line_len++] = c;

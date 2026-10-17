@@ -65,50 +65,72 @@ class SerialTransport:
         self.closed = False
         self.generation = 0  # bumped on every (re)open: a partial line from before is stale
         self.wlock = threading.Lock()
+        self.olock = threading.RLock()  # reader and writer threads both reopen the port
         self._open(open_wait)
 
     def _open(self, wait):
         deadline = time.time() + wait
         while True:
-            try:
-                s = self.serial.Serial()
-                s.port = self.port
-                s.baudrate = 115200
-                s.timeout = 0.05
-                s.write_timeout = 2.0
-                s.dtr = False  # set before open(): DTR/RTS drive the chip's reset on USB-Serial-JTAG
-                s.rts = False
-                s.open()
-                self.s = s
-                self.generation += 1
-                return
-            except (self.serial.SerialException, OSError):
-                if time.time() >= deadline:
-                    raise
-                time.sleep(0.3)
+            with self.olock:
+                if self.closed:
+                    raise OSError("transport closed")
+                if self.s is not None:  # the other thread reopened it meanwhile
+                    return self.s
+                try:
+                    s = self.serial.Serial()
+                    s.port = self.port
+                    s.baudrate = 115200
+                    s.timeout = 0.05
+                    s.write_timeout = 2.0
+                    s.dtr = False  # set before open(): DTR/RTS drive the chip's reset on USB-Serial-JTAG
+                    s.rts = False
+                    s.open()
+                    self.s = s
+                    self.generation += 1
+                    return s
+                except (self.serial.SerialException, OSError):
+                    if time.time() >= deadline:
+                        raise
+            time.sleep(0.3)
 
-    def _drop(self):
+    def _drop(self, failed=None):
+        """Closes the port; with failed, only if that handle is still the current one."""
+        with self.olock:
+            s = self.s
+            if s is None or (failed is not None and s is not failed):
+                return
+            self.s = None
         try:
-            if self.s:
-                self.s.close()
+            s.close()
         except Exception:
             pass
-        self.s = None
 
     def read(self):
         """Some bytes, b'' when idle, None once closed. Survives re-enumeration."""
         if self.closed:
             return None
-        if self.s is None:
+        s = self.s
+        if s is None:
             try:
-                self._open(0)
+                s = self._open(0)
             except Exception:
                 time.sleep(0.3)
                 return b""
         try:
-            return self.s.read(4096)
+            # read(n) on Windows waits for all n bytes or the whole timeout: ask only for what
+            # is there (or one byte, which returns as soon as it arrives), so replies and upload
+            # ACKs are seen without a 50 ms delay each
+            n = s.in_waiting
+            data = s.read(n if n else 1)
+            if data and not n:
+                more = s.in_waiting
+                if more:
+                    data += s.read(more)
+            return data
         except Exception:
-            self._drop()
+            if self.closed:
+                return None
+            self._drop(s)
             time.sleep(0.3)
             return b""
 
@@ -116,13 +138,17 @@ class SerialTransport:
         with self.wlock:
             deadline = time.time() + 3.0
             while True:
+                s = self.s
                 try:
-                    if self.s is None:
-                        self._open(0)
-                    self.s.write(data)
+                    if s is None:
+                        s = self._open(0)
+                    s.write(data)
                     return
                 except Exception:
-                    self._drop()
+                    if self.closed:
+                        raise
+                    if s is not None:  # a failed open must not close the reader's new handle
+                        self._drop(s)
                     if time.time() >= deadline:
                         raise
                     time.sleep(0.3)
@@ -135,8 +161,8 @@ class SerialTransport:
 # ----------------------------------------------------------------------------- device
 
 class Device:
-    def __init__(self, port=None, transport=None, on_log=None, check=True):
-        self.t = transport or SerialTransport(port or os.environ.get("RA_PORT", "COM7"))
+    def __init__(self, port=None, transport=None, on_log=None, check=True, open_wait=5.0):
+        self.t = transport or SerialTransport(port or os.environ.get("RA_PORT", "COM7"), open_wait)
         self.on_log = on_log
         self.logs = deque(maxlen=5000)
         self.events = []  # every "@! EVT" payload (dict) since connect, in order
@@ -272,7 +298,10 @@ class Device:
                 st["kind"], st["meta"] = k, _loads(js)
             elif kind == "D":
                 seq, _, b64 = rest.partition(" ")
-                st["parts"][int(seq)] = base64.b64decode(b64)
+                try:  # a line the device had to cut short (host stalled) is not valid base64
+                    st["parts"][int(seq)] = base64.b64decode(b64, validate=True)
+                except ValueError:
+                    raise DevError("PROTOCOL", f"'{line}': damaged data line {seq[:8]}") from None
             elif kind == "END":
                 st["end"] = _loads(rest)
 
@@ -320,8 +349,13 @@ class Device:
                         last_pct = pct
                         progress(pct)
                 self.t.write(b"END\n")
-            except KeyboardInterrupt:
-                self.t.write(b"ABORT\n")
+            except BaseException:
+                # end the device's upload loop now (it ignores a stray ABORT if it already
+                # stopped), so the next command is not swallowed as an unexpected data line
+                try:
+                    self.t.write(b"ABORT\n")
+                except Exception:
+                    pass
                 raise
             while True:
                 kind, rest = self._next(q, timeout * 3, "END")
@@ -611,6 +645,17 @@ def run_one(dev, text, args):
         print_result(res)
 
 
+def join_argv(args):
+    """One command line from CLI words; words with spaces or quotes are quoted the way the
+    device's esp_console_split_argv() reads them, so "set sys_prompt 'two words'" keeps one value."""
+    out = []
+    for a in args:
+        if a == "" or any(c.isspace() or c == '"' for c in a):
+            a = '"' + a.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        out.append(a)
+    return " ".join(out)
+
+
 def esptool_reset(port):
     """Hard reset through esptool (closes nothing: call it while no Device holds the port)."""
     subprocess.run([sys.executable, "-m", "esptool", "--chip", "esp32s3", "-p", port, "--after", "hard-reset",
@@ -632,13 +677,20 @@ def main():
         return 0
     passive = a.command[0] == "wait-ready" or is_local_listen(a.command)
     log_cb = None if a.no_logs else (lambda line: _say(line))
+    # right after a flash or reset the port re-enumerates: wait-ready also waits for it to appear
+    open_wait = 5.0
+    if a.command[0] == "wait-ready":
+        open_wait = float(a.command[1]) if len(a.command) > 1 and _is_number(a.command[1]) else a.timeout
     try:
-        dev = Device(a.port, on_log=log_cb, check=not (a.no_check or passive))
-    except ProtocolError as e:
+        dev = Device(a.port, on_log=log_cb, check=not (a.no_check or passive), open_wait=open_wait)
+    except DevError as e:  # ProtocolError, or the handshake answered ERR
         print(f"error: {e.msg}", file=sys.stderr)
         return 2
+    except OSError as e:  # port missing or held by another program (monitor, flasher)
+        print(f"error: cannot open {a.port}: {e}", file=sys.stderr)
+        return 2
     try:
-        cmds = a.command[1:] if a.command[0] == "run" else [" ".join(a.command)]
+        cmds = a.command[1:] if a.command[0] == "run" else [join_argv(a.command)]
         for c in cmds:
             run_one(dev, c, a)
         time.sleep(0.1)  # let trailing log lines print

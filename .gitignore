@@ -6,6 +6,7 @@ build.log
 managed_components/
 sdkconfig.old
 dependencies.lock.bak
+__pycache__/
 
 # secrets (API keys, Wi-Fi passwords) never go to git
 secrets.h

@@ -127,6 +127,12 @@ class FakeTransport:
             self.emit(f"@{fid} D 0 " + base64.b64encode(data).decode())
             self.emit(f'@{fid} END {{"bytes":100,"crc32":"00000000"}}')
             self.emit(f"@{fid} OK {{}}")
+        elif name == "cutblob":  # a D line the device cut short when the host stalled
+            data = b"\x02" * 300
+            self.emit(f'@{fid} BEGIN wav {{"bytes":300,"crc32":"{crc_hex(data)}"}}')
+            self.emit(f"@{fid} D 0 " + base64.b64encode(data).decode()[:123])
+            self.emit(f'@{fid} END {{"bytes":300,"crc32":"{crc_hex(data)}"}}')
+            self.emit(f"@{fid} OK {{}}")
         elif name == "mic" and argv[1:2] == ["dump"]:
             wavb = dev.wav_bytes(b"\x10\x00\xf0\xff" * 4000)
             self.blob(fid, "wav", wavb, '"rate":16000,"ch":1,"fmt":"s16le"')
@@ -265,6 +271,12 @@ class DevTests(unittest.TestCase):
             self.dev.blob("badblob")
         self.assertIn("CRC", cm.exception.msg)
 
+    def test_blob_damaged_line(self):
+        with self.assertRaises(dev.DevError) as cm:
+            self.dev.blob("cutblob")
+        self.assertEqual(cm.exception.err, "PROTOCOL")
+        self.assertEqual(self.dev.cmd("ping")["proto"], 2)  # still usable afterwards
+
     def test_mic_dump(self):
         path = os.path.join(self.tmp, "m.wav")
         n = self.dev.mic_dump(path)
@@ -344,7 +356,84 @@ class DevTests(unittest.TestCase):
         self.assertIn("@0 OK {}", self.logs)
 
 
+class FakePort:
+    """Stands in for serial.Serial: records the sizes asked from read()."""
+
+    instances = []
+
+    def __init__(self):
+        self.pending = bytearray()
+        self.asked = []
+        self.closed = False
+        self.written = b""
+        FakePort.instances.append(self)
+
+    def open(self):
+        pass
+
+    @property
+    def in_waiting(self):
+        if self.closed:
+            raise OSError("closed")
+        return len(self.pending)
+
+    def read(self, n):
+        self.asked.append(n)
+        out, self.pending = bytes(self.pending[:n]), self.pending[n:]
+        return out
+
+    def write(self, data):
+        if self.closed:
+            raise OSError("closed")
+        self.written += data
+
+    def close(self):
+        self.closed = True
+
+
+class TransportTests(unittest.TestCase):
+    def setUp(self):
+        FakePort.instances = []
+        self.saved = sys.modules.get("serial")
+        sys.modules["serial"] = types.SimpleNamespace(Serial=FakePort, SerialException=OSError)
+        self.t = dev.SerialTransport("COMX", open_wait=0)
+
+    def tearDown(self):
+        if self.saved is None:
+            del sys.modules["serial"]
+        else:
+            sys.modules["serial"] = self.saved
+
+    def test_read_asks_only_for_pending_bytes(self):
+        p = self.t.s
+        p.pending += b"@1 OK {}\n"
+        self.assertEqual(self.t.read(), b"@1 OK {}\n")
+        self.assertEqual(p.asked, [9])        # never a blocking read(4096)
+        self.assertEqual(self.t.read(), b"")  # idle: one byte with the short timeout
+        self.assertEqual(p.asked[-1], 1)
+
+    def test_stale_handle_does_not_close_the_new_one(self):
+        old = self.t.s
+        self.t._drop(old)
+        new = self.t._open(0)
+        self.assertIsNot(old, new)
+        self.t._drop(old)                     # the other thread reports the old failure late
+        self.assertIs(self.t.s, new)
+        self.assertFalse(new.closed)
+
+    def test_write_reopens_after_failure(self):
+        self.t.s.closed = True                # the board re-enumerated
+        self.t.write(b"#1 ping\n")
+        self.assertEqual(self.t.s.written, b"#1 ping\n")
+        self.assertEqual(len(FakePort.instances), 2)
+
+
 class ParserTests(unittest.TestCase):
+    def test_join_argv_quotes_spaces_only(self):
+        self.assertEqual(dev.join_argv(["shot", "shots\\a.png"]), "shot shots\\a.png")
+        self.assertEqual(dev.join_argv(["set", "sys_prompt", 'a "b" c']), 'set sys_prompt "a \\"b\\" c"')
+        self.assertEqual(dev.join_argv(["set", "tts_url", ""]), 'set tts_url ""')
+
     def test_log_listen_vs_device_command(self):
         self.assertTrue(dev.is_local_listen(["log"]))
         self.assertTrue(dev.is_local_listen(["log", "10"]))

@@ -128,7 +128,12 @@ static int cmd_mic(int argc, char **argv)
     }
     if (!strcmp(sub, "rate")) {
         if (argc > 2) {
-            audio_in_set_rate((uint32_t)atoi(argv[2]));
+            uint32_t rate = (uint32_t)atoi(argv[2]);
+            // the injected clip is 16 kHz: recording it at another rate would mislabel it
+            if (rate != AUDIO_IN_RATE && audio_in_get_source() == AUDIO_SRC_INJECT) {
+                return dc_fail("source is inject (16 kHz only): mic src mic first");
+            }
+            audio_in_set_rate(rate);
         }
         printf("{\"rate\":%u}\n", (unsigned)audio_in_get_rate());
         return 0;

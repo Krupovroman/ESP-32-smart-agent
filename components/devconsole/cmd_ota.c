@@ -30,11 +30,6 @@ static void restart_cb(void *arg)
     esp_restart();
 }
 
-static void rollback_cb(void *arg)
-{
-    ota_rollback_now();       // reboots on success
-}
-
 // ota push bytes=N crc32=X [noreboot]: the image goes to the inactive slot and boots in
 // PENDING_VERIFY, so the self-test decides whether it stays.
 static int ota_push(int argc, char **argv)
@@ -131,8 +126,14 @@ static int cmd_ota(int argc, char **argv)
         if (!o.rollback_possible) {
             return dc_fail("no valid previous image");
         }
+        // mark now and restart after the OK line, so a refused mark is reported as ERR
+        esp_err_t e = ota_mark(false);
+        if (e != ESP_OK) {
+            dc_fail("cannot mark %s invalid: %s", o.running, esp_err_to_name(e));
+            return e;
+        }
         printf("{\"rollback\":true,\"to\":\"%s\"}\n", o.next);
-        dc_defer(rollback_cb, NULL);
+        dc_defer(restart_cb, NULL);
         return 0;
     }
     if (!strcmp(sub, "mark") && argc > 2) {
