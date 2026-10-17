@@ -56,6 +56,8 @@ CONFIG_BT_ENABLED=n
 
 # TLS: CA bundle, PSRAM allocations, buffers sized per record
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+# Cloudflare (openrouter.ai) sends GTS Root R4 cross-signed by GlobalSign Root CA, which v6 bundles dropped
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y

@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -35,8 +36,12 @@ esp_http_client_handle_t httpx_client(const char *url, esp_http_client_method_t 
     return h;
 }
 
-esp_err_t httpx_probe(const char *url, const char *api_key, int *status, size_t *bytes, int *ms)
+esp_err_t httpx_probe(const char *url, const char *api_key, int *status, size_t *bytes, int *ms, char *snip,
+                      size_t snip_len)
 {
+    if (snip && snip_len) {
+        snip[0] = 0;
+    }
     int64_t t0 = esp_timer_get_time();
     *status = 0;
     *bytes = 0;
@@ -51,6 +56,11 @@ esp_err_t httpx_probe(const char *url, const char *api_key, int *status, size_t 
         char *buf = malloc(2048);
         int r;
         while (buf && (r = esp_http_client_read(h, buf, 2048)) > 0) {
+            if (snip && *bytes < snip_len - 1) {
+                size_t n = snip_len - 1 - *bytes < (size_t)r ? snip_len - 1 - *bytes : (size_t)r;
+                memcpy(snip + *bytes, buf, n);
+                snip[*bytes + n] = 0;
+            }
             *bytes += r;
         }
         free(buf);

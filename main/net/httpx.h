@@ -8,5 +8,7 @@
 esp_http_client_handle_t httpx_client(const char *url, esp_http_client_method_t method, const char *api_key,
                                       int timeout_ms);
 
-// GET url, read and discard the body. Fills HTTP status, body size and total time.
-esp_err_t httpx_probe(const char *url, const char *api_key, int *status, size_t *bytes, int *ms);
+// GET url and read the body. Fills HTTP status, body size, total time and (optionally)
+// the first snip_len-1 bytes of the body.
+esp_err_t httpx_probe(const char *url, const char *api_key, int *status, size_t *bytes, int *ms, char *snip,
+                      size_t snip_len);

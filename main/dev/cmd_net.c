@@ -144,9 +144,16 @@ static int cmd_net(int argc, char **argv)
     }
     int status, ms;
     size_t bytes;
-    esp_err_t e = httpx_probe(argv[2], key, &status, &bytes, &ms);
+    char snip[241];
+    esp_err_t e = httpx_probe(argv[2], key, &status, &bytes, &ms, snip, sizeof(snip));
     memset(key, 0, sizeof(key));
     printf("net get status=%d bytes=%u ms=%d err=%s\n", status, (unsigned)bytes, ms, esp_err_to_name(e));
+    for (char *c = snip; *c; c++) {
+        if (*c == '\n' || *c == '\r') {
+            *c = ' ';
+        }
+    }
+    printf("body: %s\n", snip);
     return e == ESP_OK ? ok() : err(esp_err_to_name(e));
 }
 
