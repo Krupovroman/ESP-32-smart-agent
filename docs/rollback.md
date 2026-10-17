@@ -31,7 +31,7 @@
 | Проверить настоящий OTA и автоматический откат | `python tools\dev.py ota push build\round_assistant.bin` |
 | Обновиться по сети | `python tools\dev.py ota url https://…/round_assistant.bin` (или `set ota_url …`, затем `ota url`) |
 | Новая прошивка работает плохо, но запустилась | `python tools\dev.py ota rollback` (если предыдущий слот валиден) |
-| Настройки испорчены | `python tools\dev.py settings reset`, или `.\tools\restore.ps1 -Tag <t> -EraseNvs`, или `parttool.py -p COM7 erase_partition --partition-name=nvs` |
+| Настройки испорчены | `python tools\dev.py settings reset`, или `.\tools\restore.ps1 -Tag <t> -EraseNvs`, или `parttool.py -p COM7 erase_partition --partition-name=nvs`; затем `python tools\secrets_push.py secrets.json` |
 | Падение — разобрать | `.\tools\idf.ps1 -p COM7 coredump-info` (раздел coredump 128 КБ) |
 | Прошивка сломана, но USB виден | `.\tools\flash.ps1` (esptool сам сбросит чип), или `python tools\dev.py reboot dl` → прошивать |
 | Ничего не отвечает / boot loop | Режим загрузки: **держать BOOT, нажать и отпустить RESET, отпустить BOOT**. Появится ROM USB-Serial-JTAG (VID 0x303A). Затем `.\tools\flash.ps1 -NoWait` или `.\tools\restore.ps1 -Tag <t>` |
@@ -86,12 +86,21 @@ PENDING_VERIFY (тот случай откатывает загрузчик), п
 - **Образы, прошитые по USB, никогда не PENDING_VERIFY**: автоматический откат защищает только
   образы, записанные через `esp_ota_*` (`ota push`, `ota url`). Если такой образ не прошёл
   самотест, он продолжает работать для отладки (`selftest=fail` в `info`).
+- **Первый OTA после `idf.py flash`.** После полной прошивки otadata пуст, и у работающего слота
+  нет записи (`ota info` → `state=undefined`). Перед первым `ota push` / `ota url` прошивка сама
+  записывает работающий слот в otadata как VALID — иначе откатываться было бы некуда
+  (`rollback_possible=false`, а провалившийся образ остался бы работать).
+- **Батарея и защёлка питания (GPIO7).** Приложение держит GPIO7 = 1 с удержанием пада
+  (`gpio_hold_en`), поэтому `reboot`, перезапуск после OTA, откат и panic не обесточивают плату на
+  батарее. Удержание снимает только сброс по питанию или `board_power_off()`. Загрузчик (хук
+  `power_latch`) дополнительно ставит GPIO7 = 1 сразу после ROM.
 - **`reboot dl`** записывает `RTC_CNTL_FORCE_DOWNLOAD_BOOT` и делает программный сброс: ROM
   входит в режим загрузки без кнопок.
 - **Никогда не прожигать eFuse**: ни шифрования flash, ни secure boot, ни HMAC-шифрования NVS.
   Тогда любое состояние выше восстановимо по USB.
 - **Factory-образ** заменяет таблицу разделов: после него NVS проекта стёрта. Вернуться — полный
-  `.\tools\flash.ps1`, затем `tools\secrets_push.py secrets.json` (ключ и Wi-Fi).
+  `.\tools\flash.ps1`, затем `python tools\secrets_push.py secrets.json` (ключи, `ai_url` релея и
+  Wi-Fi; значения не печатаются, файл в `.gitignore`).
 - Загрузчик обновляется **только** по USB (полный flash); OTA меняет только слоты приложения.
 
 ## Проверки после любого восстановления
@@ -100,4 +109,12 @@ PENDING_VERIFY (тот случай откатывает загрузчик), п
 python tools\dev.py wait-ready 15
 python tools\dev.py info        # ver, part, ota_state, selftest, panel_id, gpio7=1
 python tools\dev.py ota info    # running/boot/next, ok_ver, rb_reason
+```
+
+## Тесты без платы
+
+```powershell
+.\tools\py.ps1 tools\test_dev.py                                    # dev.py против эмулятора прошивки
+powershell -NoProfile -ExecutionPolicy Bypass -File components\devconsole\host_test\build.ps1
+components\devconsole\host_test\out\devconsole_test.exe             # транспорт консоли (MSVC), "0 failures"
 ```

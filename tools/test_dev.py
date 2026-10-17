@@ -153,6 +153,13 @@ class FakeTransport:
             self.upload = {"fid": fid, "bytes": int(kv["bytes"]), "crc": kv["crc32"], "data": bytearray(),
                            "seq": 0, "since_ack": 0, "kind": argv[1]}
             self.emit(f'@{fid} READY {{"chunk":{self.UP_CHUNK},"window":{self.UP_WINDOW}}}')
+        elif name == "set":
+            if argv[1:2] == ["bad_key"]:
+                self.emit(f'@{fid} ERR ESP_FAIL {{"msg":"unknown key"}}')
+            else:
+                self.emit(f"@{fid} OK {{}}")
+        elif name == "wifi":
+            self.emit(f"@{fid} OK {{}}")
         elif name == "reboot":
             self.emit(f'@{fid} OK {{"reboot":"app"}}')
             threading.Timer(0.2, lambda: self.emit(
@@ -373,6 +380,20 @@ class DevTests(unittest.TestCase):
         dev.run_one(self.dev, "reboot", args)
         self.assertTrue(hasattr(args, "last_reboot"))
         dev.run_one(self.dev, "wait-ready 3", args)   # satisfied by the READY the fake sends
+
+    def test_secrets_push_never_prints_values(self):
+        import secrets_push
+        data = {"ai_key": "sk-or-v1-SECRET", "ai_url": "https://relay/HIDDEN/api/v1", "bad_key": "x1",
+                "wifi": [{"ssid": "home", "pass": 'p a"ss'}]}
+        said = []
+        fails = secrets_push.push(self.dev, data, say=said.append)
+        self.assertEqual(fails, 1)   # bad_key
+        text = "\n".join(said)
+        for v in ("SECRET", "HIDDEN", 'p a"ss'):
+            self.assertNotIn(v, text)
+        self.assertIn("set ai_key: OK", text)
+        # the password is quoted the way esp_console_split_argv reads it
+        self.assertTrue(any(r.endswith('wifi connect home "p a\\"ss"') for r in self.fake.requests))
 
     def test_unrouted_frames_are_logs(self):
         self.fake.emit("@0 OK {}")
