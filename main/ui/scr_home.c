@@ -897,6 +897,20 @@ static void toggle_voice(void)
     ui_orb_set_expr(s_orb, to ? EXPR_SLEEPY : EXPR_WIDE, 300);     // "shh" / eyes widen
 }
 
+// The pointer is still on obj's touch area (for releases of PRESS_LOCK objects)
+static bool released_on(lv_obj_t *obj)
+{
+    lv_indev_t *in = lv_indev_active();
+    if (!in) {
+        return false;
+    }
+    lv_point_t p;
+    lv_indev_get_point(in, &p);
+    lv_area_t a;
+    lv_obj_get_click_area(obj, &a);
+    return p.x >= a.x1 && p.x <= a.x2 && p.y >= a.y1 && p.y <= a.y2;
+}
+
 static void side_cb(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
@@ -947,9 +961,11 @@ static void side_cb(lv_event_t *e)
             if (!ui_emit(UI_IN_PTT_UP, (int32_t)held)) {
                 ui_set(g_s_state, UI_ST_IDLE);
             }
-        } else if (code == LV_EVENT_RELEASED && !ui_emit(UI_IN_OPEN, side == UI_SIDE_A ? UI_OPEN_LANG_A
-                                                                                      : UI_OPEN_LANG_B)) {
-            ui_toast(ui_s(S_NOT_YET));
+        } else if (code == LV_EVENT_RELEASED && released_on(btn)) {
+            // a short tap opens the picker; PRESS_LOCK still sends RELEASED after the finger slid away
+            if (!ui_emit(UI_IN_OPEN, side == UI_SIDE_A ? UI_OPEN_LANG_A : UI_OPEN_LANG_B)) {
+                ui_toast(ui_s(S_NOT_YET));
+            }
         }
         s_chip_side = -1;
         s_chip_talk = false;

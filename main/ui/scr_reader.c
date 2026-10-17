@@ -59,8 +59,7 @@ static void flip_cb(lv_event_t *e)
     lv_obj_set_flag(s_box, LV_OBJ_FLAG_SCROLLABLE, !s_flipped);
 }
 
-static lv_obj_t *button(lv_obj_t *scr, const char *name, const char *sym, int32_t cx, int32_t cy, lv_event_cb_t cb,
-                        bool enabled)
+static lv_obj_t *button(lv_obj_t *scr, const char *name, const char *sym, int32_t cx, int32_t cy, lv_event_cb_t cb)
 {
     lv_obj_t *b = lv_obj_create(scr);
     ui_theme_plain(b);
@@ -69,18 +68,27 @@ static lv_obj_t *button(lv_obj_t *scr, const char *name, const char *sym, int32_
     lv_obj_add_style(b, &st_btn_round_pr, LV_STATE_PRESSED);
     lv_obj_set_pos(b, cx - BTN_D / 2, cy - BTN_D / 2);
     lv_obj_set_size(b, BTN_D, BTN_D);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *l = lv_label_create(b);
     lv_label_set_text_static(l, sym);
     lv_obj_center(l);
-    if (enabled) {
-        lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
+    return b;
+}
+
+// Replay needs a speaker (5.2); follows UI_SET_SPEAKER while the reader is open
+static void speaker_obs(lv_observer_t *o, lv_subject_t *s)
+{
+    lv_obj_t *b = lv_observer_get_target_obj(o);
+    lv_obj_t *l = lv_obj_get_child(b, 0);
+    bool on = lv_subject_get_int(s) != 0;
+    lv_obj_set_flag(b, LV_OBJ_FLAG_CLICKABLE, on);
+    lv_obj_set_state(b, LV_STATE_DISABLED, !on);
+    if (on) {
+        lv_obj_remove_local_style_prop(l, LV_STYLE_TEXT_COLOR, 0);
     } else {
-        lv_obj_remove_flag(b, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_state(b, LV_STATE_DISABLED);
         lv_obj_set_style_text_color(l, ui_col(UI_COL_TEXT3), 0);   // disabled: text-3, fill unchanged
     }
-    return b;
 }
 
 lv_obj_t *scr_reader_build(uint32_t entry_id)
@@ -123,10 +131,10 @@ lv_obj_t *scr_reader_build(uint32_t entry_id)
         lv_obj_center(l);       // short text sits in the middle of the box
     }
 
-    bool speaker = ui_get(g_s_speaker) != 0;
-    button(scr, "rd_wrong", SYM_EXCHANGE, 124, 296, wrong_cb, true);
-    button(scr, "rd_replay", SYM_PLAY, 236, 296, replay_cb, speaker);
-    button(scr, "rd_flip", SYM_SYNC, 180, 318, flip_cb, true);
+    button(scr, "rd_wrong", SYM_EXCHANGE, 124, 296, wrong_cb);
+    lv_obj_t *replay = button(scr, "rd_replay", SYM_PLAY, 236, 296, replay_cb);
+    ui_watch(g_s_speaker, speaker_obs, replay, NULL);   // runs once now; removed with the button
+    button(scr, "rd_flip", SYM_SYNC, 180, 318, flip_cb);
 
     // "‹ RU → EN" is the direction label too
     char title[24], s[4] = { 0 }, d[4] = { 0 };
