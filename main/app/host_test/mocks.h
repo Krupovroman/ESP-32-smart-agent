@@ -94,8 +94,10 @@ extern int g_power_off, g_latch_on;
 extern bool g_boot_down, g_pwr_held;
 extern int g_bat_mv;            // board_battery_state(): mv, pct from the mock curve
 extern bool g_bat_chg;          // ... charging
-extern int g_bat_samples, g_bat_settled;    // board_battery_sample() calls, and those with settled = true
+extern bool g_bat_drain;        // ... on USB but draining (wins over g_bat_chg)
+extern int g_bat_samples, g_bat_settled;    // board_battery_sample() calls, and those with BOARD_BAT_SETTLED
 extern bool g_bat_last_settled;
+extern int g_bat_last_q;        // board_bat_q_t of the last call, -1 = none
 extern int g_net_state;
 extern bool g_portal;
 

@@ -80,11 +80,13 @@ typedef enum { UI_NET_OFF, UI_NET_CONNECTING, UI_NET_UP, UI_NET_FAILED } ui_net_
 
 typedef enum { UI_SIDE_AUTO = -1, UI_SIDE_A = 0, UI_SIDE_B = 1 } ui_side_t;
 
-// UI_SET_BATTERY argument: percent in bits 0-6 (UI_BAT_NONE = no reading) and the flags above it
+// UI_SET_BATTERY argument: percent in bits 0-6 (UI_BAT_NONE = no reading) and the flags above it. At most one of
+// CHARGING, FULL and DRAIN is set (board_power_t); none = on battery.
 #define UI_BAT_NONE         127
 #define UI_BAT_CHARGING     (1 << 7)
 #define UI_BAT_FULL         (1 << 8)
-#define UI_BAT_USB          (1 << 9)
+#define UI_BAT_USB          (1 << 9)    // USB host connected
+#define UI_BAT_DRAIN        (1 << 10)   // on USB power but the cell drains: the load takes more than the port gives
 #define UI_BAT_MAKE(pct, flags) ((int32_t)(((pct) < 0 || (pct) > 100 ? UI_BAT_NONE : (pct)) | (flags)))
 #define UI_BAT_PCT(v)       ((int)((v) & 0x7F))
 

@@ -554,7 +554,7 @@ static void dispatch(const ui_msg_t *m)
     case UI_SCREEN_OFF: ui_sleep_off(); break;
     case UI_WORK_DONE: ui_work_dispatch(m->s); break;
     case UI_SET_TURN: cm_set_tag((uint32_t)m->i); break;
-    case UI_SET_BATTERY: ui_set(g_s_battery, LV_CLAMP(0, m->i, 0x3FF)); break;
+    case UI_SET_BATTERY: ui_set(g_s_battery, LV_CLAMP(0, m->i, 0x7FF)); break;
     case UI_LOCK: ui_lockscr_request(m->i); break;
     default: break;
     }
@@ -737,7 +737,7 @@ esp_err_t ui_init(lv_display_t *disp)
     g_s_portal = ui_subj_int(0, 0, 255);
     g_s_tr_dir = ui_subj_int(0, 0, 2);
     g_s_face = ui_subj_int(face ? 1 : 0, 0, 1);  // "Лицо шара", saved by S (default Вкл, ui.md open question 3)
-    g_s_battery = ui_subj_int(UI_BAT_NONE, 0, 0x3FF);   // the app sends the first reading once it runs
+    g_s_battery = ui_subj_int(UI_BAT_NONE, 0, 0x7FF);   // the app sends the first reading once it runs
 
     lv_obj_t *home = scr_home_create();
     s_nav[0] = (nav_t){ .scr = home, .scroller = NULL, .id = UI_SCR_HOME };

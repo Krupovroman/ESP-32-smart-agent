@@ -26,6 +26,9 @@ static const char *TAG = "app_io";
 #define BAT_CRIT_PCT     5
 #define BAT_REARM_PCT    20              // ... until charging or back above this
 #define BAT_SETTLE_MS    60000           // a reading counts as settled (charging trend) this long after a load step
+#define BAT_SKIP_AUDIO_MS 15000          // no reading while the speaker plays and this long after (the cell sags
+#define BAT_SKIP_TURN_MS 20000           // under it), nor during a turn (its Wi-Fi / TLS bursts) and this long after,
+#define BAT_SKIP_SCREEN_MS 3000          // nor during a backlight fade (150-800 ms) and its first recovery
 #define HEAP_POLL_MS     1000
 #define TOUCH_POLL_MS    200
 #define AMBIENT_POLL_MS  100
@@ -56,6 +59,7 @@ static uint32_t s_t_net, s_t_bat, s_t_heap, s_t_touch, s_t_amb;
 static bool s_bat_polled, s_bat_warned, s_bat_crit;
 static int32_t s_bat_posted = -1;       // UI_BAT_MAKE() value last sent to the UI
 static uint32_t s_load_t;               // last load step: a turn, sound, the mic, a backlight change (settle clock)
+static uint32_t s_audio_t, s_turn_t, s_screen_t;   // the speaker last played, a turn last ran, the backlight changed
 static bool s_low_mem;
 static int s_ambient = VAD_NO_HINT;
 static save_t s_save[] = { { .key = "mode" }, { .key = "text_only" } };
@@ -119,7 +123,7 @@ static void screen_set(app_screen_t sc)
         ui_post(&(ui_msg_t){ .type = UI_SCREEN_OFF });
     }
     if (atomic_exchange(&s_screen, (int)sc) != (int)sc) {
-        s_load_t = app_now_ms();    // the backlight current changes: the battery voltage steps
+        s_load_t = s_screen_t = app_now_ms();   // the backlight current changes: the battery voltage steps
         devcon_event("screen", "\"state\":\"%s\"", screen_name(sc));
     }
 }
@@ -143,7 +147,7 @@ void app_io_ui_sleep(int level)
         relatch();
     }
     if (atomic_exchange(&s_screen, (int)sc) != (int)sc) {
-        s_load_t = app_now_ms();
+        s_load_t = s_screen_t = app_now_ms();
         devcon_event("screen", "\"state\":\"%s\",\"level\":%d", screen_name(sc), level);
     }
 }
@@ -260,7 +264,7 @@ void app_io_setting(const char *key)
     if (all || !strcmp(key, "bright")) {
         s_bright = settings_get_int("bright");
         backlight_apply();
-        s_load_t = app_now_ms();
+        s_load_t = s_screen_t = app_now_ms();
     }
     if (all || !strcmp(key, "dim_s")) {
         s_dim_s = settings_get_int("dim_s");
@@ -340,23 +344,38 @@ static void poll_net(void)
     }
 }
 
+static bool within(uint32_t now, uint32_t t, uint32_t ms)
+{
+    return t && now - t < ms;       // 0 = never
+}
+
+// How far the next reading can be trusted (ui.md 3.16): under the speaker or a turn's Wi-Fi the cell sags (a PC
+// port gives less than they take), and it recovers for a while after any load, which must not read as a charger
+static board_bat_q_t bat_quality(uint32_t now)
+{
+    if (audio_out_busy() || within(now, s_audio_t, BAT_SKIP_AUDIO_MS) || !app_quiet() ||
+        within(now, s_turn_t, BAT_SKIP_TURN_MS) || within(now, s_screen_t, BAT_SKIP_SCREEN_MS)) {
+        return BOARD_BAT_SKIP;
+    }
+    return now - s_load_t >= BAT_SETTLE_MS ? BOARD_BAT_SETTLED : BOARD_BAT_LOADED;
+}
+
 void app_io_battery(bool sample)
 {
     if (sample) {
-        // ui.md 3.16: the cell recovers for a while after a load (speech, the mic and Wi-Fi of a turn, the backlight
-        // going off): such a rise must not read as a charger
-        board_battery_sample(app_now_ms() - s_load_t >= BAT_SETTLE_MS);
+        board_battery_sample(bat_quality(app_now_ms()));
     }
     board_bat_t b;
     board_battery_state(&b);
     atomic_store(&s_bat_mv, b.mv);
-    int32_t v = UI_BAT_MAKE(b.pct, (b.charging ? UI_BAT_CHARGING : 0) | (b.full ? UI_BAT_FULL : 0) |
-                                       (b.usb ? UI_BAT_USB : 0));
+    int32_t v = UI_BAT_MAKE(b.pct, (b.power == BOARD_PWR_CHARGING ? UI_BAT_CHARGING : 0) |
+                                       (b.power == BOARD_PWR_FULL ? UI_BAT_FULL : 0) |
+                                       (b.power == BOARD_PWR_USB_DRAIN ? UI_BAT_DRAIN : 0) | (b.usb ? UI_BAT_USB : 0));
     if (v != s_bat_posted) {
         s_bat_posted = v;
         ui_post(&(ui_msg_t){ .type = UI_SET_BATTERY, .i = v });
-        devcon_event("battery", "\"mv\":%d,\"pct\":%d,\"charging\":%d,\"full\":%d,\"usb\":%d,\"sim\":%d", b.mv, b.pct,
-                     b.charging, b.full, b.usb, b.sim);
+        devcon_event("battery", "\"mv\":%d,\"pct\":%d,\"power\":\"%s\",\"charging\":%d,\"full\":%d,\"usb\":%d,\"sim\":%d",
+                     b.mv, b.pct, board_power_name(b.power), b.charging, b.full, b.usb, b.sim);
     }
     // ui.md 5.6 / 3.16: "Батарея 15 %" and "Батарея 5 %" once each while it discharges
     if (b.pct < 0 || b.charging || b.full || b.pct > BAT_REARM_PCT) {
@@ -428,6 +447,12 @@ static void dim_tick(uint32_t now)
     if (!app_quiet() || audio_out_busy() || audio_in_recording()) {
         s_load_t = now;             // also a speaker or mic test outside a turn (D)
     }
+    if (audio_out_busy()) {
+        s_audio_t = now;
+    }
+    if (!app_quiet()) {
+        s_turn_t = now;
+    }
     if (s_off_wait_up && !board_button_down(BOARD_BTN_PWR)) {
         s_off_wait_up = false;
         s_off_check = now + USB_CHECK_MS;
@@ -439,12 +464,12 @@ static void dim_tick(uint32_t now)
         s_note_until = now + USB_NOTE_MS;
         ui_post(&(ui_msg_t){ .type = UI_TOAST, .i = S_USB_POWER });
         board_backlight_set((uint8_t)s_bright);
-        s_load_t = now;
+        s_load_t = s_screen_t = now;
     }
     if (s_note_until && (int32_t)(now - s_note_until) >= 0) {
         s_note_until = 0;
         board_backlight_set(0);
-        s_load_t = now;
+        s_load_t = s_screen_t = now;
     }
     // dim / ambient / off after dim_s are run by the UI's own idle timer (ui_sleep.c)
 }

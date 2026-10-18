@@ -31,6 +31,7 @@ typedef struct {
     // device
     const char *screen;             // "on", "dim", "off"
     int bat_mv, bat_pct;            // -1 = unknown / no battery (board_battery_state)
+    int bat_power;                  // board_power_t
     bool bat_charging, bat_full;
     bool locked;                    // the lock screen is up (ui_keylocked)
     bool low_mem;

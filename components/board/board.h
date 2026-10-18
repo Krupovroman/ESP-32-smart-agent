@@ -47,23 +47,47 @@ int board_battery_mv(void);
 // single cell's range (no battery).
 int board_battery_pct(int mv);
 
-// Battery model (docs/ui.md 3.16). The ETA6098 charger has no status pin: charging is the USB host being present
-// (start-of-frame packets, usb_serial_jtag_is_connected(); a plain wall charger sends none) or the settled voltage
-// rising by 15 mV within 2 min below 4.15 V; full is either of those at >= 4.15 V (left below 4.11 V).
+// Battery model (docs/ui.md 3.16). The ETA6098 charger has no status pin and the system load hangs on the cell, so
+// "external power" (the USB host's start-of-frame packets, usb_serial_jtag_is_connected(), or the settled voltage
+// rising by 15 mV within 2 min: a plain wall charger sends no packets) does not mean "charging": a PC port gives
+// about 0.5 A and the speaker at full volume takes more. The voltage decides:
+typedef enum {
+    BOARD_PWR_BATTERY,      // no external power seen
+    BOARD_PWR_CHARGING,     // external power, the settled voltage not falling (the default right after plugging in)
+    BOARD_PWR_FULL,         // external power, holding at >= 4.15 V for 3 min (left below 4.11 V)
+    BOARD_PWR_USB_DRAIN,    // USB host present but the settled voltage fell >= 20 mV within 3 min: the load takes
+                            // more than the port gives; back to CHARGING on a settled rise of 12 mV
+    BOARD_PWR__N
+} board_power_t;
+
+// How much a reading can be trusted (the app knows the load, app_io.c)
+typedef enum {
+    BOARD_BAT_SKIP,         // speaker playing or a turn's Wi-Fi lately: the cell sags, the reading is not taken (the
+                            // model keeps its last good value; USB presence is still refreshed)
+    BOARD_BAT_LOADED,       // a load ended lately: the cell still recovers; the reading sets the level only
+    BOARD_BAT_SETTLED,      // no load step for 60 s: the reading may also start the wall-charger trend
+} board_bat_q_t;
+
 typedef struct {
     int pct;            // 0..100, -1 = no battery reading (or settled readings swinging: no cell on the charger)
     int mv;             // median of the last 5 readings, -1 = none
-    bool charging;
-    bool full;
+    board_power_t power;
+    bool charging;      // power == CHARGING
+    bool full;          // power == FULL
     bool usb;           // USB host connected
-    bool sim;           // pct / charging come from board_battery_sim()
+    bool sim;           // pct / power come from board_battery_sim()
+    int raw;            // last reading taken (mV), -1 = none
+    int d3;             // settled voltage now minus 3 min ago (mV), valid when d3_ok
+    bool d3_ok;
+    int ofs;            // charging offset in use (mV): the plug-in step, 60 without a reference
+    unsigned skipped;   // readings skipped for load since boot
 } board_bat_t;
 
-// One reading into the model (median of 5, 2 min trend); the app calls it every 5 s. settled: no load step lately
-// (the app idle, the screen unchanged), so the reading may start the charging trend; others only update the level
-// and may end it. True when pct, charging, full or usb changed.
-bool board_battery_sample(bool settled);
+// One reading into the model (median of 5, trends); the app calls it every 5 s. True when pct, power or usb changed.
+bool board_battery_sample(board_bat_q_t q);
 // Latest model state (any task).
 void board_battery_state(board_bat_t *out);
-// Console override for UI tests: pct 0..100 and charging (100 + charging = full); pct < 0 ends it.
-void board_battery_sim(int pct, bool charging);
+// Console override for UI tests: pct 0..100 and the power state (FULL shows 100); pct < 0 ends it.
+void board_battery_sim(int pct, board_power_t power);
+// "battery", "charging", "full", "drain"
+const char *board_power_name(board_power_t p);
