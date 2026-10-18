@@ -224,7 +224,7 @@ Rendering cost: a glyph that is not cached is rasterised once per size (stb_true
 
 Line breaking: LVGL 9.5 breaks between any two hanzi or kana (`lv_text_is_a_word`), and at spaces for Korean. There is no kinsoku (a `。` may start a line).
 
-Host test: `main/ui/host_test/build.ps1` (MSVC, after one ESP-IDF build) compiles LVGL 9.5, the Inter fonts, `ui_font.c`, `ui_str.c` and `components/assets` for the PC, runs them over `build/storage.bin`, without a pack and with a corrupted one (34 checks: states, sanitiser, the `ui_28` rule, glyphs in the frame buffer, `font status` / `font bench`), and writes 2x PNG screenshots of mixed text, translator bubbles and the reader to `main/ui/host_test/out/`. It is the same LVGL software renderer, fonts and pack as on the board, so the pictures show the glyphs the panel will get; the timings it prints are PC timings.
+Host test: `main/ui/host_test/build.ps1` (MSVC, after one ESP-IDF build) compiles LVGL 9.5, the Inter fonts, `ui_font.c`, `ui_str.c` and `components/assets` for the PC, runs them over `build/storage.bin`, without a pack and with a corrupted one (37 checks: states, sanitiser, the `ui_28` rule, the 7.9 string-fit test of every RU / EN string, glyphs in the frame buffer, `font status` / `font bench`), and writes 2x PNG screenshots of mixed text, translator bubbles and the reader to `main/ui/host_test/out/`. It is the same LVGL software renderer, fonts and pack as on the board, so the pictures show the glyphs the panel will get; the timings it prints are PC timings.
 
 For Arabic (and other scripts without a font) the translator offers no language; the `display_text` romanisation of the schema is not used.
 

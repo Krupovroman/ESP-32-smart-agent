@@ -331,6 +331,11 @@ static int lit(lv_obj_t *o)
     return n;
 }
 
+static void print_line(const char *line)
+{
+    printf("  %s\n", line);
+}
+
 static void font_cmd(int argc, char **argv)
 {
     printf("  >");
@@ -434,6 +439,8 @@ int main(int argc, char **argv)
     CHECK(ui_str_cols("Привет") == 6);
     CHECK(ui_str_font_has_all("最近的药店在哪里？", &ui_28) == cjk);
     CHECK(ui_str_font_has_all("Где аптека?", &ui_28));
+    // the "ui fit" test of the board: every RU / EN string in its slot (new strings included)
+    CHECK(ui_str_fit_check(print_line) == 0);
 
     scenes(cjk);
 
