@@ -13,6 +13,7 @@ typedef enum {
     EV_TEXT_SUBMIT,     // p = typed text
     EV_AI_UPLOAD_DONE,  // i = upload ms
     EV_AI_RETRY,        // i = retry number
+    EV_AI_WEB,          // a request with web search starts; i = 1 auto-mode re-run, 0 first request
     EV_AI_RESULT,       // p = app_result_t
     EV_AI_ERROR,        // p = or_err_t
     EV_AI_RELEASED,     // the turn's audio is no longer read

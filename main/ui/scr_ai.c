@@ -49,7 +49,13 @@ static void price(float usd, char *out, size_t len)
 
 // ---- P
 
-static lv_obj_t *s_p_scr, *s_p_url, *s_p_key, *s_p_model;
+static lv_obj_t *s_p_scr, *s_p_url, *s_p_key, *s_p_model, *s_p_web;
+
+// ai_web (protocol §2.8): 0 off, 1 auto (default), 2 always
+static const char *web_text(int32_t v)
+{
+    return ui_s(v == 2 ? S_WEB_ALWAYS : v == 0 ? S_OFF : S_AUTO);
+}
 
 static void p_refresh(void)
 {
@@ -62,6 +68,7 @@ static void p_refresh(void)
     ui_cfg_str("ai_model", tmp, sizeof(tmp));
     ui_short_model(tmp, buf, sizeof(buf));
     ui_row_set_sub(s_p_model, buf);
+    ui_row_set_sub(s_p_web, web_text(ui_cfg_int("ai_web")));
 }
 
 // Credentials are written at once (an explicit save on a settings screen, not a slider): the AI client reads the
@@ -109,6 +116,14 @@ static void p_cb(lv_event_t *e)
     case 2: ui_nav_push(UI_SCR_MODELS, 0); break;
     case 3: ui_nav_push(UI_SCR_KEYINFO, 0); break;
     case 4: ui_nav_push(UI_SCR_QR, 0); break;
+    case 5: {
+        // a tap cycles Авто -> Всегда -> Выкл -> Авто, like "Динамик" in S
+        int32_t v = ui_cfg_int("ai_web");
+        int32_t to = v == 1 ? 2 : v == 2 ? 0 : 1;
+        ui_save_int("ai_web", to);
+        ui_row_set_sub(s_p_web, web_text(to));
+        break;
+    }
     default: break;
     }
 }
@@ -122,7 +137,7 @@ static void p_loaded_cb(lv_event_t *e)
 static void p_delete_cb(lv_event_t *e)
 {
     if (lv_event_get_current_target(e) == s_p_scr) {
-        s_p_scr = s_p_url = s_p_key = s_p_model = NULL;
+        s_p_scr = s_p_url = s_p_key = s_p_model = s_p_web = NULL;
     }
 }
 
@@ -136,6 +151,7 @@ lv_obj_t *scr_provider_build(uint32_t arg)
     s_p_url = ui_list_row(list, "p_url", SYM_GLOBE, ui_s(S_P_URL), "", UI_ROW_CHEVRON, p_cb, (void *)0);
     s_p_key = ui_list_row(list, "p_key", SYM_KEY, ui_s(S_T_KEY), "", UI_ROW_CHEVRON, p_cb, (void *)1);
     s_p_model = ui_list_row(list, "p_model", SYM_ROBOT, ui_s(S_T_MODELS), "", UI_ROW_CHEVRON, p_cb, (void *)2);
+    s_p_web = ui_list_row(list, "p_web", SYM_GLOBE, ui_s(S_P_WEB), "", UI_ROW_NONE, p_cb, (void *)5);
     ui_list_row(list, "p_check", SYM_INFO, ui_s(S_P_CHECK), NULL, UI_ROW_CHEVRON, p_cb, (void *)3);
     ui_list_row(list, "p_phone", SYM_QRCODE, ui_s(S_P_PHONE), ui_s(S_S_PHONE_SUB), UI_ROW_CHEVRON, p_cb, (void *)4);
     ui_list_refresh(list);

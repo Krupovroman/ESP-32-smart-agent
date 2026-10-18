@@ -14,6 +14,7 @@
 #define APP_VAD_SILENCE_MS  1200    // ... followed by this much silence (ui.md 5.1)
 #define APP_ERROR_MS        4000    // ERROR -> IDLE (architecture 2.3)
 #define APP_TURN_MAX_MS     75000   // no result at all (ai: 45 s per attempt + 20 s of retries)
+#define APP_WEB_MAX_MS      35000   // ... or this long after a web search re-run started (ai: 30 s for it)
 #define APP_TTS_FIRST_MS    15000   // voice on, no first audio: text only, "голос недоступен"
 #define APP_REVEAL_MS       2500    // voice on: the reply appears with its audio, at the latest after this
 #define APP_SPEAK_MAX_MS    180000  // playback watchdog
@@ -28,6 +29,8 @@ typedef struct {
     char *transcript, *text;
     char lang[8], src_lang[8], tts_lang[8];
     bool unheard, truncated, other_lang, stt_used;
+    bool web, web_failed;           // web search used / its auto-mode request failed (first answer shown)
+    char source[48];                // host of the first web source, "" = none
     ai_timings_t t;
     double cost;
     char model[64];

@@ -524,6 +524,8 @@ static void dispatch(const ui_msg_t *m)
         break;
     case UI_SET_TEXT_ONLY: ui_set(g_s_text_only, m->i ? 1 : 0); break;
     case UI_RETRY: scr_home_retry(m->i); break;
+    case UI_WEB: scr_home_web(m->i != 0); break;
+    case UI_BOT_SOURCE: scr_home_bot_source(m->s); break;
     case UI_SET_MOOD: scr_home_mood(m->i); break;
     case UI_SET_FAULT: ui_set(g_s_fault, LV_CLAMP(0, m->i, UI_FAULT__N - 1)); break;
     case UI_UPLOAD_PCT: ui_set(g_s_upload, LV_CLAMP(0, m->i, 100)); break;

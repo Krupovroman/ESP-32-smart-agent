@@ -22,6 +22,8 @@ typedef enum {
     UI_GOTO,            // i = ui_screen_t
     UI_SET_TEXT_ONLY,   // i = 1 text only (voice button shows F6A9), 0 voice replies on
     UI_RETRY,           // i = attempt n: status "Повтор n/2…"
+    UI_WEB,             // i = 1 the assistant searches the web: "Ищу в интернете…" while thinking; 0 = done
+    UI_BOT_SOURCE,      // s = web source host of the last reply ("gismeteo.ru"): small note under that reply
 
     UI_SET_MOOD,        // i = ui_mood_t: face expression for 1.5 s (LLM "mood")
     UI_SET_FAULT,       // i = ui_fault_t: persistent fault in the pill (UI_FAULT_NONE clears)

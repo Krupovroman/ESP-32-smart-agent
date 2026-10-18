@@ -19,6 +19,7 @@ typedef struct {
     char *text;             // transcript / reply / card body (sanitised, PSRAM)
     char *text2;            // CM_TURN translation (sanitised, PSRAM)
     char src[4], dst[4];    // CM_TURN language codes
+    char source[40];        // CM_BOT: web source host shown under the reply ("" = none)
     uint8_t env[32];        // RMS envelope of the clip, 0..255
     uint32_t tag;           // app turn that created it (UI_SET_TURN), 0 = none
 } cm_entry_t;

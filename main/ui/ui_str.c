@@ -32,6 +32,7 @@ static const str_def_t s_tab[S__N] = {
     E(S_ST_CANCELLED, "Отменено", "Cancelled", SLOT_STATUS),
     E(S_ST_RETRY, "Повтор %d/2" TXT_ELLIPSIS, "Retry %d/2" TXT_ELLIPSIS, SLOT_STATUS),
     E(S_ST_BUSY_HINT, "PWR " TXT_EMDASH " отмена", "PWR cancels", SLOT_STATUS),
+    E(S_ST_WEB, "Ищу в интернете" TXT_ELLIPSIS, "Searching the web" TXT_ELLIPSIS, SLOT_STATUS),   // 149 / 157 px
 
     // "Держите шар" is 108 px: line 1 (between the side buttons) holds <= 100, line 2 (below them) <= 124
     E(S_HINT1, "Держите", "Hold the orb", SLOT_HINT),
@@ -44,6 +45,7 @@ static const str_def_t s_tab[S__N] = {
     E(S_DIVIDER, TXT_EMDASH " новый разговор " TXT_MIDDOT " %s " TXT_EMDASH,
       TXT_EMDASH " new conversation " TXT_MIDDOT " %s " TXT_EMDASH, SLOT_NONE),
     E(S_TTS_NOTE, "голос недоступен", "voice unavailable", SLOT_NONE),
+    E(S_WEB_SOURCE_FMT, "Источник: %s", "Source: %s", SLOT_NONE),     // under a web reply; wraps
 
     E(S_VOICE_OFF, "Голос выкл.", "Voice off", SLOT_TOAST),
     E(S_VOICE_ON, "Голос вкл.", "Voice on", SLOT_TOAST),
@@ -195,6 +197,9 @@ static const str_def_t s_tab[S__N] = {
     E(S_K_KEY, "Ключ", "Key", SLOT_PROMPT),
     E(S_K_MODEL, "Модель", "Model", SLOT_PROMPT),
     E(S_P_NEED_HTTPS, "Нужен адрес https://", "Needs https://", SLOT_TOAST),
+    // "Поиск в интернете" is 187 px in ui_20, over the 164 px row title
+    E(S_P_WEB, "Поиск в сети", "Web search", SLOT_ROW),
+    E(S_WEB_ALWAYS, "Всегда", "Always", SLOT_ROW_SUB),
     E(S_AI_LOAD, "Все модели", "All models", SLOT_ROW),
     E(S_AI_CUSTOM, "Свой ID" TXT_ELLIPSIS, "Custom ID" TXT_ELLIPSIS, SLOT_ROW),
     E(S_AI_PRICE_FMT, TXT_APPROX " $%s / ответ", TXT_APPROX " $%s / reply", SLOT_ROW_SUB),

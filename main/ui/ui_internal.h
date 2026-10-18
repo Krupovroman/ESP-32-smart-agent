@@ -103,6 +103,8 @@ void scr_home_divider(const char *hhmm);
 void scr_home_toast(const char *text);
 void scr_home_status_text(const char *text, uint32_t ms);
 void scr_home_retry(int32_t n);
+void scr_home_web(bool on);                 // "Ищу в интернете…" replaces the thinking stages while on
+void scr_home_bot_source(const char *host); // "Источник: host" under the last assistant reply
 void scr_home_mood(int32_t mood);
 void scr_home_langs_changed(void);
 lv_obj_t *scr_home_orb(void);

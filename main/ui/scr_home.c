@@ -69,6 +69,7 @@ static lv_anim_t *s_layout_anim;
 static int32_t s_layout_v;          // 0 = empty hero layout, 460 = conversation layout
 static char s_status_txt[96];
 static bool s_status_err;           // s_status_txt is an error (coral)
+static bool s_web;                  // the assistant searches the web (UI_WEB): THINK shows "Ищу в интернете…"
 
 static int mode(void) { return ui_get(g_s_mode); }
 static int32_t state(void) { return ui_get(g_s_state); }
@@ -339,7 +340,11 @@ static void status_refresh(void)
             break;
         case UI_ST_THINK: {
             uint32_t el = now - s_state_t0;
-            txt = ui_s(el < 6000 ? S_ST_THINK : el < 20000 ? S_ST_THINK2 : S_ST_THINK3);
+            if (s_web) {
+                txt = ui_s(el < 20000 ? S_ST_WEB : S_ST_THINK3);    // s_state_t0 restarts with the search
+            } else {
+                txt = ui_s(el < 6000 ? S_ST_THINK : el < 20000 ? S_ST_THINK2 : S_ST_THINK3);
+            }
             break;
         }
         case UI_ST_SPEAK: txt = ui_get(g_s_hints) > 0 ? ui_s(S_ST_SPEAK_HINT) : NULL; break;
@@ -780,6 +785,29 @@ void scr_home_retry(int32_t n)
     transient(buf, 3000, false);
 }
 
+void scr_home_web(bool on)
+{
+    if (on == s_web) {
+        return;
+    }
+    s_web = on;
+    s_state_t0 = lv_tick_get();     // the search (or what follows it) starts its own "Долго…" timer
+    lv_timer_resume(s_tick);
+    status_refresh();
+}
+
+void scr_home_bot_source(const char *host)
+{
+    cm_entry_t *e = cm_last_of(0, CM_BOT);
+    if (!e || !host) {
+        return;
+    }
+    ui_str_copy(e->source, sizeof(e->source), host);
+    if (mode() == 0) {
+        refresh_entry(e, false);    // the assistant chat is the one on H
+    }
+}
+
 void scr_home_mood(int32_t mood)
 {
     ui_orb_set_mood(s_orb, mood);
@@ -1035,6 +1063,9 @@ static void state_obs(lv_observer_t *o, lv_subject_t *s)
     }
     if (st != prev) {
         s_state_t0 = now;
+    }
+    if (st != UI_ST_UPLOAD && st != UI_ST_THINK) {
+        s_web = false;          // the turn is over (answer, error, cancel): a lost "UI_WEB 0" cannot stick
     }
     if (st == UI_ST_ERROR) {
         error_begin();
