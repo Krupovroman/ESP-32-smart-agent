@@ -284,8 +284,9 @@ static void side_refresh(void)
     }
 }
 
-// Battery above the pill (3.16): the level glyph (F240-F244) or, while charging, a green bolt, and the percent;
-// red below 15 %, green when full; hidden without a reading
+// Battery above the pill (3.16): the level glyph (F240-F244), a green bolt only while really charging, an amber plug
+// on USB power that does not keep up (the cell drains), a green check and "100%" when full; the percent red below
+// 15 %; hidden without a reading
 static void bat_refresh(void)
 {
     int32_t v = ui_get(g_s_battery);
@@ -294,12 +295,14 @@ static void bat_refresh(void)
         lv_obj_add_flag(s_bat, LV_OBJ_FLAG_HIDDEN);
         return;
     }
-    bool full = (v & UI_BAT_FULL) != 0, chg = (v & UI_BAT_CHARGING) && !full;
+    bool full = (v & UI_BAT_FULL) != 0, chg = (v & UI_BAT_CHARGING) && !full, drain = (v & UI_BAT_DRAIN) && !full;
     char glyph[24], buf[48];
     if (chg) {
         snprintf(glyph, sizeof(glyph), "#%06lX " SYM_BOLT "#", (unsigned long)ui_accent(UI_ACC_SUCCESS)->top);
+    } else if (drain) {
+        snprintf(glyph, sizeof(glyph), "#%06lX " SYM_PLUG "#", (unsigned long)ui_accent(UI_ACC_WARNING)->top);
     } else {
-        snprintf(glyph, sizeof(glyph), "%s", full ? SYM_BAT_FULL : ui_bat_glyph(pct));
+        snprintf(glyph, sizeof(glyph), "%s", full ? SYM_CHECK : ui_bat_glyph(pct));
     }
     snprintf(buf, sizeof(buf), ui_s(S_HB_FMT), glyph, pct);
     uint32_t col = pct < 15 ? ui_accent(UI_ACC_ERROR)->top : full ? ui_accent(UI_ACC_SUCCESS)->top : UI_COL_TEXT2;

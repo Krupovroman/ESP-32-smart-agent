@@ -293,6 +293,8 @@ static const str_def_t s_tab[S__N] = {
     E(S_LK_HINT, "Нажмите PWR", "Press PWR", SLOT_LOCK_LINE),
     E(S_LK_PCT, "%d %%", "%d %%", SLOT_LOCK_BAT),
     E(S_LK_FULL, "Заряжено", "Charged", SLOT_LOCK_BAT),
+    // under the battery line while on USB power that does not keep up with the load (3.16)
+    E(S_LK_DRAIN, "USB: не хватает тока", "USB: not enough power", SLOT_LOCK_LINE),
     E(S_O5_G1, "BOOT " TXT_TIMES "2 " TXT_EMDASH " смена режима", "BOOT " TXT_TIMES "2 " TXT_EMDASH " switch mode",
       SLOT_GUIDE1),
     E(S_O5_G2, "PWR " TXT_EMDASH " блокировка", "PWR " TXT_EMDASH " lock", SLOT_GUIDE2),
@@ -506,8 +508,9 @@ static slot_def_t slot_of(uint8_t slot)
     case SLOT_QR_LINE: return (slot_def_t){ &ui_20, 220, "" };          // Q "received" lines
     // x 145-215, y 16-36: |(35,164)| = 167.7; "%s" stands for the 20 px battery glyph ("EN" is 22)
     case SLOT_HOME_BAT: return (slot_def_t){ &ui_16, 70, "" };
-    case SLOT_LOCK_LINE: return (slot_def_t){ &ui_16, 220, "" };        // lock screen date line (3.16)
-    case SLOT_LOCK_BAT: return (slot_def_t){ &ui_20, 140, "" };         // 160 px line, bolt + space are 17 px
+    case SLOT_LOCK_LINE: return (slot_def_t){ &ui_16, 220, "" };        // lock screen date line, USB note (3.16)
+    case SLOT_LOCK_BAT: return (slot_def_t){ &ui_20, 134, "" };         // 160 px line; the bolt, plug or check
+                                                                        // before it and its gap take up to 26 px
     case SLOT_GUIDE1: return (slot_def_t){ &ui_16, 240, "" };           // O5 guide x 60-300, y 276-296
     case SLOT_GUIDE2: return (slot_def_t){ &ui_16, 170, "" };           // O5 guide x 95-265, y 298-318
     default: return (slot_def_t){ NULL, 0, "" };
