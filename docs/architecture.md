@@ -155,7 +155,7 @@ The dependency direction is `main → {devconsole, ai, ota, net, orhttp, audio, 
 The Inter fonts are compiled into the app as rodata, so every A/B slot carries fonts that match its code. The `storage` partition (7.75 MB at 0x820000) holds the **asset pack**: today the CJK fallback font of the translator (ui.md 1.3), later optional UI sounds.
 
 - **No file system.** The pack is a flat read-only image (`components/assets`, written by `tools/mkpack.py`): a 4 KB header (`"RAPK"`, format 1, entry count, pack size, CRC-32 of the header, a label) with up to 63 entries (name, 4 KB-aligned offset, size, CRC-32, aux), then the data. `assets_init()` finds the partition by label (its `spiffs` subtype in `partitions.csv` is only a label now; the table is unchanged), checks the header and maps the whole pack once with `esp_partition_mmap(…, ESP_PARTITION_MMAP_DATA)`: readers get plain pointers into the flash cache and nothing is copied to RAM. Nothing mounts, nothing formats, and a blank or foreign partition is just "absent".
-- **Integrity.** `assets_verify()` checks every entry's CRC-32 (estimated 50-80 ms per MB through the flash cache, 0.3-0.4 s for the pack; `font status` reports it) in the one-shot `cjk_crc` task after boot (core 0, priority 1, PSRAM stack: only its TCB is internal). A reader uses an entry only after that passed, so a half-written pack (the header is written first) is never parsed.
+- **Integrity.** `assets_verify()` checks every entry's CRC-32 (estimated 60-120 ms per MB through the flash cache with DIO reads and the ROM CRC, 0.3-0.6 s for the pack; `font status` reports it) in the one-shot `cjk_crc` task after boot (core 0, idle priority so it never takes CPU from app_main's boot, PSRAM stack: only its TCB is internal). A reader uses an entry only after that passed, so a half-written pack (the header is written first) is never parsed; a pack that fails it makes the UI drop a stored zh / ja / ko translator pair, as when the pack is missing.
 - **Entries now:** `cjk.ttf` (5,043,260 B, 21,803 glyphs), `cjk.cov` (8 KB coverage bitmap of its cmap), `cjk.ofl` (its licence). The pack is 5,066,752 B, 62 % of the partition.
 - **Build and flash.** `main/CMakeLists.txt` builds `build/storage.bin` (target `storage_pack`, part of every build, re-run only when its inputs change) and registers it with `esp_partition_register_target(storage …)`. It is **not** part of `idf.py flash`; `idf.py -p COM7 storage-flash` writes it (only when the font changes). OTA images never touch it, so both A/B slots share it, and a slot without CJK support simply ignores it.
 - **Without the pack** the firmware runs as before: CJK languages are listed but disabled in the translator, and nothing else changes.
@@ -991,8 +991,8 @@ The draft assumed 300 KB. That number is not reachable on this chip with this co
 | `ai` and `tts` stacks, 10 + 8 | 18 | boot |
 | OTA buffers, settings cache, cJSON scratch | ≈ 40 | |
 | CJK glyph bitmaps (font draw buffers, ui.md 1.3) | ≤ 310 | grows with use, 608 glyphs at most; the cache nodes (≤ 160 KB) are inside the LVGL pool; the 5 MB font is mapped flash, no RAM |
-| **Total, worst case including the inject buffer** | **≈ 6,670** | |
-| **Headroom** | **≈ 1.49 MB** (≈ 2.4 MB without the inject buffer) | gate: `psram.free ≥ 1 MB` |
+| **Total, worst case including the inject buffer** | **≈ 6,980** | |
+| **Headroom** | **≈ 1.18 MB** (≈ 2.1 MB without the inject buffer) | gate: `psram.free ≥ 1 MB` |
 
 `CONFIG_SPIRAM_XIP_FROM_PSRAM` stays off. It would move about 1.8 MB of code and rodata into PSRAM.
 
@@ -1005,7 +1005,7 @@ The draft assumed 300 KB. That number is not reachable on this chip with this co
   - our code: ≈ 0.25 MB.
 
   That is 55 % or less of a 4 MB slot. `tools/build.ps1` fails above 85 %.
-- **Measured with the CJK fallback (feat-cjk):** the app is 2,003,072 B (48 % of the slot; Tiny TTF, stb_truetype and `ui_font.c` add 28 KB to main's 1,974,880 B). The CJK font stays out of the app on purpose: the 5,066,752 B asset pack (§1.0) is written once to `storage` and never travels with an OTA image.
+- **Measured with the CJK fallback (feat-cjk):** the app is 2,003,328 B (48 % of the slot; Tiny TTF, stb_truetype and `ui_font.c` add 28 KB to main's 1,974,880 B). The CJK font stays out of the app on purpose: the 5,066,752 B asset pack (§1.0) is written once to `storage` and never travels with an OTA image.
 - **Upload size.** A 30 s clip is 960,044 B of WAV and 1,280,060 base64 characters. A 10 s clip is 426,728 characters.
   - At 400 KB/s TLS upload *(measure M4)*, 10 s of speech uploads in ≈ 1.1 s.
   - AAC through `esp_audio_codec` (`format:"aac"`) is a v2 option if the upload dominates latency.
@@ -1504,7 +1504,7 @@ Only one program can hold COM7 at a time. Close `monitor` or `dev.py` before fla
 | `tools\idf.ps1` (exists) | Dot-sources the profile with `*> $null`, sets `$ErrorActionPreference='Continue'`, removes `Env:MSYSTEM`, runs `idf.py @args` from the repo root, and returns its exit code |
 | `tools\py.ps1` | `& 'C:\Espressif\tools\python\v6.1\venv\Scripts\python.exe' @args` |
 | `tools\build.ps1 [-Release] [-Variant forcefail\|forcepanic]` | Builds into `build\`, `build-rel\`, `build-ff\` or `build-fp\` with the defaults chain. Parses `idf.py size` and fails above 85 % of 0x400000 |
-| `tools\flash.ps1 [-Port COM7] [-AppOnly]` | Flashes, then runs `dev.py wait-ready --timeout 10`, then prints `info` |
+| `tools\flash.ps1 [-Port COM7] [-AppOnly \| -Storage]` | Flashes (`-Storage`: the asset pack, `idf.py storage-flash`), then runs `dev.py wait-ready --timeout 10`, then prints `info` |
 | `tools\release.ps1 -Tag <t>` | Requires a clean tree; `git tag -a`; release build; archive to `releases\<t>\` with SHA256SUMS |
 | `tools\restore.ps1 -Tag <t> \| -Factory [-EraseNvs]` | esptool `write-flash "@flash_args"` from the archive, or the factory image; optionally `parttool.py erase_partition --partition-name=nvs` |
 | `tools\slot.ps1 -Write <bin> -Slot 0\|1 [-Boot]` / `-Boot 0\|1` / `-Info` | otatool `write_ota_partition`; `erase_otadata` + `switch_ota_partition`; `read_otadata` |

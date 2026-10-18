@@ -25,8 +25,8 @@ typedef struct {
 
 // Maps the pack and checks its header (magic, format, header CRC, entry bounds): well under 1 ms. Any task, once.
 esp_err_t assets_init(void);
-// CRC-32 of every entry (estimated 50-80 ms per MB from flash): run it off taskLVGL. ESP_OK and ASSETS_OK when all
-// match; ESP_ERR_INVALID_CRC and ASSETS_BAD otherwise. Call after assets_init.
+// CRC-32 of every entry (estimated 60-120 ms per MB from DIO flash): run it off taskLVGL, at a low priority. ESP_OK
+// and ASSETS_OK when all match; ESP_ERR_INVALID_CRC and ASSETS_BAD otherwise. Call after assets_init.
 esp_err_t assets_verify(void);
 assets_state_t assets_state(void);
 const char *assets_state_name(assets_state_t s);
