@@ -1068,6 +1068,26 @@ static void t_power(void)
     post_ev(EV_BATTERY, 0, 0);
     CHECK(UI_BAT_PCT(ui_last(UI_SET_BATTERY)->i) == 100);
     g_bat_mv = -1;
+    // the charging trend sees only settled readings: none in the first minute (boot), none for a minute after a
+    // turn or a screen change (the cell recovers from the load: no false "charging")
+    boot();
+    g_bat_mv = 3900;
+    step(BAT_SETTLE_MS - 1000);
+    CHECK(g_bat_samples >= 10 && g_bat_settled == 0);
+    step(2 * BAT_POLL_MS);
+    CHECK(g_bat_settled > 0 && g_bat_last_settled);
+    say(1000);
+    step(BAT_POLL_MS);
+    CHECK(!g_bat_last_settled);
+    post_ev(EV_CANCEL, 0, 0);
+    step(BAT_SETTLE_MS + BAT_POLL_MS);
+    CHECK(g_bat_last_settled);
+    app_io_ui_sleep(1);                 // dimmed: less backlight current
+    step(BAT_POLL_MS + 100);
+    CHECK(!g_bat_last_settled);
+    step(BAT_SETTLE_MS);
+    CHECK(g_bat_last_settled);
+    g_bat_mv = -1;
     // BOOT ignored where the UI says so (keyboard): its release too
     boot();
     g_boot_ok = false;

@@ -1,6 +1,7 @@
 // Battery voltage on GPIO8 (ADC1 channel 7) behind the board's x3 divider (docs/hardware.md), and the battery
 // model of docs/ui.md 3.16: a median of 5 readings taken 5 s apart, a Li-ion discharge curve, and charging seen
-// from the USB host or a rising voltage (the ETA6098 charger only drives an LED, no status pin reaches the MCU).
+// from the USB host or a rising voltage at rest (the ETA6098 charger only drives an LED, no status pin reaches the
+// MCU).
 #include "board.h"
 #include "board_pins.h"
 
@@ -18,12 +19,17 @@ static const char *TAG = "battery";
 #define DIVIDER     3
 
 #define MEDIAN_N        5           // readings in the median (25 s at the app's 5 s period)
-#define TREND_N         24          // 2 min of filtered readings
+#define TREND_N         24          // 2 min of settled filtered readings
 #define TREND_UP_MV     15          // a rise this big within 2 min below FULL_MV: a charger without a USB host
 #define TREND_FALL_MV   10          // a fall this big within 2 min ends it
-#define PEAK_DROP_MV    25          // ... and so does a reading this far below the highest one since (unplugged)
+#define PEAK_DROP_MV    25          // ... and so does a settled reading this far below the highest one since (unplugged)
+#define PEAK_DROP_BUSY_MV 60        // ... or any reading this far below it (unplugged while in use: a turn's sag on
+                                    // the charger stays well under this)
 #define FULL_MV         4150
+#define FULL_HYST_MV    40          // full is left only below FULL_MV - this (a CV-phase cell hovers at the threshold)
 #define PCT_AGAINST     5           // the percent moves against the charge direction only by this much at once
+#define NOBAT_SPREAD_MV 250         // settled readings this far apart: no cell, a charger output swinging on its own
+#define NOBAT_CLEAR_MV  80          // ... back to a cell once they agree within this
 
 static adc_oneshot_unit_handle_t s_adc;
 static adc_cali_handle_t s_cali;
@@ -33,7 +39,7 @@ static bool s_tried, s_ok;
 // model (app task), published under s_mux
 static int s_raw[MEDIAN_N], s_raw_n, s_raw_i;
 static int s_hist[TREND_N], s_hist_n, s_hist_i;
-static bool s_trend;
+static bool s_trend, s_nobat;
 static int s_peak;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static board_bat_t s_model = { .pct = -1, .mv = -1 };
@@ -116,7 +122,8 @@ int board_battery_pct(int mv)
     return 100;
 }
 
-static int median(void)
+// Median of the raw readings; *spread = their max - min
+static int median(int *spread)
 {
     int v[MEDIAN_N] = { 0 };
     for (int i = 0; i < s_raw_n; i++) {
@@ -126,7 +133,39 @@ static int median(void)
         }
         v[j] = x;
     }
+    *spread = v[s_raw_n - 1] - v[0];
     return v[s_raw_n / 2];
+}
+
+// Charging without a USB host (a wall charger): the filtered voltage rising. A load step looks the same (the cell
+// recovers after a turn's speech, the backlight goes off), so only settled readings (the app idle and the screen
+// unchanged for a while, app_io.c) enter the 2 min history and may start it. Every reading may end it.
+static void trend(int mv, bool settled)
+{
+    if (!settled) {
+        if (s_trend && s_peak - mv >= PEAK_DROP_BUSY_MV) {
+            s_trend = false;
+        }
+        return;
+    }
+    // the settled reading 2 min (24 settled readings) ago is the one about to be overwritten
+    int old = s_hist_n == TREND_N ? s_hist[s_hist_i] : -1;
+    s_hist[s_hist_i] = mv;
+    s_hist_i = (s_hist_i + 1) % TREND_N;
+    if (s_hist_n < TREND_N) {
+        s_hist_n++;
+    }
+    if (old > 0 && !s_trend && mv - old >= TREND_UP_MV && mv < FULL_MV) {
+        s_trend = true;
+        s_peak = mv;
+    } else if (old > 0 && s_trend && old - mv >= TREND_FALL_MV) {
+        s_trend = false;
+    }
+    if (s_trend && mv > s_peak) {
+        s_peak = mv;
+    } else if (s_trend && s_peak - mv >= PEAK_DROP_MV) {
+        s_trend = false;
+    }
 }
 
 // What the UI sees: the model, or the console's override
@@ -147,7 +186,7 @@ static bool same(const board_bat_t *a, const board_bat_t *b)
     return a->pct == b->pct && a->charging == b->charging && a->full == b->full && a->usb == b->usb;
 }
 
-bool board_battery_sample(void)
+bool board_battery_sample(bool settled)
 {
     int raw = board_battery_mv();
     board_bat_t m = { .pct = -1, .mv = -1, .usb = usb_serial_jtag_is_connected() };
@@ -157,30 +196,20 @@ bool board_battery_sample(void)
         if (s_raw_n < MEDIAN_N) {
             s_raw_n++;
         }
-        int mv = median();
-        // the filtered reading 2 min ago is the one about to be overwritten
-        int old = s_hist_n == TREND_N ? s_hist[s_hist_i] : -1;
-        s_hist[s_hist_i] = mv;
-        s_hist_i = (s_hist_i + 1) % TREND_N;
-        if (s_hist_n < TREND_N) {
-            s_hist_n++;
+        int spread;
+        int mv = median(&spread);
+        if (settled && s_raw_n == MEDIAN_N) {
+            // a resting cell's readings agree within a few tens of mV; with no cell the charger's output swings on
+            // its own (no indicator rather than a false "charging")
+            s_nobat = spread > NOBAT_SPREAD_MV || (s_nobat && spread >= NOBAT_CLEAR_MV);
         }
-        if (old > 0 && !s_trend && mv - old >= TREND_UP_MV && mv < FULL_MV) {
-            s_trend = true;
-            s_peak = mv;
-        } else if (old > 0 && s_trend && old - mv >= TREND_FALL_MV) {
-            s_trend = false;
-        }
-        if (s_trend && mv > s_peak) {
-            s_peak = mv;
-        } else if (s_trend && s_peak - mv >= PEAK_DROP_MV) {
-            s_trend = false;
-        }
+        trend(mv, settled && !s_nobat);
         m.mv = mv;
-        m.pct = board_battery_pct(mv);
+        m.pct = s_nobat ? -1 : board_battery_pct(mv);
         if (m.pct >= 0) {
             bool fed = m.usb || s_trend;
-            m.full = fed && mv >= FULL_MV;
+            // s_model is written only here (this task): no lock needed to read it
+            m.full = fed && (mv >= FULL_MV || (s_model.full && mv >= FULL_MV - FULL_HYST_MV));
             m.charging = fed && !m.full;
         }
     }

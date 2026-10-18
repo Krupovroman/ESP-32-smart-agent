@@ -683,7 +683,7 @@ int g_backlight = -1;
 int g_power_off, g_latch_on;
 bool g_boot_down, g_pwr_held;
 int g_bat_mv = -1;
-bool g_bat_chg;
+bool g_bat_chg, g_bat_last_settled;
 int g_net_state = NET_UP;
 bool g_portal;
 
@@ -739,8 +739,13 @@ int board_battery_pct(int mv)
     return p < 0 ? 0 : p > 100 ? 100 : p;
 }
 
-bool board_battery_sample(void)
+int g_bat_samples, g_bat_settled;
+
+bool board_battery_sample(bool settled)
 {
+    g_bat_samples++;
+    g_bat_settled += settled ? 1 : 0;
+    g_bat_last_settled = settled;
     return false;
 }
 
@@ -795,7 +800,8 @@ void mocks_reset(void)
     g_pwr_short = g_pwr_down = g_pwr_up = 0;
     g_locked = false;
     g_boot_refused = 0;
-    g_bat_chg = false;
+    g_bat_chg = g_bat_last_settled = false;
+    g_bat_samples = g_bat_settled = 0;
     g_inactive_ms = 100000;
     g_touch_down = false;
     g_ui_level = 0;

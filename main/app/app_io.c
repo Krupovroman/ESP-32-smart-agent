@@ -25,6 +25,7 @@ static const char *TAG = "app_io";
 #define BAT_LOW_PCT      15              // toasts "Батарея 15 %" and "Батарея 5 %", once each per discharge
 #define BAT_CRIT_PCT     5
 #define BAT_REARM_PCT    20              // ... until charging or back above this
+#define BAT_SETTLE_MS    60000           // a reading counts as settled (charging trend) this long after a load step
 #define HEAP_POLL_MS     1000
 #define TOUCH_POLL_MS    200
 #define AMBIENT_POLL_MS  100
@@ -54,6 +55,7 @@ static bool s_portal;
 static uint32_t s_t_net, s_t_bat, s_t_heap, s_t_touch, s_t_amb;
 static bool s_bat_polled, s_bat_warned, s_bat_crit;
 static int32_t s_bat_posted = -1;       // UI_BAT_MAKE() value last sent to the UI
+static uint32_t s_load_t;               // last load step: a turn, sound, the mic, a backlight change (settle clock)
 static bool s_low_mem;
 static int s_ambient = VAD_NO_HINT;
 static save_t s_save[] = { { .key = "mode" }, { .key = "text_only" } };
@@ -117,6 +119,7 @@ static void screen_set(app_screen_t sc)
         ui_post(&(ui_msg_t){ .type = UI_SCREEN_OFF });
     }
     if (atomic_exchange(&s_screen, (int)sc) != (int)sc) {
+        s_load_t = app_now_ms();    // the backlight current changes: the battery voltage steps
         devcon_event("screen", "\"state\":\"%s\"", screen_name(sc));
     }
 }
@@ -140,6 +143,7 @@ void app_io_ui_sleep(int level)
         relatch();
     }
     if (atomic_exchange(&s_screen, (int)sc) != (int)sc) {
+        s_load_t = app_now_ms();
         devcon_event("screen", "\"state\":\"%s\",\"level\":%d", screen_name(sc), level);
     }
 }
@@ -253,6 +257,7 @@ void app_io_setting(const char *key)
     if (all || !strcmp(key, "bright")) {
         s_bright = settings_get_int("bright");
         backlight_apply();
+        s_load_t = app_now_ms();
     }
     if (all || !strcmp(key, "dim_s")) {
         s_dim_s = settings_get_int("dim_s");
@@ -335,7 +340,9 @@ static void poll_net(void)
 void app_io_battery(bool sample)
 {
     if (sample) {
-        board_battery_sample();
+        // ui.md 3.16: the cell recovers for a while after a load (speech, the mic and Wi-Fi of a turn, the backlight
+        // going off): such a rise must not read as a charger
+        board_battery_sample(app_now_ms() - s_load_t >= BAT_SETTLE_MS);
     }
     board_bat_t b;
     board_battery_state(&b);
@@ -415,6 +422,9 @@ static void dim_tick(uint32_t now)
     if (!app_quiet()) {
         s_last_act = now;           // a turn keeps the screen awake
     }
+    if (!app_quiet() || audio_out_busy() || audio_in_recording()) {
+        s_load_t = now;             // also a speaker or mic test outside a turn (D)
+    }
     if (s_off_wait_up && !board_button_down(BOARD_BTN_PWR)) {
         s_off_wait_up = false;
         s_off_check = now + USB_CHECK_MS;
@@ -426,10 +436,12 @@ static void dim_tick(uint32_t now)
         s_note_until = now + USB_NOTE_MS;
         ui_post(&(ui_msg_t){ .type = UI_TOAST, .i = S_USB_POWER });
         board_backlight_set((uint8_t)s_bright);
+        s_load_t = now;
     }
     if (s_note_until && (int32_t)(now - s_note_until) >= 0) {
         s_note_until = 0;
         board_backlight_set(0);
+        s_load_t = now;
     }
     // dim / ambient / off after dim_s are run by the UI's own idle timer (ui_sleep.c)
 }
@@ -476,7 +488,7 @@ void app_io_init(void)
 {
     s_bright = settings_get_int("bright");
     s_dim_s = settings_get_int("dim_s");
-    s_last_act = app_now_ms();
+    s_last_act = s_load_t = app_now_ms();     // boot (Wi-Fi joining, TLS) is a load too
     settings_on_change(on_setting_cb, NULL);
     if (board_buttons_start(btn_cb, NULL) != ESP_OK) {
         ESP_LOGE(TAG, "buttons unavailable");
