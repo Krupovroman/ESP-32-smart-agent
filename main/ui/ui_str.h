@@ -71,6 +71,8 @@ typedef enum {
     S_O4_B, S_O5_T, S_O5_S, S_O5_P,
     // text entry
     S_K_QUESTION, S_K_INPUT, S_NEW_CHAT_Q,
+    // battery and lock screen (3.16), button guide on O5
+    S_HB_FMT, S_BAT_LOW, S_LK_HINT, S_LK_PCT, S_LK_FULL, S_O5_G1, S_O5_G2,
     S__N
 } ui_sid_t;
 
@@ -92,6 +94,11 @@ typedef enum {
     SLOT_QR2,           // Q caption 2 (ui_16, 150)
     SLOT_QR_TITLE,      // Q arc title (ui_20, 100)
     SLOT_QR_LINE,       // Q "received" lines (ui_20, 220)
+    SLOT_HOME_BAT,      // Home battery glyph + percent above the pill (ui_16, 70)
+    SLOT_LOCK_LINE,     // lock screen date / hint line (ui_16, 220)
+    SLOT_LOCK_BAT,      // lock screen battery line after the bolt (ui_20, 140)
+    SLOT_GUIDE1,        // O5 button guide, line 1 (ui_16, 240)
+    SLOT_GUIDE2,        // O5 button guide, line 2 (ui_16, 170)
 } ui_slot_t;
 
 // Text of id in the current UI language.

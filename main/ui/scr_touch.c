@@ -1,7 +1,8 @@
 // D.touch (docs/ui.md 3.15): black screen, a 12 px dot at the last sample and "x · y · Hz" in the centre.
-// Moving one small object keeps each update at about 2 x 14^2 px. PWR (ui_pwr_short) exits.
+// Moving one small object keeps each update at about 2 x 14^2 px. The ✕ circle at the bottom exits (PWR locks).
 #include "ui_internal.h"
 #include "ui_str.h"
+#include "ui_sym.h"
 #include "ui_theme.h"
 
 #include <stdio.h>
@@ -53,6 +54,12 @@ static void delete_cb(lv_event_t *e)
     s_rate = NULL;
 }
 
+static void exit_cb(lv_event_t *e)
+{
+    (void)e;
+    ui_nav_back();
+}
+
 lv_obj_t *scr_touch_build(uint32_t arg)
 {
     (void)arg;
@@ -78,6 +85,20 @@ lv_obj_t *scr_touch_build(uint32_t arg)
     lv_obj_set_size(s_dot, 12, 12);
     lv_obj_remove_flag(s_dot, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(s_dot, LV_OBJ_FLAG_HIDDEN);
+
+    // ✕ circle Ø52 at (180,300): |(0,120)| + 26 = 146; its own touches are not samples
+    lv_obj_t *x = lv_obj_create(scr);
+    ui_theme_plain(x);
+    lv_obj_set_name_static(x, "touch_exit");
+    lv_obj_add_style(x, &st_btn_round, 0);
+    lv_obj_add_style(x, &st_btn_round_pr, LV_STATE_PRESSED);
+    lv_obj_set_pos(x, 180 - 26, 300 - 26);
+    lv_obj_set_size(x, 52, 52);
+    lv_obj_add_flag(x, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(x, exit_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *xl = lv_label_create(x);
+    lv_label_set_text_static(xl, SYM_TIMES);
+    lv_obj_center(xl);
 
     s_samples = s_hz = 0;
     s_last = (lv_point_t){ 0, 0 };

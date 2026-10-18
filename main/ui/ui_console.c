@@ -405,7 +405,8 @@ static int cmd_btn(int argc, char **argv)
         } else if (!strcmp(ev, "up")) {
             ui_pwr_up();
         } else {
-            printf("pwr %s\n", ui_pwr_short() ? "back" : "at home");
+            printf("pwr %s\n", ui_keylocked() ? "unlock" : "lock");
+            ui_pwr_short();
         }
         return ui_wait_pumped(PUMP_WAIT_MS) ? 0 : dc_fail("ui queue not drained");
     }
@@ -437,6 +438,10 @@ static int cmd_ui(int argc, char **argv)
         // optional screen argument: adjust 1 = brightness, langpick 1 = slot B, text <field>, onboard <step>
         char *sarg = argc > 3 ? join(argc, argv, 3) : NULL;
         int rc = post(UI_GOTO, v, sarg);
+        if (v == UI_SCR_LOCK) {
+            // an overlay over the current screen, not a stack entry
+            return rc == 0 && !ui_keylocked() ? dc_fail("did not lock") : rc;
+        }
         if (rc == 0 && ui_nav_current() != (ui_screen_t)v) {
             return dc_fail("screen %s did not open (reader needs a translated bubble; wifinet / wificonn are "
                            "reached from wifi)", arg);
@@ -629,6 +634,26 @@ static int cmd_ui(int argc, char **argv)
         return dc_fail("built without LV_USE_PERF_MONITOR");
 #endif
     }
+    if (!strcmp(sub, "lockanim")) {
+        // ui lockanim lock|unlock <ms>: holds that frame of the lock / unlock animation for screenshots;
+        // ui lockanim off: finishes it (locked / unlocked)
+        bool off = !strcmp(arg, "off");
+        bool unlock = !strcmp(arg, "unlock");
+        if (!off && !unlock && strcmp(arg, "lock")) {
+            return dc_fail("usage: ui lockanim lock|unlock <ms> | off");
+        }
+        int32_t ms = off ? -1 : LV_MAX(0, argc > 3 ? atoi(argv[3]) : 0);
+        if (!ui_lock(LOCK_MS)) {
+            return dc_fail("lvgl busy");
+        }
+        bool ok = ui_lockscr_freeze(unlock, ms);
+        ui_unlock();
+        if (!ok) {
+            return dc_fail(off ? "no frame held" : unlock ? "not locked" : "already locked");
+        }
+        printf("{\"locked\":%d,\"frame_ms\":%d}\n", ui_keylocked(), (int)ms);
+        return 0;
+    }
     if (!strcmp(sub, "busy")) {
         // rim BUSY comet (A30); the scan / portal screens that use it come later
         if (!ui_lock(LOCK_MS)) {
@@ -644,7 +669,7 @@ static int cmd_ui(int argc, char **argv)
                    "tap <name>|key:<k> [ms] | audit | fit | mode 0|1 | "
                    "error <card> [body] | fault <f> | net <n> | toast <text> | upload <pct> | retry <n> | "
                    "lang ru|en | langs a|b | speaker 0|1 | textonly 0|1 | hints <n> | face 0|1 | dir 0|1|2 | "
-                   "back | busy 0|1 | fps on|off | "
+                   "back | busy 0|1 | fps on|off | lockanim lock|unlock <ms> | lockanim off | "
                    "btn boot|pwr [short|down|up]");
 }
 

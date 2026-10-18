@@ -18,6 +18,7 @@ extern ui_subj_t g_s_hints;     // 0..3 first-use hints left
 extern ui_subj_t g_s_portal;    // portal state for the QR screen
 extern ui_subj_t g_s_tr_dir;    // translator direction: 0 auto, 1 A -> B, 2 B -> A
 extern ui_subj_t g_s_face;      // 1 = face on the orb
+extern ui_subj_t g_s_battery;   // UI_BAT_MAKE() value of the last UI_SET_BATTERY (UI_BAT_NONE until the first)
 
 // Translator language pair (ISO 639-1, lower case)
 extern char g_lang_a[4], g_lang_b[4];
@@ -106,6 +107,18 @@ void scr_home_retry(int32_t n);
 void scr_home_mood(int32_t mood);
 void scr_home_langs_changed(void);
 lv_obj_t *scr_home_orb(void);
+
+// ---- Lock screen (scr_lock.c, ui.md 3.16): one overlay on the top layer above every screen, toast below it
+void ui_lockscr_request(int32_t req);       // UI_LOCK (ui_lock_req_t)
+bool ui_lockscr_active(void);               // the overlay is up (locking, locked or unlocking)
+lv_obj_t *ui_lockscr_obj(void);             // the overlay or NULL (the audit exempts its backdrop)
+void ui_lockscr_woke(int from_level);       // ui_sleep: the backlight is coming back from that sleep level
+void ui_lockscr_lang(void);                 // the texts again after a language switch
+// Console screenshots: shows frame ms of the lock (unlock = false) or unlock animation and holds it; ms < 0
+// finishes that animation. Returns false when the request does not fit the current state.
+bool ui_lockscr_freeze(bool unlock, int32_t ms);
+// Battery glyph for a level (F240..F244)
+const char *ui_bat_glyph(int pct);
 
 lv_obj_t *scr_hist_build(uint32_t entry_id);
 lv_obj_t *scr_reader_build(uint32_t entry_id);

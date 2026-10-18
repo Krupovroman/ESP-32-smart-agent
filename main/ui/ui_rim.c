@@ -32,6 +32,8 @@ static int32_t s_th_a0 = -1, s_th_a1 = -1;   // thumb span in degrees, a0 in [32
 static lv_opa_t s_th_opa;
 static lv_timer_t *s_th_idle;
 
+static bool s_power_only;       // the lock screen is up: only the POWER ring draws (above it)
+
 // Invalidates the ring band between angles a0 and a1 (a1 > a0, may exceed 360) in SEG_DEG pieces, so a long
 // sweep never turns into the 113k px bounding box of the whole ring.
 static void inval_span(int32_t a0, int32_t a1, int32_t w)
@@ -79,6 +81,12 @@ static void draw_arc(lv_layer_t *layer, int32_t a0, int32_t a1, int32_t w, lv_co
 static void rim_draw_cb(lv_event_t *e)
 {
     lv_layer_t *layer = lv_event_get_layer(e);
+    if (s_power_only) {
+        if (s_pwr_deg > 0) {
+            draw_arc(layer, 270, 270 + s_pwr_deg, RIM_PWR_W, ui_col(ui_accent(UI_ACC_ERROR)->top), LV_OPA_COVER);
+        }
+        return;
+    }
     if (s_th_a0 >= 0 && s_th_opa > 0) {
         draw_arc(layer, s_th_a0, s_th_a1, RIM_W, ui_col(UI_COL_TEXT3), s_th_opa);
     }
@@ -302,3 +310,26 @@ void ui_rim_power(int32_t permille)
 }
 
 int32_t ui_rim_power_get(void) { return s_pwr; }
+
+// ---- Lock screen
+
+void ui_rim_power_only(bool on)
+{
+    if (!s_rim || on == s_power_only) {
+        return;
+    }
+    s_power_only = on;
+    if (on) {
+        lv_obj_move_foreground(s_rim);      // the PWR-hold ring stays visible over the lock overlay
+    }
+    // the other channels appear or vanish: repaint their spans
+    if (s_th_a0 >= 0) {
+        inval_span(s_th_a0, s_th_a1, RIM_W);
+    }
+    if (s_busy) {
+        inval_span(s_busy_a + 360 - BUSY_SPAN, s_busy_a + 360, RIM_W);
+    }
+    if (s_rec_deg > 0) {
+        inval_span(270, 270 + s_rec_deg, RIM_W);
+    }
+}

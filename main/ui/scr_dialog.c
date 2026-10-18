@@ -1,5 +1,5 @@
 // C, confirm dialog T_DIALOG (docs/ui.md 3.11): icon, title, up to three body lines, "Отмена" and the
-// destructive action. PWR = "Отмена"; BOOT is ignored (ui_boot_down).
+// destructive action. "Отмена" is the way out (PWR locks over it); BOOT is ignored (ui_boot_down).
 #include "ui_internal.h"
 #include "ui_scr.h"
 #include "ui_str.h"
