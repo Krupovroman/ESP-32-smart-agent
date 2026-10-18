@@ -137,8 +137,8 @@ static esp_err_t out_begin(uint32_t turn, uint32_t rate, uint8_t ch)
     return e;
 }
 
-// Never blocks inside the stream buffer: xStreamBufferReset() (audio_out_stop) is refused while a
-// sender waits on it, so a blocked writer would make barge-in keep playing a full ring.
+// Never blocks inside the stream buffer: audio_out_stop() drains the ring, and a writer blocked on a
+// full ring would refill it with the old reply as fast as the drain frees space.
 static bool out_write(sink_t *s, const uint8_t *p, size_t n)
 {
     int64_t last = esp_timer_get_time();

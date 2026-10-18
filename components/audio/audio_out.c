@@ -51,8 +51,14 @@ static void play_task(void *arg)
             s_rate = rate;
         }
         if (s_flush) {
-            xStreamBufferReset(s_ring);
+            // Drain as the (only) reader instead of xStreamBufferReset(): a reset that lands while
+            // the TTS writer is inside xStreamBufferSend() zeroes head and tail under it, and the
+            // writer's later head store makes the ring report the whole previous reply as queued
+            // again (replayed after a barge-in). Receiving moves only the tail: safe with one writer.
             s_flush = false;
+            while (xStreamBufferReceive(s_ring, in, sizeof(in), 0) > 0) {
+            }
+            s_level = 0;
         }
         size_t frame_bytes = s_channels * sizeof(int16_t);
         size_t got = xStreamBufferReceive(s_ring, in, CHUNK_SAMPLES * frame_bytes, pdMS_TO_TICKS(20));
