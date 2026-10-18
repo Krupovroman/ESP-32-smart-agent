@@ -20,6 +20,7 @@ typedef struct {
     char *text2;            // CM_TURN translation (sanitised, PSRAM)
     char src[4], dst[4];    // CM_TURN language codes
     uint8_t env[32];        // RMS envelope of the clip, 0..255
+    uint32_t tag;           // app turn that created it (UI_SET_TURN), 0 = none
 } cm_entry_t;
 
 #define CM_MAX      40      // stored per mode (HIST); H shows the last 20
@@ -27,8 +28,10 @@ typedef struct {
 
 // Allocates the PSRAM rings; call once.
 void cm_init(void);
-// New entry at the end (drops the oldest beyond CM_MAX); never NULL after cm_init().
+// New entry at the end (drops the oldest beyond CM_MAX); never NULL after cm_init(). It carries the tag last set.
 cm_entry_t *cm_add(int mode, cm_kind_t kind);
+// App turn tag for the entries added from now on (UI_SET_TURN).
+void cm_set_tag(uint32_t tag);
 // Entry by id in either mode, or NULL.
 cm_entry_t *cm_find(uint32_t id);
 // Mode that owns entry id (0/1), -1 if unknown.

@@ -502,6 +502,7 @@ static void dispatch(const ui_msg_t *m)
     case UI_WAKE: ui_sleep_wake(); break;
     case UI_SCREEN_OFF: ui_sleep_off(); break;
     case UI_WORK_DONE: ui_work_dispatch(m->s); break;
+    case UI_SET_TURN: cm_set_tag((uint32_t)m->i); break;
     default: break;
     }
 }

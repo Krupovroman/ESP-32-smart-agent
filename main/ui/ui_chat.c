@@ -20,6 +20,12 @@ typedef struct {
 
 static cm_ring_t *s_ring;       // [2]
 static uint32_t s_next_id = 1;
+static uint32_t s_tag;          // app turn of the entries added now
+
+void cm_set_tag(uint32_t tag)
+{
+    s_tag = tag;
+}
 
 void cm_init(void)
 {
@@ -50,6 +56,7 @@ cm_entry_t *cm_add(int mode, cm_kind_t kind)
     e->id = s_next_id++;
     e->kind = (uint8_t)kind;
     e->side = UI_SIDE_AUTO;
+    e->tag = s_tag;
     return e;
 }
 
@@ -491,9 +498,12 @@ static void refresh_turn(lv_obj_t *w, const cm_entry_t *e, bool animate)
 
 static void card_btn_cb(lv_event_t *e)
 {
-    // routing actions open their fixing screen here (W, P, AI, credit, D); retries go to the app
+    // routing actions open their fixing screen here (W, P, AI, credit, D); retries go to the app with the
+    // card's turn tag, so the turn that failed is the one sent again
     int32_t card = (int32_t)(intptr_t)lv_event_get_user_data(e);
-    if (!ui_open_card(card) && !ui_emit(UI_IN_CARD_ACTION, card)) {
+    const cm_entry_t *en = cm_find(ui_msg_id(lv_event_get_target_obj(e)));
+    int32_t arg = (int32_t)(((en ? en->tag : 0) << 8) | (uint32_t)card);
+    if (!ui_open_card(card) && !ui_emit(UI_IN_CARD_ACTION, arg)) {
         ui_toast(ui_s(S_NOT_YET));
     }
 }

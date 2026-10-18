@@ -16,6 +16,8 @@ typedef struct {
     uint8_t mode;                   // 0 assistant, 1 translator
     uint8_t tr_dir;                 // 0 auto, 1 A -> B, 2 B -> A
     bool text_only, latched, ptt_held, clip_kept;
+    uint8_t kept;                   // recent turns the reader / retry cards can act on
+    uint32_t kept_kb;               // PSRAM of their copied clips
     uint32_t turn;
     char last_err[8];               // error id of the last failed turn ("" = none)
     uint32_t t_rec_ms, t_upload_ms, t_ai_ms, t_tts_ttfb_ms, t_total_ms;

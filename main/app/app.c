@@ -35,11 +35,32 @@ static const char *TAG = "app";
 #define TICK_FAST_MS    20          // recording or a press pending: live speech detection, 400 ms hold
 #define TICK_MS         100
 #define CARD_REPEAT_MS  20000       // the same error card again within this time: orb and status only
+#define KEEP_N          6           // recent turns the reader and the retry cards can act on (by turn tag)
+#define KEEP_CLIP_MAX   (640 * 1024)    // PSRAM for their copied clips (20 s of 16 kHz audio)
+#define KEEP_PSRAM_MIN  (1024 * 1024)   // a copy never takes free PSRAM below this (selftest gate)
 #define PORTAL_WAIT_MS  5000        // BOOT on Q: the portal stops once Q is deleted (UI worker)
 
 typedef enum { TURN_NONE, TURN_VOICE, TURN_TEXT, TURN_REPLAY } turn_kind_t;
 
 typedef enum { RDY_OK, RDY_PORTAL, RDY_NET, RDY_KEY, RDY_MEM, RDY_AI } ready_t;
+
+// A recent turn, found by its tag: the turn id the app stamps on the chat entries it creates (UI_SET_TURN),
+// which the reader and the card actions send back (ui.md 3.6 / 5.5 / 5.6)
+typedef struct {
+    uint32_t tag;                   // 0 = free slot
+    uint8_t mode;
+    bool voice;                     // the input was a clip (else typed text)
+    int8_t rec_side;                // forced source of the recording (UI_SIDE_AUTO = detected)
+    int8_t side;                    // translator: source side of the result, UI_SIDE_AUTO until it arrives
+    int floor_x10;                  // speech gate floor of the clip (waveform of a re-run)
+    int16_t *pcm;                   // PSRAM copy of the clip; NULL while it is in the recording buffer, or dropped
+    size_t samples;
+    uint32_t rate;
+    uint32_t lent;                  // a re-run reads pcm until this turn is released: no free before that
+    char *text;                     // typed input
+    char *tr;                       // translator: the translation and its language (reader replay)
+    char tr_lang[8];
+} kept_t;
 
 typedef struct {
     app_state_t st;
@@ -73,17 +94,11 @@ typedef struct {
     uint32_t t_submit, t_result, t_first;
     uint32_t est_upload_ms;
     int upload_pct;
-    // kept for "Не тот язык", "Повторить" and the reader's replay (valid until the next recording)
-    bool clip_ok;
-    int clip_mode;
-    int8_t clip_side;
-    const int16_t *clip_pcm;
-    size_t clip_samples;
-    uint32_t clip_rate;
-    turn_kind_t last_kind;
-    char *last_text;
-    char *last_tr;
-    char last_tr_lang[8];
+    // recent turns for "Не тот язык", "Повторить" and the reader's replay
+    kept_t keep[KEEP_N];
+    int keep_next;                  // slot written next (the oldest)
+    uint32_t buf_tag;               // kept turn whose clip is still in audio_in's recording buffer, 0 = none
+    const int16_t *buf_pcm;         // ... that buffer
     // gate, faults, hints, chat
     vad_result_t gate;
     bool gate_valid;
@@ -133,6 +148,121 @@ static char *ps_strdup(const char *t)
 static const char *loc(const char *ru, const char *en)
 {
     return ui_str_lang() ? en : ru;
+}
+
+// ---- recent turns (kept_t)
+
+static kept_t *kept_find(uint32_t tag)
+{
+    for (int i = 0; tag && i < KEEP_N; i++) {
+        if (s_a.keep[i].tag == tag) {
+            return &s_a.keep[i];
+        }
+    }
+    return NULL;
+}
+
+// The clip of k: its PSRAM copy, or the recording buffer while no recording has started since
+static const int16_t *kept_pcm(const kept_t *k)
+{
+    if (!k || !k->voice) {
+        return NULL;
+    }
+    return k->pcm ? k->pcm : (k->tag == s_a.buf_tag ? s_a.buf_pcm : NULL);
+}
+
+static void kept_drop_pcm(kept_t *k)
+{
+    if (k->pcm && k->lent) {
+        // a re-run may still stream it (never freed under the ai task); the slot lets go of it
+        ESP_LOGW(TAG, "turn %u: clip still lent to turn %u, not freed", (unsigned)k->tag, (unsigned)k->lent);
+    } else {
+        heap_caps_free(k->pcm);
+    }
+    k->pcm = NULL;
+    k->lent = 0;
+}
+
+static void kept_clear(kept_t *k)
+{
+    if (k->tag && k->tag == s_a.buf_tag) {
+        s_a.buf_tag = 0;
+    }
+    kept_drop_pcm(k);
+    free(k->text);
+    free(k->tr);
+    memset(k, 0, sizeof(*k));
+}
+
+// A new record in the oldest slot
+static kept_t *kept_new(uint32_t tag, bool voice)
+{
+    kept_t *k = &s_a.keep[s_a.keep_next];
+    s_a.keep_next = (s_a.keep_next + 1) % KEEP_N;
+    kept_clear(k);
+    k->tag = tag;
+    k->mode = (uint8_t)s_a.mode;
+    k->voice = voice;
+    k->rec_side = k->side = UI_SIDE_AUTO;
+    return k;
+}
+
+static size_t kept_clip_bytes(void)
+{
+    size_t n = 0;
+    for (int i = 0; i < KEEP_N; i++) {
+        n += s_a.keep[i].pcm ? s_a.keep[i].samples * sizeof(int16_t) : 0;
+    }
+    return n;
+}
+
+// Turns up to `turn` were released by the ai task (it runs one request at a time): their clips are free
+static void kept_released(uint32_t turn)
+{
+    for (int i = 0; i < KEEP_N; i++) {
+        if (s_a.keep[i].lent && s_a.keep[i].lent <= turn) {
+            s_a.keep[i].lent = 0;
+        }
+    }
+}
+
+// A new recording overwrites audio_in's buffer: the clip still there is copied out first, so "Не тот язык"
+// and "Повторить" keep working after a press that was not heard, a cancel or a typed turn (ui.md 5.5)
+static void kept_save_buffer(void)
+{
+    kept_t *k = kept_find(s_a.buf_tag);
+    s_a.buf_tag = 0;
+    if (!k || k->pcm || !k->samples) {
+        return;
+    }
+    size_t bytes = k->samples * sizeof(int16_t);
+    // the oldest copies make room first; a copy a re-run still reads stays
+    for (int n = 0; n < KEEP_N && kept_clip_bytes() + bytes > KEEP_CLIP_MAX; n++) {
+        kept_t *old = &s_a.keep[(s_a.keep_next + n) % KEEP_N];
+        if (old != k && old->pcm && !old->lent) {
+            kept_drop_pcm(old);
+        }
+    }
+    if (kept_clip_bytes() + bytes > KEEP_CLIP_MAX ||
+        heap_caps_get_free_size(MALLOC_CAP_SPIRAM) < bytes + KEEP_PSRAM_MIN) {
+        return;                     // too long or no room: that turn can no longer be re-run
+    }
+    k->pcm = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+    if (k->pcm) {
+        memcpy(k->pcm, s_a.buf_pcm, bytes);
+    }
+}
+
+// Newest kept voice turn, or NULL
+static const kept_t *kept_newest_voice(void)
+{
+    for (int n = 1; n <= KEEP_N; n++) {
+        const kept_t *k = &s_a.keep[(s_a.keep_next + KEEP_N - n) % KEEP_N];
+        if (k->tag && k->voice) {
+            return k;
+        }
+    }
+    return NULL;
 }
 
 size_t app_json_esc(char *out, size_t len, const char *in)
@@ -206,7 +336,11 @@ static void publish(void)
     p.text_only = s_a.text_only;
     p.latched = s_a.latched;
     p.ptt_held = s_a.held;
-    p.clip_kept = s_a.clip_ok;
+    p.clip_kept = kept_pcm(kept_newest_voice()) != NULL;
+    for (int i = 0; i < KEEP_N; i++) {
+        p.kept += s_a.keep[i].tag != 0;
+    }
+    p.kept_kb = (uint32_t)(kept_clip_bytes() / 1024);
     p.turn = s_a.turn;
     strlcpy(p.last_err, s_a.last_err, sizeof(p.last_err));
     p.t_rec_ms = s_a.t_rec_ms;
@@ -442,6 +576,9 @@ static void begin_turn(turn_kind_t kind)
     s_a.turn = ai_client_new_turn();
     s_a.kind = kind;
     atomic_store(&s_turn_pub, s_a.turn);
+    if (kind != TURN_REPLAY) {
+        ui_i(UI_SET_TURN, (int32_t)s_a.turn);  // its chat entries (and cards) carry the turn as their tag
+    }
 }
 
 static void finish_turn(ui_state_t ui)
@@ -533,7 +670,7 @@ static void start_recording(int8_t side, uint32_t preroll_ms)
     s_a.t_submit = 0;
     ai_client_prewarm();            // the TLS handshake (2-3 s on the first request) runs while the user speaks
     uint32_t max_ms = (uint32_t)app_cfg_int("max_rec_s", 20) * 1000u;
-    s_a.clip_ok = false;            // this recording overwrites the kept clip
+    kept_save_buffer();             // this recording overwrites the clip still in the buffer
     if (audio_in_start_ex(max_ms, preroll_ms) != ESP_OK) {
         turn_reset();
         show_error("MIC", NULL);
@@ -577,8 +714,10 @@ static void discard_recording(bool notify)
     set_state(APP_IDLE);
 }
 
-// Sends a clip of s_a.turn (new recording or a re-run of the kept one).
-static bool submit_clip(const int16_t *pcm, size_t samples, uint32_t rate, int8_t side, int floor_x10)
+// Sends a clip of s_a.turn: a new recording (from = NULL, pcm is audio_in's buffer) or a re-run of the kept
+// turn `from`, whose clip then belongs to the new turn's entry.
+static bool submit_clip(const int16_t *pcm, size_t samples, uint32_t rate, int8_t side, int floor_x10,
+                        kept_t *from)
 {
     char a[8], b[8];
     tr_langs(a, b);
@@ -596,13 +735,24 @@ static bool submit_clip(const int16_t *pcm, size_t samples, uint32_t rate, int8_
         show_local_error("M0");
         return false;
     }
-    s_a.clip_ok = true;
-    s_a.clip_mode = s_a.mode;
-    s_a.clip_side = side;
-    s_a.clip_pcm = pcm;
-    s_a.clip_samples = samples;
-    s_a.clip_rate = rate;
-    s_a.last_kind = TURN_VOICE;
+    // taken from `from` before a new slot is claimed: that may be from's own slot
+    int16_t *copy = from ? from->pcm : NULL;
+    bool in_buf = from ? from->tag == s_a.buf_tag : true;
+    if (from) {
+        from->pcm = NULL;
+        from->lent = 0;
+    }
+    kept_t *k = kept_new(s_a.turn, true);
+    k->rec_side = side;
+    k->floor_x10 = floor_x10;
+    k->samples = samples;
+    k->rate = rate;
+    k->pcm = copy;
+    k->lent = copy ? s_a.turn : 0;
+    if (in_buf && !copy) {
+        s_a.buf_tag = k->tag;
+        s_a.buf_pcm = pcm;
+    }
     s_a.t_submit = app_now_ms();
     // progress estimate for the orb arc: about 250 KB/s upstream (measured), plus request latency
     s_a.est_upload_ms = 600 + (uint32_t)(or_wav_b64_len(samples) / 256);
@@ -675,7 +825,7 @@ static void send_recording(const char *why)
         show_not_ready(r);
         return;
     }
-    if (!submit_clip(clip.pcm, clip.samples, clip.rate, s_a.rec_side, g.floor_db_x10)) {
+    if (!submit_clip(clip.pcm, clip.samples, clip.rate, s_a.rec_side, g.floor_db_x10, NULL)) {
         turn_reset();
     }
 }
@@ -729,9 +879,8 @@ static void text_turn(char *text)
         show_local_error("M0");
         return;
     }
-    free(s_a.last_text);
-    s_a.last_text = text;
-    s_a.last_kind = TURN_TEXT;
+    kept_t *k = kept_new(s_a.turn, false);
+    k->text = text;                 // the record owns the typed text: a retry card sends it again
     if (s_a.mode == 0) {
         ui_post_text(UI_USER_MSG, UI_SIDE_AUTO, text);
     } else {
@@ -746,55 +895,89 @@ static void text_turn(char *text)
     set_state(APP_THINKING);
 }
 
-static void rerun_clip(int8_t side)
+// The reader / a card acted on chat entry `tag`: what the app did (console log of the bench checks)
+static void entry_event(const char *what, uint32_t tag, const char *result)
 {
-    if (!s_a.clip_ok || s_a.clip_mode != s_a.mode) {
-        ui_toast_id(S_NOT_YET);
-        return;
-    }
+    devcon_event("entry", "\"action\":\"%s\",\"tag\":%u,\"result\":\"%s\"", what, (unsigned)tag, result);
+}
+
+// Re-sends the clip of kept turn k as a new turn, source forced to side (UI_SIDE_AUTO = detect)
+static void rerun_clip(kept_t *k, int8_t side)
+{
     app_abort_all();
     ready_t r = ready();
     if (r != RDY_OK) {
         show_not_ready(r);
         return;
     }
+    const int16_t *pcm = kept_pcm(k);
+    if (!pcm) {
+        ui_toast_id(S_NOT_YET);
+        return;
+    }
     begin_turn(TURN_VOICE);
-    devcon_event("rec", "\"phase\":\"rerun\",\"turn\":%u,\"side\":%d", (unsigned)s_a.turn, side);
-    if (!submit_clip(s_a.clip_pcm, s_a.clip_samples, s_a.clip_rate, side, s_a.gate.floor_db_x10)) {
+    devcon_event("rec", "\"phase\":\"rerun\",\"turn\":%u,\"of\":%u,\"side\":%d", (unsigned)s_a.turn,
+                 (unsigned)k->tag, side);
+    if (!submit_clip(pcm, k->samples, k->rate, side, k->floor_x10, k)) {
         turn_reset();
     }
 }
 
-static void retry_last(void)
+// "Повторить" on the error card of turn tag: that turn's clip or typed text again
+static void retry_turn(uint32_t tag)
 {
     if (!app_quiet()) {
         return;
     }
-    if (s_a.last_kind == TURN_VOICE && s_a.clip_ok && s_a.clip_mode == s_a.mode) {
-        rerun_clip(s_a.clip_side);
-    } else if (s_a.last_kind == TURN_TEXT && s_a.last_text) {
-        char *t = ps_strdup(s_a.last_text);
+    kept_t *k = kept_find(tag);
+    if (k && k->mode == s_a.mode && kept_pcm(k)) {
+        entry_event("retry", tag, "rerun");
+        rerun_clip(k, k->rec_side);
+    } else if (k && k->mode == s_a.mode && !k->voice && k->text) {
+        char *t = ps_strdup(k->text);
         if (t) {
+            entry_event("retry", tag, "text");
             text_turn(t);
         }
     } else {
-        ui_toast_id(S_NOT_YET);
+        entry_event("retry", tag, "not_kept");
+        ui_toast_id(S_NOT_YET);     // older than the kept turns, or its clip was overwritten
     }
 }
 
-static void replay(void)
+// RD "Не тот язык" on the entry of turn tag: its clip again with the other source forced (ui.md 5.5)
+static void wrong_lang(uint32_t tag)
 {
-    if (!app_quiet() || !s_a.last_tr) {
+    kept_t *k = kept_find(tag);
+    if (s_a.mode != 1 || !k || k->mode != 1 || !kept_pcm(k)) {
+        // a typed turn (no clip), one older than the kept turns, or one whose clip was dropped
+        entry_event("wrong_lang", tag, k && !k->voice ? "typed" : "not_kept");
+        ui_toast_id(S_NOT_YET);
+        return;
+    }
+    entry_event("wrong_lang", tag, "rerun");
+    ui_i(UI_GOTO, UI_SCR_HOME);
+    rerun_clip(k, k->side == UI_SIDE_A ? UI_SIDE_B : UI_SIDE_A);
+}
+
+// RD replay: the translation of the entry shown (turn tag), not the newest one
+static void replay(uint32_t tag)
+{
+    const kept_t *k = kept_find(tag);
+    if (!app_quiet() || !k || !k->tr) {
+        entry_event("replay", tag, k && k->tr ? "busy" : "not_kept");
         ui_toast_id(S_NOT_YET);
         return;
     }
     if (app_cfg_int("volume", 60) == 0) {
+        entry_event("replay", tag, "volume_0");
         ui_toast_id(S_E_SPK);
         return;
     }
+    entry_event("replay", tag, "speak");
     app_abort_all();
     begin_turn(TURN_REPLAY);
-    if (tts_client_speak(s_a.turn, s_a.last_tr, s_a.last_tr_lang) != ESP_OK) {
+    if (tts_client_speak(s_a.turn, k->tr, k->tr_lang) != ESP_OK) {
         turn_reset();
         return;
     }
@@ -835,6 +1018,10 @@ static void on_result(app_result_t *r)
         tr_langs(a, b);
         side = !strcmp(r->src_lang, a) ? UI_SIDE_A : UI_SIDE_B;    // "other" is translated into A
     }
+    kept_t *k = kept_find(s_a.turn);
+    if (k) {
+        k->side = (int8_t)side;
+    }
     if (s_a.placeholder) {
         ui_post_text(UI_USER_MSG, side, r->transcript[0] ? r->transcript : TXT_ELLIPSIS);
         s_a.placeholder = false;
@@ -873,10 +1060,10 @@ static void on_result(app_result_t *r)
     free(s_a.reply);
     s_a.reply = show ? show : ps_strdup(r->text);
     s_a.revealed = false;
-    if (s_a.mode == 1) {
-        free(s_a.last_tr);
-        s_a.last_tr = ps_strdup(r->text);
-        strlcpy(s_a.last_tr_lang, r->tts_lang[0] ? r->tts_lang : r->lang, sizeof(s_a.last_tr_lang));
+    if (s_a.mode == 1 && k) {
+        free(k->tr);
+        k->tr = ps_strdup(r->text);
+        strlcpy(k->tr_lang, r->tts_lang[0] ? r->tts_lang : r->lang, sizeof(k->tr_lang));
     }
     if (voice_on() && r->tts_lang[0] && tts_client_speak(s_a.turn, r->text, r->tts_lang) == ESP_OK) {
         s_a.want_tts = true;        // the text appears with its audio (ui.md 5.4)
@@ -1192,20 +1379,17 @@ static void on_ui(ui_input_t ev, int32_t arg)
 {
     switch (ev) {
     case UI_IN_NEW_CHAT: new_chat(); break;
-    case UI_IN_CARD_ACTION:
-        if (arg == UI_CARD_SERVER || arg == UI_CARD_TLS) {
-            retry_last();           // "Повторить" re-sends the kept clip or text
+    case UI_IN_CARD_ACTION: {
+        int card = (int)(arg & 0xFF);
+        if (card == UI_CARD_SERVER || card == UI_CARD_TLS) {
+            retry_turn((uint32_t)arg >> 8);    // "Повторить" re-sends the clip or text of the card's own turn
         } else {
-            ui_toast_id(S_NOT_YET); // the fixing screens (W, Q, P, AI, D) come with the settings UI
+            ui_toast_id(S_NOT_YET); // routing cards open their screen in the UI
         }
         break;
-    case UI_IN_WRONG_LANG:
-        ui_i(UI_GOTO, UI_SCR_HOME);
-        if (s_a.mode == 1) {
-            rerun_clip((int8_t)arg);
-        }
-        break;
-    case UI_IN_REPLAY: replay(); break;
+    }
+    case UI_IN_WRONG_LANG: wrong_lang((uint32_t)arg); break;
+    case UI_IN_REPLAY: replay((uint32_t)arg); break;
     case UI_IN_OPEN:
         if (arg == UI_OPEN_MODE_SHEET) {
             set_mode(!s_a.mode, false);     // no mode sheet (M) yet: the pill switches the mode
@@ -1284,8 +1468,9 @@ static void handle(app_evt_t *e)
         }
         break;
     case EV_AI_RELEASED:
-        // the clip's audio is no longer read (one recording buffer: nothing to hand back)
+        // the clip's audio is no longer read: a kept copy it used may be freed again
         devcon_event("ai", "\"turn\":%u,\"phase\":\"released\"", (unsigned)e->turn);
+        kept_released(e->turn);
         break;
     case EV_TTS_FIRST_AUDIO:
         if (mine && s_a.want_tts && !s_a.tts_first) {

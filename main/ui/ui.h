@@ -42,6 +42,8 @@ typedef enum {
     UI_WAKE,            // leave dim / ambient / screen off (ui.md 5.8); also posted by ui_boot_down / ui_pwr_short
     UI_SCREEN_OFF,      // screen off now (PWR at H idle): backlight 0 until the next touch or button
     UI_WORK_DONE,       // internal (ui_work.c): s = finished background job, its done callback runs in taskLVGL
+    UI_SET_TURN,        // i = app turn tag: chat entries created from now on carry it (cm_entry_t.tag); the reader
+                        // and the card actions send it back, so the app acts on the turn shown
     UI_MSG__N
 } ui_msg_type_t;
 
@@ -113,9 +115,9 @@ typedef enum {
     UI_IN_PTT_CANCEL,   // released beyond the cancel radius (discard)
     UI_IN_TEXT_ONLY,    // voice button: i = new text_only value
     UI_IN_NEW_CHAT,     // "Новый разговор" (history and model context reset)
-    UI_IN_CARD_ACTION,  // i = ui_card_t whose action stadium was tapped
-    UI_IN_WRONG_LANG,   // reader: re-send the cached clip, i = forced source side
-    UI_IN_REPLAY,       // reader: speak the translation again
+    UI_IN_CARD_ACTION,  // retry stadium tapped: i = ui_card_t in bits 0-7, the card's turn tag (UI_SET_TURN) above
+    UI_IN_WRONG_LANG,   // reader: re-send that turn's clip with the other source forced; i = the entry's turn tag
+    UI_IN_REPLAY,       // reader: speak that turn's translation again; i = the entry's turn tag
     UI_IN_OPEN,         // no longer emitted: the UI opens these screens itself (ui_open_t kept for ui_open())
     UI_IN_DISMISS,      // error orb tapped
 
