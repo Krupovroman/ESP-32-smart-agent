@@ -480,10 +480,11 @@ static void draw_charge(lv_layer_t *layer)
         } k_part[PART_N] = { { -30, 4, 0 },    { 12, 5, 257 },  { -9, 3, 514 },   { 27, 4, 771 },
                              { -19, 5, 1028 }, { 3, 4, 1285 },  { 20, 3, 1542 } };
         lv_color_t pc = whiten(top, 64);
+        int32_t fade_in = LV_CLAMP(0, (s_anim_t - CHG_RISE_MS) * 255 / 400, 255);   // none pops in mid-life
         for (int i = 0; i < PART_N; i++) {
             int32_t ph = (s_anim_t + k_part[i].ofs) % PART_LIFE_MS;
             float u = (float)ph / PART_LIFE_MS;
-            int32_t a = lv_trigo_sin((int16_t)(180 * ph / PART_LIFE_MS)) * s_content / 32767;
+            int32_t a = lv_trigo_sin((int16_t)(180 * ph / PART_LIFE_MS)) * s_content / 32767 * fade_in / 255;
             if (a <= 8) {
                 continue;
             }
