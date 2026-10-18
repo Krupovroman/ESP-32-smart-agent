@@ -103,6 +103,12 @@ static void ui_in(ui_input_t ev, int32_t i)
     pump();
 }
 
+// UI_IN_CARD_ACTION argument of a card stamped with turn tag
+static int32_t card_arg(int card, uint32_t tag)
+{
+    return (int32_t)((tag << 8) | (uint32_t)card);
+}
+
 static void btn(board_btn_t b, board_btn_ev_t ev, uint32_t held)
 {
     btn_cb(b, ev, held, NULL);      // the real button callback
@@ -532,12 +538,15 @@ static void t_cancel(void)
     emit_error(AI_EV_ERROR, turn, "N2", "late");
     pump();
     CHECK(strstr(ev_last("ai"), "\"phase\":\"released\"") && g_nui == nui && s_a.st == APP_IDLE);
-    // PWR at H idle: screen off; BOOT wakes and talks at once
+    // PWR at H idle: screen off, and the UI's SLEEP(3) report does not light it again (flow-1); BOOT wakes and
+    // talks at once
     btn(BOARD_BTN_PWR, BTN_EV_DOWN, 0);
     btn(BOARD_BTN_PWR, BTN_EV_CLICK, 100);
-    CHECK(app_io_screen() == APP_SCREEN_OFF && g_backlight == 0);
+    int off_at = ui_index(UI_SCREEN_OFF, 0);
+    step(1000);
+    CHECK(app_io_screen() == APP_SCREEN_OFF && g_ui_level == 3 && off_at >= 0 && ui_index(UI_WAKE, off_at) < 0);
     btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
-    CHECK(app_io_screen() == APP_SCREEN_ON && g_backlight == 80 && s_a.st == APP_LISTENING);
+    CHECK(app_io_screen() == APP_SCREEN_ON && g_ui_level == 0 && s_a.st == APP_LISTENING);
     btn(BOARD_BTN_BOOT, BTN_EV_UP, 60);
     post_ev(EV_CANCEL, 0, 0);
     // a touch on the dark screen only wakes it
@@ -582,7 +591,7 @@ static void t_errors(void)
     pump();
     CHECK(ui_last(UI_ERROR)->i == UI_CARD_SERVER);
     int n = g_nsub;
-    ui_in(UI_IN_CARD_ACTION, UI_CARD_SERVER);
+    ui_in(UI_IN_CARD_ACTION, card_arg(UI_CARD_SERVER, turn));
     CHECK(g_nsub == n + 1 && g_sub[n].pcm == g_rec && s_a.st == APP_UPLOADING && s_a.turn != turn);
     // unheard result (P4): no bot bubble, "Не расслышал"
     emit_result(s_a.turn, AI_MODE_ASSISTANT, "", "", "ru", "", "", true);
@@ -598,14 +607,19 @@ static void t_errors(void)
     post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_BOOT);
     post_ev(EV_PTT_UP, 100, APP_SRC_BOOT);
     CHECK(ui_count(UI_ERROR) == cards + 1 && last_state_is(UI_ST_ERROR));
-    // no key
+    // no key (ux-10): its own card (with "Ввести ключ") and "Нет ключа" in the pill, not "Ключ не принят"
     g_net_state = NET_UP;
     step(600);
     set_str("ai_key", "");
     step(25000);
     post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_BOOT);
-    CHECK(ui_last(UI_ERROR)->i == UI_CARD_GENERIC && ui_last(UI_SET_FAULT)->i == UI_FAULT_BAD_KEY);
+    CHECK(ui_last(UI_ERROR)->i == UI_CARD_NO_KEY && !ui_last(UI_ERROR)->has_s);
+    CHECK(ui_last(UI_SET_FAULT)->i == UI_FAULT_NO_KEY);
     post_ev(EV_PTT_UP, 100, APP_SRC_BOOT);
+    set_str("ai_key", "sk-or-v1-test");
+    on_setting_cb("ai_key", NULL);
+    pump();
+    CHECK(ui_last(UI_SET_FAULT)->i == UI_FAULT_NONE);
     // Wi-Fi drops while thinking
     boot();
     say(1000);
@@ -620,6 +634,76 @@ static void t_errors(void)
     say(1000);
     step(76000);
     CHECK(s_a.st == APP_ERROR && !strcmp(s_a.last_err, "N8"));
+}
+
+static void t_cards(void)
+{
+    printf("t_cards\n");
+    // flow-7: two different errors of one card type within 20 s each get their own card and reason
+    boot();
+    say(1000);
+    emit_error(AI_EV_ERROR, s_a.turn, "413", "Запись слишком длинная. Говорите короче.");
+    pump();
+    say(1000);
+    emit_error(AI_EV_ERROR, s_a.turn, "P5", "ИИ отказался отвечать на этот запрос.");
+    pump();
+    CHECK(ui_count(UI_ERROR) == 2 && !strcmp(ui_last(UI_ERROR)->s, "ИИ отказался отвечать на этот запрос."));
+    // the same error again soon: the orb and status only ...
+    say(1000);
+    emit_error(AI_EV_ERROR, s_a.turn, "P5", "ИИ отказался отвечать на этот запрос.");
+    pump();
+    CHECK(ui_count(UI_ERROR) == 2 && s_a.st == APP_ERROR && last_state_is(UI_ST_ERROR));
+    // ... but in an emptied chat ("Новый разговор" goes to H) it gets its card again
+    ui_in(UI_IN_NEW_CHAT, 0);
+    CHECK(ui_last(UI_GOTO)->i == UI_SCR_HOME && ui_count(UI_CLEAR) == 1);
+    say(1000);
+    emit_error(AI_EV_ERROR, s_a.turn, "P5", "ИИ отказался отвечать на этот запрос.");
+    pump();
+    CHECK(ui_count(UI_ERROR) == 3);
+    // ux-12: history deleted in S -> История: the app does not take the user to H
+    int gotos = ui_count(UI_GOTO), hc = g_hist_clear;
+    ui_in(UI_IN_NEW_CHAT, 1);
+    CHECK(ui_count(UI_GOTO) == gotos && ui_count(UI_CLEAR) == 1 && g_hist_clear == hc + 1 && !s_a.chat_used[0]);
+    // a retry card re-sends its own turn; an older one whose clip is gone is refused, nothing else is sent
+    say(1000);
+    uint32_t failed = s_a.turn;
+    emit_error(AI_EV_ERROR, failed, "N6", "Нет ответа от ИИ. Попробуйте ещё раз.");
+    pump();
+    int n = g_nsub;
+    ui_in(UI_IN_CARD_ACTION, card_arg(UI_CARD_SERVER, failed));
+    CHECK(g_nsub == n + 1 && g_sub[n].pcm == g_rec && strstr(ev_last("entry"), "\"result\":\"rerun\""));
+    post_ev(EV_CANCEL, 0, 0);
+    ui_in(UI_IN_CARD_ACTION, card_arg(UI_CARD_SERVER, 99999));
+    CHECK(g_nsub == n + 1 && ui_last(UI_TOAST)->i == S_NOT_YET);
+    // ux-09: with the English UI the card body is English
+    g_ui_lang = 1;
+    step(4100);
+    say(1000);
+    emit_error(AI_EV_ERROR, s_a.turn, "N2", "Сервер недоступен. Попробуйте позже.");
+    pump();
+    CHECK(!strcmp(ui_last(UI_ERROR)->s, "Server unavailable. Try again later."));
+    g_ui_lang = 0;
+    // flow-8: D -> "Показать подсказки" resets the app's counter, which then counts down again
+    boot();
+    for (int i = 0; i < 3; i++) {
+        say(1000);
+        emit_result(s_a.turn, AI_MODE_ASSISTANT, "a", "b", "ru", "", "ru", false);
+        pump();
+    }
+    CHECK(s_a.hints == 0 && ui_last(UI_SET_HINTS)->i == 0);
+    ui_in(UI_IN_HINTS, 3);
+    CHECK(s_a.hints == 3 && ui_last(UI_SET_HINTS)->i == 3);
+    say(1000);
+    emit_result(s_a.turn, AI_MODE_ASSISTANT, "a", "b", "ru", "", "ru", false);
+    pump();
+    CHECK(ui_last(UI_SET_HINTS)->i == 2);
+    // ux-14: voice switched on with volume 0 says so
+    ui_in(UI_IN_TEXT_ONLY, 0);
+    set_int("volume", 0);
+    ui_in(UI_IN_TEXT_ONLY, 1);
+    ui_in(UI_IN_TEXT_ONLY, 0);
+    CHECK(ui_last(UI_TOAST)->has_s && !strcmp(ui_last(UI_TOAST)->s, "Громкость 0"));
+    set_int("volume", 60);
 }
 
 static void t_translator(void)
@@ -638,6 +722,10 @@ static void t_translator(void)
     audio(200, 0);
     ui_in(UI_IN_PTT_UP, 1600);
     CHECK(s_a.st == APP_UPLOADING && g_nsub == 1 && g_sub[0].mode == AI_MODE_TRANSLATOR && !strcmp(g_sub[0].src, "ru"));
+    // its chat entries carry the turn as their tag (the placeholder bubble is posted after the tag)
+    uint32_t t1 = s_a.turn;
+    size_t ns1 = g_sub[0].samples;
+    CHECK(ui_last(UI_SET_TURN)->i == (int32_t)t1 && ui_index(UI_SET_TURN, 0) < ui_index(UI_USER_MSG, 0));
     emit_result(s_a.turn, AI_MODE_TRANSLATOR, "Доброе утро", "Good morning", "en", "ru", "en", false);
     pump();
     const ui_rec_t *u = ui_last(UI_USER_MSG);
@@ -652,37 +740,82 @@ static void t_translator(void)
     CHECK(s_a.st == APP_UPLOADING && g_sub[g_nsub - 1].src[0] == 0);
     ui_in(UI_IN_PTT_UP, 2700);
     CHECK(s_a.st == APP_UPLOADING);
+    uint32_t t2 = s_a.turn;
     emit_result(s_a.turn, AI_MODE_TRANSLATOR, "Where is the station?", "Где вокзал?", "ru", "en", "ru", false);
     pump();
     CHECK(ui_last(UI_USER_MSG)->i == UI_SIDE_B);
-    // "Не тот язык": the kept clip again with the other source
+    // "Не тот язык" on turn 2: its clip (still in the recording buffer) again with the other source
     const int16_t *pcm = g_sub[g_nsub - 1].pcm;
     size_t ns = g_sub[g_nsub - 1].samples;
-    ui_in(UI_IN_WRONG_LANG, UI_SIDE_A);
+    ui_in(UI_IN_WRONG_LANG, (int32_t)t2);
     CHECK(ui_last(UI_GOTO)->i == UI_SCR_HOME && g_sub[g_nsub - 1].pcm == pcm && g_sub[g_nsub - 1].samples == ns);
     CHECK(!strcmp(g_sub[g_nsub - 1].src, "ru") && s_a.st == APP_UPLOADING);
+    CHECK(strstr(ev_last("entry"), "\"action\":\"wrong_lang\"") && strstr(ev_last("entry"), "\"result\":\"rerun\""));
+    uint32_t t3 = s_a.turn;
     emit_result(s_a.turn, AI_MODE_TRANSLATOR, "Where", "Где", "en", "ru", "en", false);
     pump();
-    // replay of the last translation (voice off is no obstacle: it is an explicit tap)
-    ui_in(UI_IN_REPLAY, 0);
+    // replay of that translation (voice off is no obstacle: it is an explicit tap)
+    ui_in(UI_IN_REPLAY, (int32_t)t3);
     CHECK(g_nspeak == 1 && !strcmp(g_speak[0].text, "Где") && !strcmp(g_speak[0].lang, "en"));
     emit_simple(AI_EV_TTS_FIRST_AUDIO, s_a.turn, 500);
     emit_simple(AI_EV_TTS_DONE, s_a.turn, 1);
     pump();
     step(40);
     CHECK(s_a.st == APP_IDLE);
+    // flow-6: replay in the reader on turn 1 speaks turn 1's translation, not the newest one
+    ui_in(UI_IN_REPLAY, (int32_t)t1);
+    CHECK(g_nspeak == 2 && !strcmp(g_speak[1].text, "Good morning") && !strcmp(g_speak[1].lang, "en"));
+    emit_simple(AI_EV_TTS_FIRST_AUDIO, s_a.turn, 500);
+    emit_simple(AI_EV_TTS_DONE, s_a.turn, 1);
+    pump();
+    step(40);
+    // flow-5: "Не тот язык" on turn 1 re-sends turn 1's clip (copied out when turn 2 recorded), forced to B
+    int n = g_nsub;
+    ui_in(UI_IN_WRONG_LANG, (int32_t)t1);
+    CHECK(g_nsub == n + 1 && g_sub[n].pcm != g_rec && g_sub[n].samples == ns1 && !strcmp(g_sub[n].src, "en"));
+    const kept_t *k5 = kept_find(s_a.turn);
+    CHECK(s_a.st == APP_UPLOADING && k5 && k5->pcm == g_sub[n].pcm && k5->lent == s_a.turn && !kept_find(t1)->pcm);
+    emit_simple(AI_EV_RELEASED, s_a.turn, 0);
+    pump();
+    CHECK(k5->lent == 0);
+    emit_result(s_a.turn, AI_MODE_TRANSLATOR, "Good morning", "Доброе утро", "ru", "en", "ru", false);
+    pump();
     // other language with tr_other unset (0): translated into A and shown
     say(1000);
+    uint32_t t6 = s_a.turn;
     emit_result(s_a.turn, AI_MODE_TRANSLATOR, "Guten Morgen", "Доброе утро", "ru", "other", "ru", false);
     pump();
     CHECK(!strcmp(ui_last(UI_BOT_MSG)->s, "Доброе утро") && ui_last(UI_USER_MSG)->i == UI_SIDE_B);
-    // a recording overwrites the kept clip: no re-run after it
+    // ux-06: a recording that is cancelled (or not heard) no longer loses that clip
     post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_ORB);
     post_ev(EV_CANCEL, 0, 0);
     post_ev(EV_PTT_UP, 100, APP_SRC_ORB);
-    int n = g_nsub;
-    ui_in(UI_IN_WRONG_LANG, UI_SIDE_A);
-    CHECK(g_nsub == n && ui_last(UI_TOAST)->i == S_NOT_YET);
+    n = g_nsub;
+    ui_in(UI_IN_WRONG_LANG, (int32_t)t6);
+    CHECK(g_nsub == n + 1 && g_sub[n].pcm != g_rec && !strcmp(g_sub[n].src, "ru"));
+    emit_result(s_a.turn, AI_MODE_TRANSLATOR, "Guten Morgen", "Доброе утро", "ru", "ru", "ru", false);
+    pump();
+    // a typed turn has no clip: "Не тот язык" on it re-sends nothing (no older clip instead)
+    char *t = malloc(32);
+    strcpy(t, "Привет");
+    app_evt_t te = { .type = EV_TEXT_SUBMIT, .p = t };
+    app_post(&te, 0);
+    pump();
+    uint32_t tt = s_a.turn;
+    emit_result(s_a.turn, AI_MODE_TRANSLATOR, "Привет", "Hello", "en", "ru", "en", false);
+    pump();
+    n = g_nsub;
+    ui_in(UI_IN_WRONG_LANG, (int32_t)tt);
+    CHECK(g_nsub == n && ui_last(UI_TOAST)->i == S_NOT_YET && strstr(ev_last("entry"), "typed"));
+    // an entry the app no longer keeps: nothing
+    ui_in(UI_IN_WRONG_LANG, 0);
+    ui_in(UI_IN_REPLAY, 0);
+    CHECK(g_nsub == n && g_nspeak == 2);
+    // ux-14: replay with volume 0 says so, not "Нет динамика"
+    set_int("volume", 0);
+    ui_in(UI_IN_REPLAY, (int32_t)tt);
+    CHECK(g_nspeak == 2 && ui_last(UI_TOAST)->has_s && !strcmp(ui_last(UI_TOAST)->s, "Громкость 0"));
+    set_int("volume", 60);
     // back to the assistant from the console: saved at once
     post_ev(EV_SET_MODE, 0, 1);
     CHECK(s_a.mode == 0 && settings_get_int("mode") == 0);
@@ -729,15 +862,30 @@ static void t_power(void)
     boot();
     btn(BOARD_BTN_PWR, BTN_EV_DOWN, 0);
     btn(BOARD_BTN_PWR, BTN_EV_LONG, 3000);
-    CHECK(g_power_off == 1 && ev_count("power_off") == 1 && app_io_screen() == APP_SCREEN_OFF);
+    // flow-2: the UI is told (screen off, level 3); it owns the backlight again
+    CHECK(g_power_off == 1 && ev_count("power_off") == 1 && app_io_screen() == APP_SCREEN_OFF && g_ui_level == 3);
+    g_inactive_ms = 50;                 // concurrency-3: LVGL activity the UI made itself is no input
     step(600);                          // still running: USB power
-    CHECK(app_io_screen() == APP_SCREEN_ON && ui_last(UI_TOAST)->i == S_USB_POWER);
+    // the note is visible (backlight up) while the UI stays at screen off: the latch stays released
+    CHECK(app_io_screen() == APP_SCREEN_OFF && ui_last(UI_TOAST)->i == S_USB_POWER && g_backlight == 80);
+    CHECK(g_latch_on == 0 && g_ui_level == 3);
     step(2100);
-    CHECK(app_io_screen() == APP_SCREEN_OFF);
+    CHECK(app_io_screen() == APP_SCREEN_OFF && g_backlight == 0 && g_latch_on == 0);
+    g_inactive_ms = 100000;
     btn(BOARD_BTN_PWR, BTN_EV_UP, 3200);
     btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
-    CHECK(g_latch_on == 1 && app_io_screen() == APP_SCREEN_ON && s_a.st == APP_LISTENING);
+    CHECK(g_latch_on == 1 && app_io_screen() == APP_SCREEN_ON && g_ui_level == 0 && s_a.st == APP_LISTENING);
     btn(BOARD_BTN_BOOT, BTN_EV_UP, 3000);
+    // a touch on the dark screen after a power off on USB (the UI's wake catcher) uses the device again
+    boot();
+    btn(BOARD_BTN_PWR, BTN_EV_DOWN, 0);
+    btn(BOARD_BTN_PWR, BTN_EV_LONG, 3000);
+    btn(BOARD_BTN_PWR, BTN_EV_UP, 3100);
+    step(3000);
+    CHECK(g_latch_on == 0 && app_io_screen() == APP_SCREEN_OFF);
+    ui_sleep_to(0);
+    pump();
+    CHECK(g_latch_on == 1 && app_io_screen() == APP_SCREEN_ON && strstr(ev_last("power_latch"), "\"on\":1"));
     // on battery the held key powers the board until it is released: no "USB" note while it is held
     boot();
     g_pwr_held = true;
@@ -748,35 +896,33 @@ static void t_power(void)
     g_pwr_held = false;                 // released and still alive: USB
     btn(BOARD_BTN_PWR, BTN_EV_UP, 4500);
     step(400);
-    CHECK(app_io_screen() == APP_SCREEN_OFF);
-    step(200);
-    CHECK(app_io_screen() == APP_SCREEN_ON && ui_last(UI_TOAST)->i == S_USB_POWER);
-    step(2100);
-    CHECK(app_io_screen() == APP_SCREEN_OFF);
-    // dim after dim_s, off 300 s later; any input wakes
-    boot();
-    step(59000);
-    CHECK(app_io_screen() == APP_SCREEN_ON);
-    step(1100);
-    CHECK(app_io_screen() == APP_SCREEN_DIM && g_backlight == 25);
-    step(300000);
     CHECK(app_io_screen() == APP_SCREEN_OFF && g_backlight == 0);
-    g_inactive_ms = 50;                 // a touch
+    step(200);
+    CHECK(ui_last(UI_TOAST)->i == S_USB_POWER && g_backlight == 80 && g_ui_level == 3);
+    step(2100);
+    CHECK(app_io_screen() == APP_SCREEN_OFF && g_backlight == 0 && g_latch_on == 0);
+    // flow-1 / concurrency-2: the UI dims by itself; its SLEEP report is no activity and never wakes it
+    boot();
+    int wakes = ui_count(UI_WAKE);
+    ui_sleep_to(1);
+    step(3000);
+    CHECK(app_io_screen() == APP_SCREEN_DIM && g_ui_level == 1 && ui_count(UI_WAKE) == wakes);
+    ui_sleep_to(2);
+    ui_sleep_to(3);
+    step(3000);
+    CHECK(app_io_screen() == APP_SCREEN_OFF && g_ui_level == 3 && ui_count(UI_WAKE) == wakes);
+    // a finger on the panel is input (the UI's catcher has woken it already)
+    g_touch_down = true;
     step(220);
-    CHECK(app_io_screen() == APP_SCREEN_ON && g_backlight == 80);
-    g_inactive_ms = 100000;
-    // a turn keeps the screen awake
-    say(1000);
-    step(70000);
-    CHECK(app_io_screen() == APP_SCREEN_ON);
-    // "set dim_s 0" on a dimmed screen lights it, and it then stays on
-    post_ev(EV_CANCEL, 0, 0);
-    step(61000);
+    g_touch_down = false;
+    CHECK(app_io_screen() == APP_SCREEN_ON && g_ui_level == 0);
+    // "set dim_s 0" on a dimmed screen lights it
+    ui_sleep_to(1);
+    pump();
     CHECK(app_io_screen() == APP_SCREEN_DIM);
     settings_set_int("dim_s", 0);
     pump();
-    step(400000);
-    CHECK(app_io_screen() == APP_SCREEN_ON && g_backlight == 80);
+    CHECK(app_io_screen() == APP_SCREEN_ON && g_ui_level == 0);
     settings_set_int("dim_s", 60);
     pump();
     // battery: toast at 10 %
@@ -814,11 +960,64 @@ static void t_misc(void)
     CHECK(ui_count(UI_DIVIDER) == 0 && s_a.st == APP_LISTENING);
     post_ev(EV_CANCEL, 0, 0);
     btn(BOARD_BTN_BOOT, BTN_EV_UP, 100);
-    step(10 * 60000 + 100);
-    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
-    CHECK(ui_count(UI_DIVIDER) == 1 && g_hist_clear == hc + 1);
-    btn(BOARD_BTN_BOOT, BTN_EV_UP, 100);
+    // flow-9: a press that was cancelled (or not heard) is no exchange: the idle time still counts from the
+    // answer, as the AI client's history does; the divider comes with the request, before it is sent
+    step(60000 + 100);
+    say(1000);
+    CHECK(ui_count(UI_DIVIDER) == 1 && g_hist_clear == hc + 1 && s_a.st == APP_UPLOADING);
+    CHECK(ui_index(UI_DIVIDER, 0) < ui_index(UI_USER_MSG, ui_index(UI_DIVIDER, 0)));
+    emit_result(s_a.turn, AI_MODE_ASSISTANT, "c", "d", "ru", "", "ru", false);
+    pump();
+    // right after an answer: no divider
+    say(1000);
+    CHECK(ui_count(UI_DIVIDER) == 1);
     post_ev(EV_CANCEL, 0, 0);
+
+    // flow-4: BOOT on the phone-setup screen goes home and records once the portal has stopped
+    boot();
+    g_portal = true;
+    step(600);
+    g_ui_ctx = UI_CTX_QR;
+    g_boot_down = true;
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    CHECK(s_a.st == APP_IDLE && s_a.portal_wait && ui_count(UI_ERROR) == 0 && g_rec_starts == 0);
+    g_ui_ctx = UI_CTX_HOME;             // the UI went home; Q's delete stops the portal on its worker
+    step(300);
+    CHECK(s_a.st == APP_IDLE && ui_count(UI_ERROR) == 0);
+    g_portal = false;
+    step(40);
+    CHECK(s_a.st == APP_LISTENING && !s_a.latched && g_preroll == 500 && ui_count(UI_ERROR) == 0);
+    audio(1000, 1);
+    audio(200, 0);
+    g_boot_down = false;
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 1600);
+    CHECK(s_a.st == APP_UPLOADING && strstr(ev_last("rec"), "\"why\":\"release\""));
+    post_ev(EV_CANCEL, 0, 0);
+    // a tap there: released before the portal is down, so a latched recording
+    g_portal = true;
+    step(600);
+    g_ui_ctx = UI_CTX_QR;
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    g_ui_ctx = UI_CTX_HOME;
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 90);
+    step(100);
+    g_portal = false;
+    step(40);
+    CHECK(s_a.st == APP_LISTENING && s_a.latched && last_state_is(UI_ST_REC_LATCHED));
+    post_ev(EV_CANCEL, 0, 0);
+    // the portal never stops: the error after 5 s
+    g_portal = true;
+    step(600);
+    g_ui_ctx = UI_CTX_QR;
+    g_boot_down = true;
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    g_ui_ctx = UI_CTX_HOME;
+    step(5100);
+    CHECK(s_a.st == APP_ERROR && !s_a.portal_wait && strstr(ui_last(UI_ERROR)->s, "Закройте"));
+    g_boot_down = false;
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 5100);
+    g_portal = false;
+    step(4600);
 
     // the portal blocks turns and ends a running one
     boot();
@@ -902,6 +1101,7 @@ int main(void)
     t_barge();
     t_cancel();
     t_errors();
+    t_cards();
     t_translator();
     t_text();
     t_power();

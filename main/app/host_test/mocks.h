@@ -20,7 +20,12 @@ extern int g_ui_ctx;            // ui_context()
 extern bool g_boot_ok;          // ui_boot_down()
 extern int g_pwr_short, g_pwr_down, g_pwr_up;
 extern uint32_t g_inactive_ms;  // lv_display_get_inactive_time()
+extern bool g_touch_down;       // the pointer device reads pressed
 extern int g_wait_release;
+extern int g_ui_level;          // ui_sleep.c level: UI_WAKE / UI_GOTO -> 0, UI_SCREEN_OFF -> 3, reported as UI_IN_SLEEP
+// The UI's own idle timer (or its wake catcher) changes the sleep level and reports it
+void ui_sleep_to(int level);
+extern int g_ui_lang;           // ui_str_lang(): 0 Russian, 1 English
 int ui_count(int type);
 const ui_rec_t *ui_last(int type);
 // index of the first record of type at or after from, -1 if none
