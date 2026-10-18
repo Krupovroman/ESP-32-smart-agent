@@ -35,6 +35,7 @@ static const char *TAG = "app";
 #define TICK_FAST_MS    20          // recording or a press pending: live speech detection, 400 ms hold
 #define TICK_MS         100
 #define CARD_REPEAT_MS  20000       // the same error card again within this time: orb and status only
+#define PORTAL_WAIT_MS  5000        // BOOT on Q: the portal stops once Q is deleted (UI worker)
 
 typedef enum { TURN_NONE, TURN_VOICE, TURN_TEXT, TURN_REPLAY } turn_kind_t;
 
@@ -57,6 +58,7 @@ typedef struct {
     bool pending;                   // pressed while busy: becomes a recording if still held at APP_TAP_MS
     uint32_t pending_preroll;       // pre-roll of that recording
     bool boot_ignored;              // the UI context ignored BOOT: swallow its release as well
+    bool portal_wait;               // BOOT on Q: records once the portal has stopped (ui.md 2.3)
     // recording
     bool latched, rec_vad;
     int8_t rec_side;                // forced translator source of this recording, UI_SIDE_AUTO = detect
@@ -252,7 +254,7 @@ bool app_started(void)
 
 bool app_quiet(void)
 {
-    return (s_a.st == APP_IDLE || s_a.st == APP_ERROR) && !s_a.held && !s_a.pending;
+    return (s_a.st == APP_IDLE || s_a.st == APP_ERROR) && !s_a.held && !s_a.pending && !s_a.portal_wait;
 }
 
 static void set_state(app_state_t st)
@@ -936,7 +938,8 @@ static void turn_timeout(void)
 // Ends what runs: false when there was nothing (IDLE).
 static bool cancel_any(bool notify)
 {
-    s_a.pending = false;
+    bool waited = s_a.portal_wait;  // a BOOT press waiting for the portal to stop
+    s_a.pending = s_a.portal_wait = false;
     switch (s_a.st) {
     case APP_LISTENING:
         discard_recording(notify);
@@ -964,7 +967,7 @@ static bool cancel_any(bool notify)
         set_state(APP_IDLE);
         return true;
     default:
-        return false;
+        return waited;
     }
 }
 
@@ -996,7 +999,9 @@ void app_ptt_down(int8_t side, app_src_t src)
     if (woke && (src == APP_SRC_ORB || src == APP_SRC_CHIP)) {
         return;                     // the touch that wakes the screen is swallowed
     }
+    bool from_qr = false;
     if (src == APP_SRC_BOOT) {
+        from_qr = ui_context() == UI_CTX_QR || s_a.portal_wait;   // (a second press while waiting too)
         s_a.boot_ignored = !ui_boot_down();     // keyboard, dialog or onboarding: BOOT does nothing there
         if (s_a.boot_ignored) {
             return;
@@ -1011,10 +1016,17 @@ void app_ptt_down(int8_t side, app_src_t src)
     s_a.press_t = app_now_ms();
     s_a.press_side = side;
     s_a.ignore_up = false;
-    s_a.pending = false;
+    s_a.pending = s_a.portal_wait = false;
     switch (s_a.st) {
     case APP_IDLE:
     case APP_ERROR:
+        if (from_qr && app_io_portal()) {
+            // ui.md 2.3: BOOT on Q goes home and records. The portal stops only once Q is deleted (UI worker):
+            // the recording starts when it is down (fsm_tick), with the audio since the press as pre-roll
+            s_a.portal_wait = true;
+            devcon_event("rec", "\"phase\":\"wait_portal\"");
+            break;
+        }
         // 250 ms before the press; a chip reports its press only after the 400 ms hold: 500 ms
         start_recording(side, src == APP_SRC_CHIP ? 500 : 250);
         break;
@@ -1352,6 +1364,20 @@ static void fsm_tick(uint32_t now)
             start_recording(s_a.press_side, s_a.pending_preroll);
         }
     }
+    if (s_a.portal_wait && !app_io_portal()) {
+        // BOOT on Q: the portal is down, H is shown. Pre-roll from 250 ms before the press (the ring holds 500)
+        s_a.portal_wait = false;
+        uint32_t since = now - s_a.press_t + 250;
+        start_recording(s_a.press_side, since < 500 ? since : 500);
+        if (s_a.st == APP_LISTENING && !s_a.held) {
+            s_a.latched = true;     // already released: a tap, so a latched recording (ui.md 2.3)
+            devcon_event("rec", "\"phase\":\"latched\",\"turn\":%u", (unsigned)s_a.turn);
+            ui_state(UI_ST_REC_LATCHED);
+        }
+    } else if (s_a.portal_wait && now - s_a.press_t > PORTAL_WAIT_MS) {
+        s_a.portal_wait = false;
+        show_not_ready(RDY_PORTAL);
+    }
     switch (s_a.st) {
     case APP_LISTENING:
         rec_tick(now);
@@ -1407,7 +1433,7 @@ static void app_task(void *arg)
     (void)arg;
     uint32_t last_tick = 0;
     for (;;) {
-        uint32_t tick = s_a.st == APP_LISTENING || s_a.pending ? TICK_FAST_MS : TICK_MS;
+        uint32_t tick = s_a.st == APP_LISTENING || s_a.pending || s_a.portal_wait ? TICK_FAST_MS : TICK_MS;
         app_evt_t e;
         if (xQueueReceive(s_q, &e, pdMS_TO_TICKS(tick)) == pdTRUE) {
             handle(&e);
