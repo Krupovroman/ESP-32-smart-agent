@@ -214,7 +214,7 @@ Error shape:
         "type": "object",
         "properties": {
           "transcript": {"type": "string", "description": "Verbatim transcript of the user's latest message in its original language. Empty string if there is no intelligible speech."},
-          "needs_web": {"type": "boolean", "description": "true when a correct answer needs current or live information: weather, news, exchange rates, prices, schedules, sports results, today's events, anything after your knowledge cutoff. Then reply is only a very short holding phrase: the device searches the web and asks again."},
+          "needs_web": {"type": "boolean", "description": "true when a correct answer needs current or live information: weather, news, exchange rates, prices, schedules, sports results, today's events, anything after your knowledge cutoff. Not for the current date or time when the system prompt gives them. Then reply is only a very short holding phrase: the device searches the web and asks again."},
           "reply": {"type": "string", "description": "Answer shown on screen and read aloud: plain speakable text, no markdown, no emoji, numbers written as words. Empty string if transcript is empty."},
           "lang": {"type": "string", "enum": ["ru","en","de","fr","es","it","pt","pl","tr","uk","zh","ja","ko","ar","other"], "description": "ISO 639-1 code of the language of reply."}
         },
@@ -373,11 +373,11 @@ The plugin works together with `response_format` `json_schema` `strict:true` and
 **Auto-mode re-run:**
 
 1. **Trigger.** The first answer parsed (§2.3), `needs_web` is `true`, it is not truncated (P3), and the transcript is not empty. The model's `reply` is then only a holding phrase ("Сейчас посмотрю.").
-2. The ai task emits `AI_EV_WEB` (i = 1). The status line shows "Ищу в интернете…" (ui.md §5.3), and the app's turn deadline gets 35 s from this moment on top of its 75 s.
+2. The ai task emits `AI_EV_WEB` (i = 1). The status line shows "Ищу в интернете…" (ui.md §5.3), and the app's turn deadline gets 35 s from this moment on top of its 75 s. A turn cancelled by then (barge-in, PWR during the first request) sends no search: it would only be paid for.
 3. **Body.** Same `models`/`model`, `reasoning`, `max_tokens`, `provider` and history as the first request. The system prompt has the "results attached" `{WEB}` line. The last user message is the transcript as a plain string: the typed text, the Whisper text (§6), or the model's `transcript` of the clip. **The clip is not uploaded again.** The schema has no `needs_web`. The plugin is attached with `max_results` = `ai_web_n`.
 4. **One attempt**, with the "web" timeouts of §9.2 (30 s in total). No retries: a failure falls back at once.
 5. **Success** (a reply that parses and is not empty): the reply, `lang`, `finish_reason`, `model`, `provider` and generation id come from the re-run; the transcript stays the first one. `usage.cost` and the token counts of **both** requests are added to the turn and the session. The history stores the transcript with the web reply.
-6. **Failure** (any transport or HTTP error, a 200 with `error`, P2, an empty reply): the first answer is used, with the note "(не удалось найти в интернете)" on screen. It is spoken (TTS reads the reply only) and not stored in the history. No error card. The cost of a re-run that was billed but did not parse is still counted. Only when the first request fails too is there an error, through the normal §9 path. A cancel (barge-in, PWR) during the re-run ends the turn silently (AB).
+6. **Failure** (any transport or HTTP error, a 200 with `error`, P2, an empty reply): the first answer is used. Because it is only the holding phrase, which alone would promise an answer that never comes, the sentence "Не получилось найти это в интернете, попробуйте ещё раз." follows it ("I couldn't search the web just now, please try again." for a reply in any other language), with a full stop added after the holding phrase when it has none. That reply is shown and spoken as it is (no separate note) and not stored in the history. No error card. The cost of a re-run that was billed but did not parse is still counted. Only when the first request fails too is there an error, through the normal §9 path. A cancel (barge-in, PWR) during the re-run ends the turn silently (AB); the requests already made still go into the session cost.
 
 **Always mode** sends the plugin on the normal request, retried by the normal policy (§9.1). If that request gets a 400 or 404 whose message mentions `plugin` or `web search`, it is sent again once without the plugin and with the "no internet" rule. This is an automatic fix like the reasoning and schema fixes, not a retry. The ai task emits `AI_EV_WEB` with i = 0 before the first attempt.
 
@@ -388,7 +388,7 @@ The plugin works together with `response_format` `json_schema` `strict:true` and
 ```
 
 - The host of the first `url_citation` (lowercase, without `www.` and the port) is the source hint: `ai_result_t.source`, shown under the reply in `ui_16` `text-3` as "Источник: gismeteo.ru". It is never spoken.
-- The plugin's own search prompt asks for markdown citations (`[gismeteo.ru](https://…)`). On web replies the device removes them before the text is shown, spoken or stored: a link whose label looks like a host goes completely, any other label stays as text, bare `http(s)://` URLs go, and so do the empty brackets, doubled spaces and orphaned commas they leave. When there is no annotation, the host of the first removed link becomes the source.
+- The plugin's own search prompt asks for markdown citations (`[gismeteo.ru](https://…)`). On web replies the device removes them before the text is shown, spoken or stored: a link whose label looks like a host or is a number (`[1](https://…)`) goes completely, any other label stays as text, footnote marks without a link (`[1]`, `[2, 3]`) go, bare `http(s)://` URLs go, and so do the empty brackets, doubled spaces and orphaned commas they leave. A link target may hold its own pair of parentheses (`…/wiki/X_(y)`). When there is no annotation, the host of the first removed link becomes the source.
 - `usage.cost` already includes the search.
 
 ---
@@ -486,8 +486,10 @@ Stored in NVS key `sys_prompt`, at most 4000 bytes including the NUL; the defaul
 | Request | `{WEB}` line |
 |---|---|
 | Off, or another provider | `- У тебя нет доступа к интернету: если спрашивают о свежих новостях, погоде или курсах, скажи об этом одной фразой.` |
-| Auto (first request) | `- Если для точного ответа нужны свежие или текущие данные — погода, новости, курсы валют, цены, расписания, результаты матчей, события сегодняшнего дня или что-то позже твоих знаний, — поставь needs_web = true, а в reply напиши только очень короткую фразу ожидания, например «Сейчас посмотрю.». Устройство найдёт данные в интернете и спросит тебя снова. Не выдумывай свежие данные. В остальных случаях needs_web = false.` |
-| With the plugin (always, re-run) | `- К запросу приложены результаты поиска в интернете: свежие данные бери из них и отвечай своими словами. Не пиши ссылки, адреса сайтов и сноски. Если нужного в результатах нет, скажи об этом одной фразой.` |
+| Auto (first request) | `- Если для точного ответа нужны свежие или текущие данные — погода, новости, курсы валют, цены, расписания, результаты матчей, события сегодняшнего дня или то, что могло измениться после даты твоих знаний, — поставь needs_web = true, а в reply напиши только очень короткую фразу ожидания, например «Сейчас посмотрю». Устройство найдёт данные в интернете и спросит тебя снова. Свежие данные не выдумывай. Для вопросов о текущей дате и времени поиск не нужен, если они указаны ниже. В остальных случаях needs_web = false.` |
+| With the plugin (always, re-run) | `- К запросу приложены результаты поиска в интернете. Свежие данные бери только из них и пересказывай своими словами, без ссылок, адресов сайтов и сносок. Если нужных данных в результатах нет, честно скажи об этом одной фразой и ничего не выдумывай. Если для ответа свежие данные не нужны, отвечай как обычно.` |
+
+The date and time sentence of the auto line keeps "Какое сегодня число?" and "Который час?" off the paid search: `{DATETIME}` answers them. It says "если они указаны ниже" because the line holding `{DATETIME}` is dropped while SNTP is not synced, and then a search is the right answer. The last sentence of the plugin line is for always mode, where every question carries search results.
 
 ### 4.2 Translator system prompt (internal template, English)
 
@@ -949,7 +951,7 @@ How to read the "Detection" column:
 | P3 | `finish_reason:"length"` | no | partial text + «(ответ обрезан)» | not stored in history |
 | P4 | `transcript == ""` | no | «Не расслышал. Повторите, пожалуйста.» | no TTS |
 | P5 | `finish_reason:"content_filter"` or `message.refusal` | no | «ИИ отказался отвечать на этот запрос.» | |
-| W1 | Auto-mode web re-run (§2.8) failed for any reason above, the first request succeeded | no | none: the first answer + «(не удалось найти в интернете)» | No card; not stored in history. Always mode: a 400/404 about the plugin resends once without it |
+| W1 | Auto-mode web re-run (§2.8) failed for any reason above, the first request succeeded | no | none: the first answer (the holding phrase) + «Не получилось найти это в интернете, попробуйте ещё раз.», shown and spoken | No card; not stored in history. Always mode: a 400/404 about the plugin resends once without it |
 | T1 | TTS still failing after retries and fallback routes | none | text stays + toast «Озвучка недоступна» | continue text-only |
 | T2 | TTS response is not PCM (`audio/mpeg` etc.) | no | «Этот голос отдаёт неподдерживаемый формат.» | try the next route (§5.6) |
 

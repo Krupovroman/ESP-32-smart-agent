@@ -1185,7 +1185,7 @@ Interaction and mood:
 6. **Separate histories per mode.** Switching mode rebuilds the chat children (≤ 20, < 10 ms) and picks the empty or conversation layout.
 7. **Typed question** (M → "Написать текстом" → K): the FSM goes straight to THINKING with a text request, and the bubble shows the typed text with no waveform. In translator mode, typed text is auto-detected between A and B.
 8. **Tapping a message** opens HIST (assistant) or RD (translator), never during or within 300 ms of a scroll.
-9. **Web replies** (protocol §2.8): `UI_BOT_SOURCE` right after `UI_BOT_MSG` gives the host of the first source. The reply's `ui_16` `text-3` note line then reads "Источник: gismeteo.ru" (with "голос недоступен · " in front when TTS failed too) and wraps on a long host. It is shown on H and in HIST and never spoken. When the search failed, the first answer is shown with "(не удалось найти в интернете)" on its last line, the way "(ответ обрезан)" is.
+9. **Web replies** (protocol §2.8): `UI_BOT_SOURCE` right after `UI_BOT_MSG` gives the host of the first source. The reply's `ui_16` `text-3` note line then reads "Источник: gismeteo.ru" (with "голос недоступен · " in front when TTS failed too) and wraps on a long host. It is shown on H and in HIST and never spoken. When the search failed (W1), the AI client's reply already ends with "Не получилось найти это в интернете, попробуйте ещё раз." after the holding phrase; the app shows and speaks it as it is, with no separate note and no source.
 
 ### 5.5 Translator turn-taking: one auto-detect control, plus a forced override on the chips
 

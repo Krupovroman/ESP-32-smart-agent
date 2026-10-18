@@ -1108,7 +1108,7 @@ static void on_result(app_result_t *r)
         clear_fault();              // the key, credit and model work again
     }
     s_a.card_key = 0;               // the same error after an answer is news again
-    if (s_a.mode == 1 || (!r->truncated && r->transcript[0] && r->text[0])) {
+    if (s_a.mode == 1 || (!r->truncated && !r->web_failed && r->transcript[0] && r->text[0])) {
         s_a.last_end_t = s_a.t_result;  // the AI client keeps this exchange in its history (hist_add) now
     }
     int side = UI_SIDE_AUTO;
@@ -1150,9 +1150,7 @@ static void on_result(app_result_t *r)
         finish_turn(UI_ST_ANSWERED);
         return;
     }
-    const char *note = r->truncated    ? loc("(ответ обрезан)", "(reply cut off)")
-                       : r->web_failed ? loc("(не удалось найти в интернете)", "(web search failed)")
-                                       : "";
+    const char *note = r->truncated ? loc("(ответ обрезан)", "(reply cut off)") : "";
     size_t n = strlen(r->text) + strlen(note) + 2;
     char *show = heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
     if (show) {

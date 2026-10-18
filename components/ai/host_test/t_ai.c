@@ -17,10 +17,14 @@ typedef struct {
 } ev_t;
 static ev_t s_ev[64];
 static int s_nev;
+static uint32_t s_cancel_on_web;     // this turn is cancelled when its web search starts (barge-in)
 
 static void cap(const ai_event_t *e, void *ctx)
 {
     (void)ctx;
+    if (e->type == AI_EV_WEB && s_cancel_on_web && e->turn == s_cancel_on_web) {
+        ai_client_cancel(e->turn);
+    }
     ev_t *v = &s_ev[s_nev++ % 64];
     memset(v, 0, sizeof(*v));
     v->type = e->type;
@@ -756,8 +760,11 @@ static void t_web_fail(void)
     run(&j);
     const ev_t *r = find_ev(AI_EV_RESULT);
     CHECK(g_nreq == 2 && !find_ev(AI_EV_ERROR) && count_ev(AI_EV_RETRY) == 0);
-    CHECK(r && r->web_failed && !r->web && !strcmp(r->text, "Сейчас посмотрю.") && !r->source[0]);
-    CHECK(r && !strcmp(r->notice, "(не удалось найти в интернете)") && fabs(r->cost - 0.00012) < 1e-9);
+    // W1: the holding phrase is followed by a sentence saying the search failed, shown and spoken
+    CHECK(r && r->web_failed && !r->web && !r->source[0] &&
+          !strcmp(r->text, "Сейчас посмотрю. Не получилось найти это в интернете, попробуйте ещё раз."));
+    CHECK(r && !r->notice[0] && !strcmp(r->tts_lang, "ru") && fabs(r->cost - 0.00012) < 1e-9);
+    printf("    fallback: %s\n", r ? r->text : "?");
     CHECK(hist_count() == 0);                    // the holding phrase is not remembered
     ai_last_t l;
     CHECK(ai_client_last(&l) && l.ok && l.web_failed);
@@ -782,6 +789,32 @@ static void t_web_fail(void)
     run(&j);
     r = find_ev(AI_EV_RESULT);
     CHECK(g_nreq == 2 && r && r->web_failed && fabs(r->cost - (0.00012 + 0.0130)) < 1e-9);
+
+    // an English holding phrase without its full stop: the sentence is English and the stop is added
+    setup();
+    mock_push_json(200, web_body("{\\\"transcript\\\":\\\"Weather in London?\\\",\\\"needs_web\\\":true,"
+                                 "\\\"reply\\\":\\\"Let me check\\\",\\\"lang\\\":\\\"en\\\"}", 0.00012, NULL));
+    mock_push_json(503, "{\"error\":{\"code\":503,\"message\":\"Service Unavailable\"}}");
+    j = mkjob(AI_MODE_ASSISTANT, "Weather in London?", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(r && r->web_failed && !strcmp(r->tts_lang, "en") &&
+          !strcmp(r->text, "Let me check. I couldn't search the web just now, please try again."));
+
+    // a cancel (barge-in, PWR) as the search starts: no web request, nothing reported, the first one billed
+    setup();
+    mock_push_json(200, web_body(WEB_FIRST, 0.00012, NULL));
+    mock_push_json(200, web_body(WEB_ANSWER, 0.0136, NULL));
+    j = mkjob(AI_MODE_ASSISTANT, Q_WEATHER, NULL, 0);
+    s_cancel_on_web = j.turn;
+    double c0 = ai_client_session_cost();
+    run(&j);
+    s_cancel_on_web = 0;
+    CHECK(find_ev(AI_EV_WEB) && !find_ev(AI_EV_RESULT) && !find_ev(AI_EV_ERROR) && hist_count() == 0);
+    CHECK(g_nreq == 1 && fabs(ai_client_session_cost() - c0 - 0.00012) < 1e-9);
+    ai_last_t l2;
+    CHECK(ai_client_last(&l2) && !l2.ok && !strcmp(l2.err_id, "AB") && fabs(l2.cost - 0.00012) < 1e-9);
+    printf("    cancelled as the search starts: %d request, $%.6f billed\n", g_nreq, ai_client_session_cost() - c0);
 
     // the first request fails: the normal error path, no web request
     setup();

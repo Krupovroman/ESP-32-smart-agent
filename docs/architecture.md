@@ -463,6 +463,8 @@ void      settings_on_change(void (*cb)(const char *key, void *ctx), void *ctx);
 | `ai_effort` | str 13 | `auto` | `auto` = rule in protocol §2.1 rule 2; `""` = omit; never `none` |
 | `ai_stream` | u8 | 0 | 0 = v1 non-streaming; 1 = SSE (v1.1, §1.10) |
 | `ai_maxtok` | u16 | 1024 | 64–4096 (the translator uses 768) |
+| `ai_web` | u8 | 1 | assistant web search (protocol §2.8): 0 off, 1 auto (`needs_web`, then a re-run with the plugin), 2 always; OpenRouter and its relays only |
+| `ai_web_n` | u8 | 3 | 1–5 `max_results` of the web plugin (about $0.004 each) |
 | `hist_n` | u8 | 6 | 0–10 exchanges |
 | `hist_idle_min` | u8 | 10 | 0 = never |
 | `sys_prompt` | **blob** ≤ 4000 B | absent = built-in prompt | Blob, because a 4000-byte NVS *string* must fit a single empty page |

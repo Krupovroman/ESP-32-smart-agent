@@ -52,7 +52,7 @@ typedef struct {
     bool stt_used;                    // transcript came from the Whisper fallback
     bool other_lang;                  // translator: neither of the two languages
     bool web;                         // the reply was made with web search results (protocol §2.8)
-    bool web_failed;                  // auto mode: the web request failed, text is the first answer
+    bool web_failed;                  // auto mode: the web request failed; text = first answer + W1 sentence
     char source[48];                  // host of the first web source ("gismeteo.ru"), "" = none
     const char *notice_ru;            // P3 / P4 text for the UI, or NULL
     double cost;                      // usage.cost of chat + STT (USD)

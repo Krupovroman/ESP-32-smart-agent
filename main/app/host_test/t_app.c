@@ -1100,7 +1100,7 @@ static void text_submit(const char *q)
     pump();
 }
 
-// protocol §2.8: the searching status, the turn deadline of a re-run, the source note and the failed-search note
+// protocol §2.8: the searching status, the turn deadline of a re-run, the source note and a failed search (W1)
 static void t_web(void)
 {
     printf("t_web\n");
@@ -1122,15 +1122,19 @@ static void t_web(void)
     CHECK(bi >= 0 && si > bi && !strcmp(g_ui[bi].s, "Плюс пять градусов.") && !strcmp(g_ui[si].s, "gismeteo.ru"));
     CHECK(strstr(ev_last("ai"), "\"web\":true") && strstr(ev_last("ai"), "\"source\":\"gismeteo.ru\""));
 
-    // the search failed: the first answer with a note, no source
+    // the search failed: the AI client's reply says so (W1) and is shown as it is; no source, no history clock
     text_submit("Курс доллара?");
     turn = s_a.turn;
     emit_simple(AI_EV_WEB, turn, 1);
     int sources = ui_count(UI_BOT_SOURCE);
-    emit_result_web(turn, "Курс доллара?", "Сейчас посмотрю.", "", true);
+    uint32_t end0 = s_a.last_end_t;
+    step(1000);
+    emit_result_web(turn, "Курс доллара?", "Сейчас посмотрю. Не получилось найти это в интернете, попробуйте ещё раз.",
+                    "", true);
     pump();
-    CHECK(!strcmp(ui_last(UI_BOT_MSG)->s, "Сейчас посмотрю.\n(не удалось найти в интернете)"));
+    CHECK(!strcmp(ui_last(UI_BOT_MSG)->s, "Сейчас посмотрю. Не получилось найти это в интернете, попробуйте ещё раз."));
     CHECK(ui_count(UI_BOT_SOURCE) == sources && s_a.st == APP_IDLE && ui_count(UI_ERROR) == 0);
+    CHECK(s_a.last_end_t == end0);  // the AI client does not store this exchange (hist_add) either
 
     // no answer 35 s after the re-run started (and 75 s after the submit): N8
     text_submit("Новости?");

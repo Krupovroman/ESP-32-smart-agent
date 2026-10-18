@@ -46,8 +46,8 @@ static const char SCHEMA_ASSISTANT[] =
 static const char SCHEMA_NEEDS_WEB[] =
     "\"needs_web\":{\"type\":\"boolean\",\"description\":\"true when a correct answer needs current or live "
     "information: weather, news, exchange rates, prices, schedules, sports results, today's events, anything after "
-    "your knowledge cutoff. Then reply is only a very short holding phrase: the device searches the web and asks "
-    "again.\"},";
+    "your knowledge cutoff. Not for the current date or time when the system prompt gives them. Then reply is only "
+    "a very short holding phrase: the device searches the web and asks again.\"},";
 
 static const char SCHEMA_TRANSLATOR[] =
     "{\"type\":\"object\",\"properties\":{"
@@ -69,7 +69,9 @@ static const char SCHEMA_TRANSLATOR_FORCED[] =
 
 static const char NOTICE_P3[] = "(ответ обрезан)";
 static const char NOTICE_P4[] = "Не расслышал. Повторите, пожалуйста.";
-static const char NOTICE_WEB[] = "(не удалось найти в интернете)";
+// W1: said after the holding phrase, which alone would promise an answer that never comes
+static const char WEB_FAIL_RU[] = "Не получилось найти это в интернете, попробуйте ещё раз.";
+static const char WEB_FAIL_EN[] = "I couldn't search the web just now, please try again.";
 
 typedef enum { JOB_TURN, JOB_SYNC, JOB_PREWARM } job_type_t;
 
@@ -784,14 +786,43 @@ static bool mentions_any(const char *s, const char *const *words, int n)
     return false;
 }
 
+// W1 (protocol §2.8): the first answer is only the holding phrase ("Сейчас посмотрю."), which alone would promise
+// an answer that never comes, so a sentence saying that the search failed follows it (shown and spoken). Russian
+// for a Russian reply, English otherwise. The text stays as it is when there is no memory for the new one.
+static void web_fail_reply(parsed_t *pr)
+{
+    const char *say = (!pr->lang[0] || !strcmp(pr->lang, "ru")) ? WEB_FAIL_RU : WEB_FAIL_EN;
+    const char *first = pr->text ? pr->text : "";
+    size_t fl = strlen(first);
+    while (fl && (first[fl - 1] == ' ' || first[fl - 1] == '\n')) {
+        fl--;
+    }
+    // "Сейчас посмотрю" gets its full stop; ".", "!", "?" and "…" (UTF-8 E2 80 A6) end a sentence already
+    char last = fl ? first[fl - 1] : 0;
+    bool ends = last == '.' || last == '!' || last == '?' || (fl >= 3 && !memcmp(first + fl - 3, "\xE2\x80\xA6", 3));
+    const char *sep = !fl ? "" : ends ? " " : ". ";
+    size_t n = fl + strlen(sep) + strlen(say) + 1;
+    char *t = ai_malloc(n);
+    if (!t) {
+        return;
+    }
+    snprintf(t, n, "%.*s%s%s", (int)fl, first, sep, say);
+    free(pr->text);
+    pr->text = t;
+}
+
 // Protocol §2.8 auto mode: the first answer set needs_web, so query (the transcript) goes again as a text request
 // with the web plugin and the same history; the clip is not uploaded again. One attempt within OR_TO_WEB. On
 // success *pr takes the new reply (its transcript stays) and the cost of both requests; on any failure the first
-// answer stays and res->web_failed is set. Returns false only when the turn was cancelled meanwhile.
+// answer stays with the W1 sentence and res->web_failed is set. Returns false only when the turn was cancelled
+// meanwhile; a re-run billed before that is in res->cost.
 static bool web_rerun(chat_t *ch, const char *query, parsed_t *pr, ai_result_t *res)
 {
     ai_event_t ev = { .type = AI_EV_WEB, .turn = ch->turn, .i = 1 };
     ai_emit(&ev);
+    if (ai_turn_cancelled(ch->turn)) {
+        return false;                          // barge-in or PWR before the search was sent: it is not paid for
+    }
     ch->pcm = NULL;
     ch->user_text = query;
     ch->web = AI_WEB_ON;
@@ -805,8 +836,11 @@ static bool web_rerun(chat_t *ch, const char *query, parsed_t *pr, ai_result_t *
     char *body = NULL;
     bool ok = false;
     if (!w) {
-        res->web_failed = true;
+        res->web_failed = !ai_turn_cancelled(ch->turn);
         ESP_LOGW(TAG, "turn %" PRIu32 ": web search skipped (no memory)", ch->turn);
+        if (res->web_failed) {
+            web_fail_reply(pr);
+        }
         return !ai_turn_cancelled(ch->turn);
     }
     if (chat_build(ch) != ESP_OK) {
@@ -853,11 +887,14 @@ static bool web_rerun(chat_t *ch, const char *query, parsed_t *pr, ai_result_t *
         strlcpy(res->gen_id, w->r.gen_id[0] ? w->r.gen_id : p2->gen_id, sizeof(res->gen_id));
         ESP_LOGI(TAG, "turn %" PRIu32 ": web search ok in %" PRIu32 " ms, $%.6f, source %s", ch->turn,
                  res->t.web_ms, p2->cost, pr->source[0] ? pr->source : "-");
-    } else if (alive) {
-        res->cost += p2->cost;                 // a reply that did not parse may still be billed
-        res->web_failed = true;
-        ESP_LOGW(TAG, "turn %" PRIu32 ": web search failed: %s (%s), keeping the first answer", ch->turn,
-                 w->err.id, w->err.message);
+    } else {
+        res->cost += p2->cost;                 // billed even when it did not parse or the turn was cancelled
+        if (alive) {
+            res->web_failed = true;
+            web_fail_reply(pr);
+            ESP_LOGW(TAG, "turn %" PRIu32 ": web search failed: %s (%s), keeping the first answer", ch->turn,
+                     w->err.id, w->err.message);
+        }
     }
     parsed_free(p2);
     free(w);
@@ -1070,6 +1107,9 @@ static void run_turn(job_t *j)
                 voice_in_released = true;
             }
             if (!web_rerun(ch, query, &pr, &res)) {
+                // cancelled meanwhile (barge-in, PWR): nothing is shown, but the requests made were billed
+                res.cost += pr.cost;
+                ai_client_add_cost(res.cost);
                 or_err_local(&err, "AB");
                 failed = true;
             }
@@ -1126,7 +1166,8 @@ done:
         if (res.unheard || !res.text[0]) {
             res.tts_lang[0] = 0;
         }
-        res.notice_ru = res.unheard ? NOTICE_P4 : res.truncated ? NOTICE_P3 : res.web_failed ? NOTICE_WEB : NULL;
+        // a failed web search (W1) needs no notice: its reply already says so
+        res.notice_ru = res.unheard ? NOTICE_P4 : (res.truncated ? NOTICE_P3 : NULL);
         // a holding phrase whose web search failed is not an answer worth remembering
         if (j->mode == AI_MODE_ASSISTANT && !res.unheard && !res.truncated && !res.web_failed && res.transcript[0] &&
             res.text[0]) {

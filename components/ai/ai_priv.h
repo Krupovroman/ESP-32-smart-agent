@@ -44,8 +44,9 @@ size_t utf8_cp_len(const char *s);
 char *utf8_trunc_dup(const char *s, size_t max_cp);
 // Host of an http(s) URL without "www." and the port ("https://www.gismeteo.ru/x" -> "gismeteo.ru"); "" if none.
 void ai_url_host(const char *url, char *out, size_t len);
-// Web answers (protocol §2.8): drops markdown links "[label](http…)", bare http(s) URLs and the brackets or
-// spaces they leave, in place. host (may be NULL) gets the host of the first link when it is still empty.
+// Web answers (protocol §2.8): drops markdown links "[label](http…)" (a host or number label with them), footnote
+// marks "[1]", bare http(s) URLs and the brackets or spaces they leave, in place. host (may be NULL) gets the host
+// of the first link when it is still empty.
 void ai_strip_links(char *s, char *host, size_t host_len);
 
 // ---- ai_client.c ------------------------------------------------------------------------------

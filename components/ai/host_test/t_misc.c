@@ -268,6 +268,14 @@ static void t_links(void)
           "rbc.ru" },
         { "Погода хорошая, по данным [meteo.ru](https://meteo.ru), тепло.", "Погода хорошая, по данным, тепло.",
           "meteo.ru" },
+        // numbered citations and footnote marks are not read aloud ("градусов один")
+        { "Плюс пять градусов [1](https://a.ru/x).", "Плюс пять градусов.", "a.ru" },
+        { "Курс девяносто рублей [1][2].", "Курс девяносто рублей.", "" },
+        { "Новый выпуск [2, 3] вышел вчера.", "Новый выпуск вышел вчера.", "" },
+        { "Выберите вариант [а] или [б].", "Выберите вариант [а] или [б].", "" },
+        // a link target with its own parentheses ends at the matching one
+        { "Смотрите [статью](https://ru.wikipedia.org/wiki/X_(y)) сегодня.", "Смотрите статью сегодня.",
+          "ru.wikipedia.org" },
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         char buf[256];

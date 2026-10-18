@@ -137,17 +137,47 @@ void ai_url_host(const char *url, char *out, size_t len)
     out[n] = 0;
 }
 
-// "[gismeteo.ru](…)" names its source: such a label goes with the link; "[прогноз](…)" is part of a sentence.
-static bool host_like(const char *s, size_t n)
+// "[gismeteo.ru](…)" and "[1](…)" name their source: such a label goes with the link; "[прогноз](…)" is part of
+// a sentence.
+static bool cite_label(const char *s, size_t n)
 {
-    bool dot = false;
+    bool dot = false, digits = n > 0 && n <= 3;
     for (size_t i = 0; i < n; i++) {
         if (s[i] == ' ' || s[i] == '\n') {
             return false;
         }
         dot |= s[i] == '.';
+        digits &= s[i] >= '0' && s[i] <= '9';
     }
-    return dot;
+    return dot || digits;
+}
+
+// "[1]", "[2, 3]": a footnote mark of the search results, without a link
+static bool footnote(const char *s, size_t n)
+{
+    bool digit = false;
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] >= '0' && s[i] <= '9') {
+            digit = true;
+        } else if (s[i] != ',' && s[i] != ' ' && s[i] != '-') {
+            return false;
+        }
+    }
+    return digit && n <= 12;
+}
+
+// The ")" closing a markdown link target; a pair inside it stays ("…/wiki/X_(y))"). NULL if the line has none.
+static const char *link_end(const char *s)
+{
+    int depth = 0;
+    for (; *s && *s != '\n'; s++) {
+        if (*s == '(') {
+            depth++;
+        } else if (*s == ')' && depth-- == 0) {
+            return s;
+        }
+    }
+    return NULL;
 }
 
 static bool is_punct(char c)
@@ -169,17 +199,22 @@ void ai_strip_links(char *s, char *host, size_t host_len)
             while (*q && *q != ']' && *q != '[' && *q != '\n') {
                 q++;
             }
-            const char *e = (*q == ']' && q[1] == '(' && !strncasecmp(q + 2, "http", 4)) ? strchr(q + 2, ')') : NULL;
+            size_t ln = (size_t)(q - r - 1);
+            const char *e = (*q == ']' && q[1] == '(' && !strncasecmp(q + 2, "http", 4)) ? link_end(q + 2) : NULL;
             if (e) {
                 if (host && !host[0]) {
                     ai_url_host(q + 2, host, host_len);
                 }
-                size_t ln = (size_t)(q - r - 1);
-                if (!host_like(r + 1, ln)) {
+                if (!cite_label(r + 1, ln)) {
                     memmove(w, r + 1, ln);      // w <= r: the label moves left, never over unread text
                     w += ln;
                 }
                 r = e + 1;
+                cut = true;
+                continue;
+            }
+            if (*q == ']' && footnote(r + 1, ln)) {
+                r = q + 1;
                 cut = true;
                 continue;
             }
