@@ -7,8 +7,13 @@
 //   Unlock (560 ms): the shackle springs up, the padlock grows and fades with the content, the iris opens on the
 //   screen that was locked.
 //   PWR again while one of them runs plays the running timeline back from where it stands (no jump).
+//   Charging (A38, while locked and lit): every 1.6 s an energy comet runs from 12 o'clock along the filled ring to
+//   the level and dissolves into it; the filled arc flashes up as it arrives and fades to 65 % until the next one,
+//   the bolt left of the percent glows with it, and small particles rise from below the percent and fade. Full (A39):
+//   "Заряжено" and one slow glow of the ring. On USB power that does not keep up: a still amber plug and a note.
 // Only what changes is invalidated: the band the iris or the pulse moved over, in 30 deg pieces (never the 360 px box
-// of a ring), the padlock's old and new box, and the labels (6.1).
+// of a ring), the padlock's old and new box, the comet's span, the bolt's glow box, the particles' zone, the filled
+// arc only when its quantised brightness steps, and the labels (6.1).
 #include "ui_internal.h"
 #include "ui_geom.h"
 #include "ui_rim.h"
@@ -28,9 +33,6 @@
 #define SEG_DEG         30      // ring bands are invalidated in 12 pieces
 #define RING_R          168     // battery ring r 160-168, from 12 o'clock clockwise
 #define RING_W          8
-#define HL_DEG          36      // charging highlight length
-#define HL_STEP         4       // ... and its step per HL_TICK_MS (100 deg/s)
-#define HL_TICK_MS      40
 #define LK_CX           180
 #define LK_CY_MID       180     // padlock while it locks: the centre
 #define LK_CY_REST      84      // at rest above the clock: k 0.55 -> box x 162-198, y 59-109 (|(18,121)| = 122)
@@ -40,9 +42,39 @@
 #define CLOCK_W         160
 #define DATE_CY         208     // ui_16, x 70-290, y 198-218 (|(110,38)| = 116); the hint takes its place
 #define DATE_W          220
-#define BAT_CY          262     // ui_20, x 100-260, y 249-275 (|(80,95)| = 124)
-#define BAT_W           160
+#define BAT_CY          262     // ui_20, x 100-260, y 249-275 (|(80,95)| = 124); shifted right by up to 10 px
+#define BAT_W           160     // while charging, the bolt left of the text: x 110-270 (|(90,95)| = 131)
+#define NOTE_CY         292     // ui_16 "USB: не хватает тока", x 70-290, y 282-302 (|(110,122)| = 164.3)
+#define NOTE_W          220
 #define TIME_OK         1700000000
+
+// ---- Charging animation (A38) and the full glow (A39), parameters of the one 33 ms ticker
+#define CHG_CYCLE_MS    1600    // one pulse; the comet runs in its last CHG_RUN_MS and arrives at the level at 0,
+#define CHG_RUN_MS      1000    // then dissolves into it in the next cycle's first CHG_ABSORB_MS
+#define CHG_ABSORB_MS   400
+#define CHG_RISE_MS     120     // the filled arc brightens to 100 % in this after the arrival and fades to
+#define CHG_LOW         166     // ... 65 % (pre-mixed against black) by the next arrival
+#define CHG_STEPS       19      // its brightness in 20 steps: the whole arc is repainted only on a step
+#define COMET_LEN       52      // deg: tail 50 %, body 31 %, head 19 %, each a rounded arc on the ring band
+#define BOLT_GAP        6       // the bolt is drawn left of the percent (scaled glyphs would need a layer, 6.3)
+#define GLOW_R2         12      // its glow: two pre-mixed discs (success halo2 / halo1) that swell with the pulse,
+#define GLOW_R2_UP      6       // r 12 -> 18 and 8 -> 12; box +-19 around (bolt, 262): within x 131-179, y 243-281
+#define GLOW_R1         8
+#define GLOW_R1_UP      4
+#define GLOW_BOX        19
+#define PART_N          7       // particles: born at y 318, rise 34 px while they fade in and out
+#define PART_LIFE_MS    1800
+#define PART_Y0         318
+#define PART_RISE       34
+#define PART_X0         138     // their zone, invalidated as one box each frame: x 138-222, y 278-324
+#define PART_X1         222     // (|(42,144)| = 150), between the battery line (y 275) and the ring (r 160)
+#define PART_Y_TOP      278
+#define PART_Y_BOT      324
+#define CHG_WRAP_MS     14400   // the clock steps back by this (9 pulses, 8 particle lives: the same frame) so that
+                                // a lock screen left on the charger for weeks never overflows it
+#define FULL_GLOW_MS    2400    // full: the ring mixes up to 40 % toward white and back, once
+#define FULL_GLOW_MAX   100
+#define FULL_STEPS      16
 
 // ---- Timelines (ms)
 #define LOCK_MS         700
@@ -65,6 +97,7 @@
 #define SHAKE_MS        360
 
 typedef enum { PH_NONE, PH_LOCKING, PH_LOCKED, PH_UNLOCKING } phase_t;
+typedef enum { BK_NONE, BK_BATTERY, BK_CHARGING, BK_FULL, BK_DRAIN } bat_kind_t;
 
 typedef struct {
     float cx, cy, k;            // centre of the shut padlock and scale (1 = 60 x 84 px)
@@ -75,7 +108,7 @@ typedef struct {
 
 static atomic_bool s_locked;
 static phase_t s_phase;
-static lv_obj_t *s_ov, *s_clock, *s_date, *s_hint, *s_bat;
+static lv_obj_t *s_ov, *s_clock, *s_date, *s_hint, *s_bat, *s_note;
 static int32_t s_tvar, s_t;     // timeline variable / position on the shown timeline
 static bool s_tl_unlock;        // the frames come from the unlock timeline (A36), else the lock one (A35); a reversal
                                 // plays the other phase's timeline backwards
@@ -89,11 +122,24 @@ static uint8_t s_pulse_a;
 static uint8_t s_content;       // 0..255: clock, date, battery ring and line
 static int32_t s_hint_mix;      // 0 date, 255 hint
 static int32_t s_shake_v;       // 0..SHAKE_MS, SHAKE_MS = still
-static int32_t s_hl = -1;       // charging highlight head, degrees after 12 o'clock (-1 = none)
-static int32_t s_hl_a0, s_hl_a1;    // its drawn span
-static lv_timer_t *s_hl_timer, *s_clock_timer;
+static lv_timer_t *s_clock_timer;
 static int s_last_min = -1;
 static uint32_t s_wake_t;       // the lock screen came back from "off" at this tick, 0 = not lately
+// battery line and the charging animation (A38) / full glow (A39); the rest state is the pulse's peak, so the
+// content fading in and out never jumps
+static bat_kind_t s_kind;       // what the battery line shows
+static int32_t s_bolt_x;        // centre of the drawn bolt while charging, 0 = none
+static lv_timer_t *s_anim_timer;
+static uint32_t s_anim_t0;      // lv_tick at the charging clock's 0
+static int32_t s_anim_t = -1;   // charging clock (ms) of the frame shown, -1 = not running (no particles)
+static int32_t s_anim_hold = -1;    // console: the charging clock held at this, -1 = runs
+static int32_t s_comet_a0 = -1, s_comet_a1 = -1;     // comet span, degrees after 12 o'clock (-1 = none)
+static uint8_t s_comet_mix;     // its brightness toward white (fades as it dissolves)
+static uint8_t s_breath = 255;  // filled arc pre-mixed brightness, quantised (CHG_LOW..255)
+static uint8_t s_bglow = 255;   // bolt glow 0..255, quantised
+static uint32_t s_glow_t0;      // full glow start (lv_tick), 0 = not running
+static int32_t s_glow_hold = -1;    // console: the full glow held at this ms
+static uint8_t s_glow_v;        // full glow, mix toward white
 
 bool ui_keylocked(void)
 {
@@ -263,8 +309,25 @@ static void label_opa(void)
     }
     lv_obj_set_style_opa(s_clock, s_content, 0);
     lv_obj_set_style_opa(s_bat, s_content, 0);
+    lv_obj_set_style_opa(s_note, s_content, 0);
     lv_obj_set_style_opa(s_date, (lv_opa_t)(s_content * (255 - s_hint_mix) / 255), 0);
     lv_obj_set_style_opa(s_hint, (lv_opa_t)(s_content * s_hint_mix / 255), 0);
+}
+
+static void inval_glow(int32_t x)
+{
+    if (s_ov && x > 0) {
+        lv_area_t a = { x - GLOW_BOX, BAT_CY - GLOW_BOX, x + GLOW_BOX, BAT_CY + GLOW_BOX };
+        lv_obj_invalidate_area(s_ov, &a);
+    }
+}
+
+static void inval_particles(void)
+{
+    if (s_ov) {
+        lv_area_t a = { PART_X0, PART_Y_TOP, PART_X1 - 1, PART_Y_BOT - 1 };
+        lv_obj_invalidate_area(s_ov, &a);
+    }
 }
 
 static void set_content(uint8_t a)
@@ -275,6 +338,7 @@ static void set_content(uint8_t a)
     s_content = a;
     label_opa();
     inval_band(RING_R - RING_W, RING_R);
+    inval_glow(s_bolt_x);           // the drawn bolt and its glow reach past the battery label's box
 }
 
 // ---- Drawing
@@ -354,6 +418,16 @@ static lv_color_t level_colour(int pct, bool full)
     return ui_col(ui_accent(a)->top);
 }
 
+static lv_color_t whiten(lv_color_t c, uint8_t mix)
+{
+    return lv_color_mix(lv_color_white(), c, mix);
+}
+
+static int32_t filled_deg(int32_t v)
+{
+    return (v & UI_BAT_FULL) ? 360 : UI_BAT_PCT(v) * 360 / 100;
+}
+
 static void draw_ring(lv_layer_t *layer)
 {
     int32_t v = ui_get(g_s_battery);
@@ -363,17 +437,80 @@ static void draw_ring(lv_layer_t *layer)
     }
     bool full = (v & UI_BAT_FULL) != 0;
     arc_abs(layer, UI_CX, UI_CY, RING_R, RING_W, 0, 360, premix(ui_col(UI_COL_SURFACE2), s_content), false);
-    int32_t deg = full ? 360 : pct * 360 / 100;
+    int32_t deg = filled_deg(v);
     lv_color_t c = level_colour(pct, full);
+    // the charging pulse dims and brightens the filled arc (A38), the full glow lightens it once (A39)
+    lv_color_t fill = premix(s_glow_v ? whiten(c, s_glow_v) : c, (uint8_t)(s_content * s_breath / 255));
     if (deg >= 360) {
-        arc_abs(layer, UI_CX, UI_CY, RING_R, RING_W, 0, 360, premix(c, s_content), false);
+        arc_abs(layer, UI_CX, UI_CY, RING_R, RING_W, 0, 360, fill, false);
     } else if (deg > 0) {
-        arc_abs(layer, UI_CX, UI_CY, RING_R, RING_W, 270, 270 + deg, premix(c, s_content), true);
+        arc_abs(layer, UI_CX, UI_CY, RING_R, RING_W, 270, 270 + deg, fill, true);
     }
-    if (s_hl >= 0 && s_hl_a1 > s_hl_a0) {
-        lv_color_t hl = lv_color_mix(lv_color_white(), c, 110);
-        arc_abs(layer, UI_CX, UI_CY, RING_R, RING_W, 270 + s_hl_a0, 270 + s_hl_a1, premix(hl, s_content), true);
+    if (s_comet_a1 > s_comet_a0) {
+        // the comet: tail, body and head, each lighter (three short arcs, no gradients), drawn over the arc
+        int32_t a0 = s_comet_a0, a1 = s_comet_a1, len = a1 - a0;
+        int32_t b0 = a0 + len / 2, b1 = a1 - len * 19 / 100;
+        uint8_t m = s_comet_mix;
+        arc_abs(layer, UI_CX, UI_CY, RING_R, RING_W, 270 + a0, 270 + b0, premix(whiten(c, m * 50 / 255), s_content),
+                true);
+        arc_abs(layer, UI_CX, UI_CY, RING_R, RING_W, 270 + b0, 270 + b1, premix(whiten(c, m * 110 / 255), s_content),
+                true);
+        arc_abs(layer, UI_CX, UI_CY, RING_R, RING_W, 270 + b1, 270 + a1, premix(whiten(c, m * 190 / 255), s_content),
+                true);
     }
+}
+
+static void disc(lv_layer_t *layer, float cx, float cy, float r, lv_color_t c)
+{
+    rect_abs(layer, cx - r, cy - r, cx + r, cy + r, r, c, c);
+}
+
+// Charging: the particles, the bolt's glow and the bolt left of the percent (its text is the s_bat label)
+static void draw_charge(lv_layer_t *layer)
+{
+    if (!s_bolt_x) {
+        return;
+    }
+    const ui_accent_t *ok = ui_accent(UI_ACC_SUCCESS);
+    lv_color_t top = ui_col(ok->top);
+    if (s_anim_t >= 0) {
+        // each rises 34 px over its life with a slight sway, fading in and out (sin envelope); 7 staggered lives
+        static const struct {
+            int8_t dx;
+            uint8_t d;
+            uint16_t ofs;
+        } k_part[PART_N] = { { -30, 4, 0 },    { 12, 5, 257 },  { -9, 3, 514 },   { 27, 4, 771 },
+                             { -19, 5, 1028 }, { 3, 4, 1285 },  { 20, 3, 1542 } };
+        lv_color_t pc = whiten(top, 64);
+        int32_t fade_in = LV_CLAMP(0, (s_anim_t - CHG_RISE_MS) * 255 / 400, 255);   // none pops in mid-life
+        for (int i = 0; i < PART_N; i++) {
+            int32_t ph = (s_anim_t + k_part[i].ofs) % PART_LIFE_MS;
+            float u = (float)ph / PART_LIFE_MS;
+            int32_t a = lv_trigo_sin((int16_t)(180 * ph / PART_LIFE_MS)) * s_content / 32767 * fade_in / 255;
+            if (a <= 8) {
+                continue;
+            }
+            float x = UI_CX + k_part[i].dx + 3.0f * lv_trigo_sin((int16_t)(360 * ph / PART_LIFE_MS + 97 * i)) / 32767;
+            float y = PART_Y0 - PART_RISE * ease_out(u);
+            float r = k_part[i].d / 2.0f;
+            disc(layer, x, y, r, premix(pc, (uint8_t)a));
+        }
+    }
+    float e = s_bglow / 255.0f;
+    uint8_t k = (uint8_t)(s_content * (96.0f + 159.0f * e) / 255.0f);
+    disc(layer, (float)s_bolt_x, BAT_CY, GLOW_R2 + GLOW_R2_UP * e, premix(ui_col(ok->halo2), k));
+    disc(layer, (float)s_bolt_x, BAT_CY, GLOW_R1 + GLOW_R1_UP * e, premix(ui_col(ok->halo1), k));
+    lv_draw_label_dsc_t d;
+    lv_draw_label_dsc_init(&d);
+    d.font = &ui_20;
+    d.color = premix(whiten(top, (uint8_t)(110.0f * e)), s_content);
+    d.opa = LV_OPA_COVER;
+    d.text = SYM_BOLT;
+    d.text_static = 1;
+    d.align = LV_TEXT_ALIGN_CENTER;
+    int32_t lh = lv_font_get_line_height(&ui_20);
+    lv_area_t a = { s_bolt_x - 16, BAT_CY - lh / 2, s_bolt_x + 15, BAT_CY - lh / 2 + lh - 1 };
+    lv_draw_label(layer, &d, &a);
 }
 
 static void draw_cb(lv_event_t *e)
@@ -391,6 +528,7 @@ static void draw_cb(lv_event_t *e)
     }
     if (s_content > 0) {
         draw_ring(layer);
+        draw_charge(layer);
     }
     if (s_pulse_r > 0 && s_pulse_a > 0) {
         lv_color_t c = ui_col(ui_accent(ui_mode_accent(ui_get(g_s_mode)))->top);
@@ -444,59 +582,237 @@ static void clock_cb(lv_timer_t *t)
     clock_refresh(false);
 }
 
-static bool hl_wanted(void)
+// ---- Charging animation (A38) and the full glow (A39)
+
+static bat_kind_t bat_kind(int32_t v)
 {
-    int32_t v = ui_get(g_s_battery);
-    return s_phase == PH_LOCKED && (v & UI_BAT_CHARGING) && !(v & UI_BAT_FULL) && UI_BAT_PCT(v) != UI_BAT_NONE;
+    return UI_BAT_PCT(v) == UI_BAT_NONE ? BK_NONE
+         : (v & UI_BAT_FULL)            ? BK_FULL
+         : (v & UI_BAT_CHARGING)        ? BK_CHARGING
+         : (v & UI_BAT_DRAIN)           ? BK_DRAIN
+                                        : BK_BATTERY;
 }
 
-static void hl_span(int32_t head, int32_t span, int32_t *a0, int32_t *a1)
+// The filled arc's span, plus the rounded cap
+static void inval_filled(void)
 {
-    *a0 = LV_MAX(0, head - HL_DEG);
-    *a1 = LV_MIN(head, span);
+    int32_t deg = filled_deg(ui_get(g_s_battery));
+    if (deg >= 354) {
+        inval_band(RING_R - RING_W, RING_R);
+    } else if (deg > 0) {
+        inval_arc(UI_CX, UI_CY, RING_R - RING_W, RING_R, 270 - 3, 270 + deg + 3);
+    }
 }
 
-static void hl_cb(lv_timer_t *t)
+// Comet span a0..a1 (degrees after 12 o'clock, clipped to it); a1 <= 0 = none. Only the union of the old and the new
+// span is repainted (rounded caps reach about 1.5 deg past it).
+static void set_comet(int32_t a0, int32_t a1, uint8_t mix)
 {
-    (void)t;
-    if (!hl_wanted() || ui_sleep_level() >= 3) {
-        if (s_hl >= 0) {
-            inval_arc(UI_CX, UI_CY, RING_R - RING_W, RING_R, 270 + s_hl_a0 - 6, 270 + s_hl_a1 + 6);
-            s_hl = -1;
-        }
-        if (s_hl_timer) {
-            lv_timer_pause(s_hl_timer);     // hl_update() resumes it: the wake, a battery change, the lock's end
-        }
+    a0 = LV_MAX(0, a0);
+    if (a1 <= a0) {
+        a0 = a1 = -1;
+    }
+    if (a0 == s_comet_a0 && a1 == s_comet_a1 && mix == s_comet_mix) {
         return;
     }
-    // A38: a brighter piece travels along the filled part of the ring, about 100 deg/s, then starts over
-    int32_t span = UI_BAT_PCT(ui_get(g_s_battery)) * 360 / 100;
-    if (span < HL_DEG / 2) {
-        span = HL_DEG / 2;
+    int32_t lo = a0, hi = a1;
+    if (s_comet_a1 > s_comet_a0) {
+        lo = a1 > a0 ? LV_MIN(a0, s_comet_a0) : s_comet_a0;
+        hi = a1 > a0 ? LV_MAX(a1, s_comet_a1) : s_comet_a1;
     }
-    int32_t head = s_hl < 0 ? 0 : s_hl + HL_STEP;
-    if (head > span + HL_DEG) {
-        head = 0;
+    if (hi > lo) {
+        inval_arc(UI_CX, UI_CY, RING_R - RING_W, RING_R, 270 + lo - 3, 270 + hi + 3);
     }
-    int32_t a0, a1;
-    hl_span(head, span, &a0, &a1);
-    int32_t lo = s_hl < 0 ? a0 : LV_MIN(a0, s_hl_a0), hi = s_hl < 0 ? a1 : LV_MAX(a1, s_hl_a1);
-    s_hl = head;
-    s_hl_a0 = a0;
-    s_hl_a1 = a1;
-    // rounded caps reach about 4 px (2 deg) past the span
-    inval_arc(UI_CX, UI_CY, RING_R - RING_W, RING_R, 270 + lo - 4, 270 + hi + 4);
+    s_comet_a0 = a0;
+    s_comet_a1 = a1;
+    s_comet_mix = mix;
 }
 
-static void hl_update(void)
+static void set_breath(int32_t b)
 {
-    if (!hl_wanted()) {
-        return;     // the timer stops itself on its next tick
+    int32_t q = (LV_CLAMP(CHG_LOW, b, 255) - CHG_LOW) * CHG_STEPS / (255 - CHG_LOW);
+    uint8_t v = (uint8_t)(CHG_LOW + q * (255 - CHG_LOW) / CHG_STEPS);
+    if (v != s_breath) {
+        s_breath = v;
+        inval_filled();
     }
-    if (!s_hl_timer) {
-        s_hl_timer = lv_timer_create(hl_cb, HL_TICK_MS, NULL);
+}
+
+static void set_bolt_glow(int32_t p)
+{
+    int32_t q = LV_CLAMP(0, p, 255) >> 3;
+    uint8_t v = (uint8_t)(q << 3 | q >> 2);     // 32 steps, 31 -> 255
+    if (v != s_bglow) {
+        s_bglow = v;
+        inval_glow(s_bolt_x);
     }
-    lv_timer_resume(s_hl_timer);
+}
+
+static void set_full_glow(int32_t g)
+{
+    int32_t q = LV_CLAMP(0, g, FULL_GLOW_MAX) * FULL_STEPS / FULL_GLOW_MAX;
+    uint8_t v = (uint8_t)(q * FULL_GLOW_MAX / FULL_STEPS);
+    if (v != s_glow_v) {
+        s_glow_v = v;
+        inval_band(RING_R - RING_W, RING_R);
+    }
+}
+
+// The frame at charging clock t: the comet runs in each cycle's last CHG_RUN_MS (ease in-out, so it lands softly)
+// and dissolves at the level in the next cycle's first CHG_ABSORB_MS; the filled arc and the bolt's glow peak at the
+// arrival and fade until the next one; the particles follow t.
+static void charge_frame(int32_t t)
+{
+    int32_t span = LV_MAX(UI_BAT_PCT(ui_get(g_s_battery)) * 360 / 100, 10);
+    int32_t c = t % CHG_CYCLE_MS, run0 = CHG_CYCLE_MS - CHG_RUN_MS;
+    if (c >= run0) {
+        int32_t h = (int32_t)((float)span * ease_io((float)(c - run0) / CHG_RUN_MS) + 0.5f);
+        set_comet(h - COMET_LEN, h, 255);
+    } else if (c < CHG_ABSORB_MS && t >= CHG_CYCLE_MS) {
+        float u = (float)c / CHG_ABSORB_MS;
+        set_comet(span - (int32_t)((float)COMET_LEN * (1.0f - ease_out(u)) + 0.5f), span, (uint8_t)(255.0f * (1.0f - u)));
+    } else {
+        set_comet(-1, -1, 0);
+    }
+    float e;
+    if (c < CHG_RISE_MS) {
+        e = (float)c / CHG_RISE_MS;
+    } else {
+        float u = 1.0f - (float)(c - CHG_RISE_MS) / (CHG_CYCLE_MS - CHG_RISE_MS);
+        e = u * u;
+    }
+    set_breath(CHG_LOW + (int32_t)((255 - CHG_LOW) * e + 0.5f));
+    set_bolt_glow((int32_t)(255.0f * e + 0.5f));
+    if (t != s_anim_t) {
+        s_anim_t = t;
+        inval_particles();
+    }
+}
+
+// Back to the rest state (no comet, no particles, the arc and the glow at their peak), repainting what changes
+static void charge_clear(void)
+{
+    set_comet(-1, -1, 0);
+    set_breath(255);
+    set_bolt_glow(255);
+    if (s_anim_t >= 0) {
+        s_anim_t = -1;
+        inval_particles();
+    }
+    s_anim_hold = -1;
+}
+
+// Full glow at ms into it: up and back down (sin), FULL_GLOW_MS in all
+static int32_t full_glow_at(int32_t ms)
+{
+    return ms >= FULL_GLOW_MS ? 0 : FULL_GLOW_MAX * lv_trigo_sin((int16_t)(180 * ms / FULL_GLOW_MS)) / 32767;
+}
+
+static bool lit_locked(void)
+{
+    return s_ov && s_phase == PH_LOCKED && ui_sleep_level() < 3;
+}
+
+static void anim_tick(lv_timer_t *t)
+{
+    bool chg = s_kind == BK_CHARGING && s_phase == PH_LOCKED;
+    if (!lit_locked()) {
+        lv_timer_pause(t);          // anim_update() resumes it: the wake, a battery change, the lock's end
+        return;
+    }
+    uint32_t now = lv_tick_get();
+    if (chg && s_anim_hold < 0) {
+        uint32_t el = now - s_anim_t0;
+        if (el >= 2 * CHG_WRAP_MS) {
+            s_anim_t0 += (el / CHG_WRAP_MS - 1) * CHG_WRAP_MS;     // stays past the first pulse (no dissolve there)
+        }
+        charge_frame((int32_t)(now - s_anim_t0));
+    }
+    if (s_glow_t0 && s_glow_hold < 0) {
+        uint32_t el = now - s_glow_t0;
+        set_full_glow(full_glow_at((int32_t)LV_MIN(el, FULL_GLOW_MS)));
+        if (el >= FULL_GLOW_MS) {
+            s_glow_t0 = 0;
+        }
+    }
+    if (!(chg && s_anim_hold < 0) && !(s_glow_t0 && s_glow_hold < 0)) {
+        lv_timer_pause(t);
+    }
+}
+
+// Starts, stops or resumes the animation for the current battery state and lock phase
+static void anim_update(void)
+{
+    if (!s_ov) {
+        return;
+    }
+    bool chg = s_kind == BK_CHARGING && s_phase == PH_LOCKED;
+    if (!chg) {
+        charge_clear();
+    } else if (s_anim_t < 0 && s_anim_hold < 0) {
+        s_anim_t0 = lv_tick_get() - CHG_RISE_MS;    // starts at the peak: the rest state, no jump
+    }
+    if (s_kind != BK_FULL || s_phase != PH_LOCKED) {
+        s_glow_t0 = 0;
+        s_glow_hold = -1;
+        set_full_glow(0);
+    }
+    bool run = lit_locked() && ((chg && s_anim_hold < 0) || (s_glow_t0 && s_glow_hold < 0));
+    if (run && !s_anim_timer) {
+        s_anim_timer = lv_timer_create(anim_tick, UI_TICK_MS, NULL);
+    }
+    if (s_anim_timer) {
+        if (run) {
+            lv_timer_resume(s_anim_timer);
+        } else {
+            lv_timer_pause(s_anim_timer);
+        }
+    }
+}
+
+// One slow glow when the lock screen shows "full": at the lock's end, when the state becomes full, on a wake
+static void full_glow_start(void)
+{
+    if (s_kind == BK_FULL && lit_locked() && s_glow_hold < 0) {
+        s_glow_t0 = lv_tick_get();
+        if (!s_glow_t0) {
+            s_glow_t0 = 1;
+        }
+    }
+    anim_update();
+}
+
+bool ui_lockscr_chg_hold(bool glow, int32_t ms)
+{
+    if (!s_ov || s_phase != PH_LOCKED) {
+        return false;
+    }
+    if (ms < 0) {
+        // runs on from the frame held (no jump)
+        bool held = s_anim_hold >= 0 || s_glow_hold >= 0;
+        uint32_t now = lv_tick_get();
+        if (s_anim_hold >= 0) {
+            s_anim_t0 = now - (uint32_t)s_anim_hold;
+        }
+        if (s_glow_hold >= 0) {
+            s_glow_t0 = s_glow_hold < FULL_GLOW_MS ? LV_MAX(1u, now - (uint32_t)s_glow_hold) : 0;
+        }
+        s_anim_hold = s_glow_hold = -1;
+        anim_update();
+        return held;
+    }
+    if (glow ? s_kind != BK_FULL : s_kind != BK_CHARGING) {
+        return false;
+    }
+    if (glow) {
+        s_glow_hold = ms;
+        set_full_glow(full_glow_at(LV_MIN(ms, FULL_GLOW_MS)));
+    } else {
+        s_anim_hold = ms;
+        charge_frame(ms);
+    }
+    anim_update();                  // the ticker stops while everything is held
+    return true;
 }
 
 static void bat_refresh(void)
@@ -506,28 +822,63 @@ static void bat_refresh(void)
     }
     int32_t v = ui_get(g_s_battery);
     int pct = UI_BAT_PCT(v);
-    char buf[64];
+    bat_kind_t k = bat_kind(v), was = s_kind;
+    char buf[64], num[16];
     unsigned long ok = (unsigned long)ui_accent(UI_ACC_SUCCESS)->top;
-    if (pct == UI_BAT_NONE) {
+    int32_t dx = 0, bolt_x = 0;
+    snprintf(num, sizeof(num), ui_s(S_LK_PCT), pct);
+    switch (k) {
+    case BK_NONE:
         buf[0] = 0;
-    } else if (v & UI_BAT_FULL) {
-        snprintf(buf, sizeof(buf), "#%06lX %s#", ok, ui_s(S_LK_FULL));
-    } else {
-        char num[16];
-        snprintf(num, sizeof(num), ui_s(S_LK_PCT), pct);
-        if (v & UI_BAT_CHARGING) {
-            snprintf(buf, sizeof(buf), "#%06lX " SYM_BOLT "# %s", ok, num);
-        } else if (pct < 15) {
+        break;
+    case BK_FULL:
+        snprintf(buf, sizeof(buf), "#%06lX " SYM_CHECK " %s#", ok, ui_s(S_LK_FULL));
+        break;
+    case BK_CHARGING: {
+        // the percent alone; the bolt is drawn left of it (draw_charge), the pair centred
+        snprintf(buf, sizeof(buf), "%s", num);
+        lv_point_t sz;
+        lv_text_get_size(&sz, buf, &ui_20, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        int32_t bw = lv_font_get_glyph_width(&ui_20, 0xF0E7, 0);
+        bolt_x = UI_CX - (bw + BOLT_GAP + sz.x) / 2 + bw / 2;
+        dx = (bw + BOLT_GAP) / 2;
+        break;
+    }
+    case BK_DRAIN:
+        // on USB power that does not keep up (the speaker loud on a PC port): a still plug, the note below; the
+        // percent red below 15 % as on battery (it is a discharge)
+        if (pct < 15) {
+            snprintf(buf, sizeof(buf), "#%06lX " SYM_PLUG "# #%06lX %s#", (unsigned long)ui_accent(UI_ACC_WARNING)->top,
+                     (unsigned long)ui_accent(UI_ACC_ERROR)->top, num);
+        } else {
+            snprintf(buf, sizeof(buf), "#%06lX " SYM_PLUG "# %s", (unsigned long)ui_accent(UI_ACC_WARNING)->top, num);
+        }
+        break;
+    default:
+        if (pct < 15) {
             snprintf(buf, sizeof(buf), "#%06lX %s#", (unsigned long)ui_accent(UI_ACC_ERROR)->top, num);
         } else {
             snprintf(buf, sizeof(buf), "%s", num);
         }
+        break;
     }
     lv_label_set_text(s_bat, buf);
+    lv_obj_set_style_translate_x(s_bat, dx, 0);
+    lv_label_set_text_static(s_note, k == BK_DRAIN ? ui_s(S_LK_DRAIN) : "");
+    if (bolt_x != s_bolt_x) {
+        inval_glow(s_bolt_x);
+        s_bolt_x = bolt_x;
+        inval_glow(s_bolt_x);
+    }
     if (s_content > 0) {
         inval_band(RING_R - RING_W, RING_R);
     }
-    hl_update();
+    s_kind = k;
+    if (k == BK_FULL && was != BK_FULL) {
+        full_glow_start();          // calls anim_update()
+    } else {
+        anim_update();
+    }
 }
 
 static void bat_obs(lv_observer_t *o, lv_subject_t *s)
@@ -660,14 +1011,22 @@ static void overlay_create(void)
     s_content = 0;
     s_hint_mix = 0;
     s_shake_v = SHAKE_MS;
-    s_hl = -1;
     s_last_min = -1;
+    s_kind = BK_NONE;
+    s_bolt_x = 0;
+    s_anim_t = s_anim_hold = s_glow_hold = -1;
+    s_comet_a0 = s_comet_a1 = -1;
+    s_comet_mix = 0;
+    s_breath = s_bglow = 255;
+    s_glow_t0 = 0;
+    s_glow_v = 0;
     s_clock = label("lock_clock", &st_text48, CLOCK_CY, CLOCK_W);
     s_date = label("lock_date", &st_text16, DATE_CY, DATE_W);
     s_hint = label("lock_hint", &st_text16_1, DATE_CY, DATE_W);
     lv_label_set_text_static(s_hint, ui_s(S_LK_HINT));
     s_bat = label("lock_bat", &st_text20, BAT_CY, BAT_W);
     lv_label_set_recolor(s_bat, true);
+    s_note = label("lock_note", &st_text16, NOTE_CY, NOTE_W);      // text-2
     clock_refresh(true);
     ui_watch(g_s_battery, bat_obs, s_ov, NULL);     // runs once now; removed with the overlay
     s_clock_timer = lv_timer_create(clock_cb, 1000, NULL);
@@ -681,15 +1040,17 @@ static void overlay_delete(void)
         lv_timer_delete(s_clock_timer);
         s_clock_timer = NULL;
     }
-    if (s_hl_timer) {
-        lv_timer_delete(s_hl_timer);
-        s_hl_timer = NULL;
+    if (s_anim_timer) {
+        lv_timer_delete(s_anim_timer);
+        s_anim_timer = NULL;
     }
     if (s_ov) {
         lv_obj_delete(s_ov);
         s_ov = NULL;
     }
-    s_hl = -1;
+    s_anim_t = s_anim_hold = s_glow_hold = -1;
+    s_glow_t0 = 0;
+    s_bolt_x = 0;
 }
 
 // ---- Timelines
@@ -768,7 +1129,7 @@ static void phase_done(void)
         frame_exec(&s_tvar, phase_end());  // A35 at its end, or A36 back at its start: the same locked frame
         s_tl_unlock = false;
         s_phase = PH_LOCKED;
-        hl_update();
+        full_glow_start();                 // and the charging animation (anim_update)
     } else if (s_phase == PH_UNLOCKING) {
         frame_exec(&s_tvar, phase_end());
         overlay_delete();
@@ -865,6 +1226,7 @@ static void unlock_start(void)
     s_wake_t = 0;
     lv_display_trigger_activity(NULL);      // the screen below must not dim at once after a long lock
     s_phase = PH_UNLOCKING;
+    anim_update();                          // the charging animation ends (rest state) before the content fades
     atomic_store(&s_locked, false);
     ui_emit(UI_IN_LOCK, 0);
     run(from, delay);
@@ -890,8 +1252,10 @@ void ui_lockscr_woke(int from_level)
         if (!s_wake_t) {
             s_wake_t = 1;
         }
+        full_glow_start();      // lit again: "Заряжено" glows once more
+        return;
     }
-    hl_update();
+    anim_update();
 }
 
 bool ui_lockscr_freeze(bool unlock, int32_t ms)

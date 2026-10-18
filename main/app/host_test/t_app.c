@@ -128,6 +128,7 @@ static void boot(void)
     s_portal = false;
     s_t_net = s_t_bat = s_t_heap = s_t_touch = s_t_amb = 0;
     s_bat_polled = s_bat_warned = s_low_mem = false;
+    s_audio_t = s_turn_t = s_screen_t = 0;
     s_ambient = VAD_NO_HINT;
     for (size_t i = 0; i < sizeof(s_save) / sizeof(s_save[0]); i++) {
         s_save[i].on = false;
@@ -1078,15 +1079,48 @@ static void t_power(void)
     CHECK(g_bat_settled > 0 && g_bat_last_settled);
     say(1000);
     step(BAT_POLL_MS);
-    CHECK(!g_bat_last_settled);
+    CHECK(!g_bat_last_settled && g_bat_last_q == BOARD_BAT_SKIP);   // a turn's Wi-Fi sags the cell: not taken
     post_ev(EV_CANCEL, 0, 0);
-    step(BAT_SETTLE_MS + BAT_POLL_MS);
+    step(BAT_SKIP_TURN_MS - BAT_POLL_MS);
+    CHECK(g_bat_last_q == BOARD_BAT_SKIP);
+    step(2 * BAT_POLL_MS);
+    CHECK(g_bat_last_q == BOARD_BAT_LOADED);    // taken for the level, not for the charger trend
+    step(BAT_SETTLE_MS);
     CHECK(g_bat_last_settled);
     app_io_ui_sleep(1);                 // dimmed: less backlight current
     step(BAT_POLL_MS + 100);
     CHECK(!g_bat_last_settled);
     step(BAT_SETTLE_MS);
     CHECK(g_bat_last_settled);
+    // the speaker (a test tone outside a turn): no reading while it plays and for 15 s after
+    g_out_busy = true;
+    step(BAT_POLL_MS + 100);
+    CHECK(g_bat_last_q == BOARD_BAT_SKIP);
+    g_out_busy = false;
+    step(BAT_SKIP_AUDIO_MS - BAT_POLL_MS);
+    CHECK(g_bat_last_q == BOARD_BAT_SKIP);
+    step(2 * BAT_POLL_MS);
+    CHECK(g_bat_last_q == BOARD_BAT_LOADED);
+    // ... except near empty on battery: the low-battery toasts must not wait for the end of a long conversation
+    g_bat_mv = 3430;                    // 14 %
+    g_out_busy = true;
+    step(BAT_POLL_MS + 100);
+    CHECK(g_bat_last_q == BOARD_BAT_LOADED);
+    g_bat_chg = true;                   // on a charger the sag is not taken, whatever the level
+    step(BAT_POLL_MS + 100);
+    CHECK(g_bat_last_q == BOARD_BAT_SKIP);
+    g_out_busy = g_bat_chg = false;
+    g_bat_mv = 3900;
+    step(BAT_SKIP_AUDIO_MS + BAT_POLL_MS);
+    // on USB but draining: the UI gets the DRAIN flag (not CHARGING), and the low-battery toasts stay armed
+    int nt = ui_count(UI_TOAST);
+    g_bat_mv = 3430;                    // 14 %
+    g_bat_chg = g_bat_drain = true;
+    step(BAT_POLL_MS + 100);
+    CHECK((ui_last(UI_SET_BATTERY)->i & UI_BAT_DRAIN) && !(ui_last(UI_SET_BATTERY)->i & UI_BAT_CHARGING));
+    CHECK(ui_count(UI_TOAST) == nt + 1);
+    CHECK(strstr(ev_last("battery"), "\"power\":\"drain\"") != NULL);
+    g_bat_chg = g_bat_drain = false;
     g_bat_mv = -1;
     // BOOT ignored where the UI says so (keyboard): its release too
     boot();

@@ -661,6 +661,29 @@ static int cmd_ui(int argc, char **argv)
         printf("{\"locked\":%d,\"frame_ms\":%d}\n", ui_keylocked(), (int)ms);
         return 0;
     }
+    if (!strcmp(sub, "chganim")) {
+        // ui chganim <ms>: holds the charging animation (A38) at ms of its clock (one pulse = 1600 ms, the comet
+        // runs 600-1600, arrives at 1600, dissolves 1600-2000); ui chganim glow <ms>: the full glow (A39, 0-2400);
+        // ui chganim off: runs on from there. Needs the lock screen up and "bat sim <pct> charging" / "full".
+        bool off = !strcmp(arg, "off"), glow = !strcmp(arg, "glow");
+        const char *num = glow ? (argc > 3 ? argv[3] : "") : arg;
+        if (!off && (!num[0] || num[0] < '0' || num[0] > '9')) {
+            return dc_fail("usage: ui chganim <ms> | chganim glow <ms> | chganim off");
+        }
+        int32_t ms = off ? -1 : atoi(num);
+        if (!ui_lock(LOCK_MS)) {
+            return dc_fail("lvgl busy");
+        }
+        bool ok = ui_lockscr_chg_hold(glow, ms);
+        ui_unlock();
+        if (!ok) {
+            return dc_fail(off ? "nothing held" : glow ? "not locked, or not full (bat sim 100 full)"
+                                                      : "not locked, or not charging (bat sim 60 charging)");
+        }
+        printf("{\"locked\":%d,\"chganim\":\"%s\",\"ms\":%d}\n", ui_keylocked(), off ? "off" : glow ? "glow" : "charge",
+               (int)ms);
+        return 0;
+    }
     if (!strcmp(sub, "busy")) {
         // rim BUSY comet (A30); the scan / portal screens that use it come later
         if (!ui_lock(LOCK_MS)) {
@@ -678,6 +701,7 @@ static int cmd_ui(int argc, char **argv)
                    "web 0|1 | source <host> | "
                    "lang ru|en | langs a|b | speaker 0|1 | textonly 0|1 | hints <n> | face 0|1 | dir 0|1|2 | "
                    "back | busy 0|1 | fps on|off | lockanim lock|unlock <ms> | lockanim off | "
+                   "chganim [glow] <ms> | chganim off | "
                    "btn boot|pwr [short|down|up]");
 }
 

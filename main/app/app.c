@@ -398,6 +398,7 @@ void app_status(app_status_t *out)
     board_battery_state(&b);
     out->bat_mv = b.mv;
     out->bat_pct = b.pct;
+    out->bat_power = b.power;
     out->bat_charging = b.charging;
     out->bat_full = b.full;
     out->locked = ui_keylocked();

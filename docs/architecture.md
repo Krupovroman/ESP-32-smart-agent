@@ -201,14 +201,19 @@ uint8_t   board_backlight_get(void);
 esp_err_t board_buttons_start(board_btn_cb_t cb, void *ctx);   /* espressif/button 4.2.1: iot_button_new_gpio_device,
                                                                   active_level 0, long_press_time BOOT 1500 / PWR 3000 ms */
 int       board_battery_mv(void);       /* adc_oneshot ch7 + adc_cali curve fitting, ×3; -1 on error */
-/* battery model (ui.md 3.16): the app calls sample() every 5 s; median of 5, Li-ion curve, charging = USB host
-   (usb_serial_jtag_is_connected) or +15 mV in 2 min of settled readings below 4.15 V, full = either at >= 4.15 V
-   (left below 4.11 V); the ETA6098 has no status pin to the MCU */
-typedef struct { int pct, mv; bool charging, full, usb, sim; } board_bat_t;
-bool      board_battery_sample(bool settled);   /* settled: no load step for 60 s (app_io.c); true when pct /
-                                                   charging / full / usb changed */
+/* battery model (ui.md 3.16): the app calls sample() every 5 s; median of 5, Li-ion curve; external power = USB
+   host (usb_serial_jtag_is_connected) or +15 mV in 2 min of settled readings below 4.15 V; the voltage's direction
+   decides CHARGING / FULL (>= 4.15 V holding) / USB_DRAIN (settled -20 mV in 3 min); the ETA6098 has no status
+   pin to the MCU and the system load hangs on the cell */
+typedef enum { BOARD_PWR_BATTERY, BOARD_PWR_CHARGING, BOARD_PWR_FULL, BOARD_PWR_USB_DRAIN } board_power_t;
+typedef enum { BOARD_BAT_SKIP, BOARD_BAT_LOADED, BOARD_BAT_SETTLED } board_bat_q_t;
+typedef struct { int pct, mv; board_power_t power; bool charging, full, usb, sim; int raw, d3; bool d3_ok;
+                 int ofs; unsigned skipped; } board_bat_t;
+bool      board_battery_sample(board_bat_q_t q);   /* SKIP: speaker / turn / backlight step lately (app_io.c), the
+                                                      reading is not taken; SETTLED: no load step for 60 s; true
+                                                      when pct / power / usb changed */
 void      board_battery_state(board_bat_t *out);    /* any task */
-void      board_battery_sim(int pct, bool charging); /* console "bat sim"; pct < 0 ends it */
+void      board_battery_sim(int pct, board_power_t power); /* console "bat sim"; pct < 0 ends it */
 ```
 
 **Button rules.** These fix a conflict in the draft, where holding BOOT for 1.5 s to talk triggered a cancel.

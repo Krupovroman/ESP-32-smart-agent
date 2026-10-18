@@ -27,6 +27,7 @@
 #define SYM_SUN         "\xEF\x86\x85"  // F185  ui_20 ui_28
 #define SYM_LANGUAGE    "\xEF\x86\xAB"  // F1AB  ui_20
 #define SYM_HISTORY     "\xEF\x87\x9A"  // F1DA  ui_20
+#define SYM_PLUG        "\xEF\x87\xA6"  // F1E6  ui_16 ui_20 (USB power, not charging)
 #define SYM_WIFI        "\xEF\x87\xAB"  // F1EB  ui_16 ui_20 ui_28
 #define SYM_TRASH       "\xEF\x87\xB8"  // F1F8  ui_20
 #define SYM_BAT_FULL    "\xEF\x89\x80"  // F240  ui_16 ui_20

@@ -119,6 +119,9 @@ void ui_lockscr_lang(void);                 // the texts again after a language 
 // Console screenshots: shows frame ms of the lock (unlock = false) or unlock animation and holds it; ms < 0
 // finishes that animation. Returns false when the request does not fit the current state.
 bool ui_lockscr_freeze(bool unlock, int32_t ms);
+// Console screenshots of the charging animation (A38; glow = the full glow, A39): holds its clock at ms; ms < 0 lets
+// it run on from there. False when not locked or the battery is not in that state (or, for ms < 0, nothing was held).
+bool ui_lockscr_chg_hold(bool glow, int32_t ms);
 // Battery glyph for a level (F240..F244)
 const char *ui_bat_glyph(int pct);
 

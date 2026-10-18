@@ -2,7 +2,7 @@
 //   app state | say <text> | wait [state] [ms] | vad [snr_db min_ms heard_ms] | dir 0|1|2 | wake   (state = app state)
 //   ptt down [a|b] | up [held_ms] | tap      cancel      mode assistant|translator      textonly 0|1
 //   btn boot|pwr click|long|down|up | btn boot double   (simulated keys, through the button driver's debounce)
-//   lock | unlock      bat | bat sim <pct> [charging 0|1] | bat sim off   (ui.md 3.16)
+//   lock | unlock      bat | bat sim <pct> [battery|charging|full|drain] | bat sim off   (ui.md 3.16)
 // With injected audio: "mic load ..." + "mic src inject fast", then "ptt tap" (latched; the end of the
 // clip sends it) or "ptt down" / "ptt up 800".
 #include "app_priv.h"
@@ -124,10 +124,10 @@ static int cmd_state(void)
     } else {
         printf("\"ambient\":%.1f,", st.ambient_x10 / 10.0);
     }
-    printf("\"mic_src\":\"%s\",\"bat_mv\":%d,\"bat_pct\":%d,\"bat_charging\":%d,\"bat_full\":%d,\"locked\":%d,"
-           "\"heap\":{\"int\":%u,\"int_min\":%u,\"psram\":%u}}\n",
-           audio_in_get_source() == AUDIO_SRC_INJECT ? "inject" : "mic", st.bat_mv, st.bat_pct, st.bat_charging,
-           st.bat_full, st.locked,
+    printf("\"mic_src\":\"%s\",\"bat_mv\":%d,\"bat_pct\":%d,\"bat_power\":\"%s\",\"bat_charging\":%d,\"bat_full\":%d,"
+           "\"locked\":%d,\"heap\":{\"int\":%u,\"int_min\":%u,\"psram\":%u}}\n",
+           audio_in_get_source() == AUDIO_SRC_INJECT ? "inject" : "mic", st.bat_mv, st.bat_pct,
+           board_power_name((board_power_t)st.bat_power), st.bat_charging, st.bat_full, st.locked,
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -346,16 +346,31 @@ static int cmd_lock(int argc, char **argv)
     return 0;
 }
 
-// bat: the battery model (board_battery_state); bat sim <pct> [charging 0|1] overrides it for UI tests, bat sim off
+#define BAT_USAGE "usage: bat | bat sim <0-100> [battery|charging|full|drain|0-3] | bat sim off"
+
+// "battery" / "charging" / "full" / "drain" or the board_power_t number (0 / 1 also as the old "charging 0|1")
+static int power_arg(const char *s)
+{
+    for (int p = 0; p < BOARD_PWR__N; p++) {
+        if (!strcmp(s, board_power_name((board_power_t)p))) {
+            return p;
+        }
+    }
+    return s[0] >= '0' && s[0] < '0' + BOARD_PWR__N && !s[1] ? s[0] - '0' : -1;
+}
+
+// bat: the battery model (board_battery_state, ui.md 3.16); bat sim <pct> [state] overrides it for UI tests (FULL
+// shows 100), bat sim off ends that
 static int cmd_bat(int argc, char **argv)
 {
     if (argc > 1 && !strcmp(argv[1], "sim")) {
+        int pw = argc > 3 ? power_arg(argv[3]) : BOARD_PWR_BATTERY;
         if (argc == 3 && !strcmp(argv[2], "off")) {
-            board_battery_sim(-1, false);
-        } else if (argc >= 3 && atoi(argv[2]) >= 0 && atoi(argv[2]) <= 100) {
-            board_battery_sim(atoi(argv[2]), argc > 3 && atoi(argv[3]) != 0);
+            board_battery_sim(-1, BOARD_PWR_BATTERY);
+        } else if (argc >= 3 && argc <= 4 && atoi(argv[2]) >= 0 && atoi(argv[2]) <= 100 && pw >= 0) {
+            board_battery_sim(atoi(argv[2]), (board_power_t)pw);
         } else {
-            return dc_fail("usage: bat | bat sim <0-100> [charging 0|1] | bat sim off");
+            return dc_fail(BAT_USAGE);
         }
         if (app_started()) {
             int rc = post_wait(EV_BATTERY, 0, 0, NULL);     // the UI gets it now, not at the next reading
@@ -364,12 +379,20 @@ static int cmd_bat(int argc, char **argv)
             }
         }
     } else if (argc > 1) {
-        return dc_fail("usage: bat | bat sim <0-100> [charging 0|1] | bat sim off");
+        return dc_fail(BAT_USAGE);
     }
     board_bat_t b;
     board_battery_state(&b);
-    printf("{\"pct\":%d,\"mv\":%d,\"charging\":%d,\"full\":%d,\"usb\":%d,\"sim\":%d}\n", b.pct, b.mv, b.charging,
-           b.full, b.usb, b.sim);
+    // d3: the settled voltage against 3 min ago (USB_DRAIN at <= -20 mV, FULL holds at < +8 mV above 4.15 V);
+    // ofs: the charging offset taken off the reading on USB power; skipped: readings not taken under load
+    char d3[12] = "null";
+    if (b.d3_ok) {
+        snprintf(d3, sizeof(d3), "%d", b.d3);
+    }
+    printf("{\"pct\":%d,\"mv\":%d,\"raw\":%d,\"power\":\"%s\",\"charging\":%d,\"full\":%d,\"drain\":%d,\"usb\":%d,"
+           "\"d3\":%s,\"ofs\":%d,\"skipped\":%u,\"sim\":%d}\n",
+           b.pct, b.mv, b.raw, board_power_name(b.power), b.charging, b.full, b.power == BOARD_PWR_USB_DRAIN, b.usb,
+           d3, b.ofs, b.skipped, b.sim);
     return 0;
 }
 
@@ -386,5 +409,6 @@ void app_console_register(void)
     devconsole_register("btn", "btn boot|pwr click|long|down|up | btn boot double - simulated keys", cmd_btn);
     devconsole_register("lock", "lock - lock screen (as PWR)", cmd_lock);
     devconsole_register("unlock", "unlock - leave the lock screen (as PWR)", cmd_lock);
-    devconsole_register("bat", "bat | bat sim <pct> [charging 0|1] | bat sim off - battery model", cmd_bat);
+    devconsole_register("bat", "bat | bat sim <pct> [battery|charging|full|drain] | bat sim off - battery model",
+                        cmd_bat);
 }

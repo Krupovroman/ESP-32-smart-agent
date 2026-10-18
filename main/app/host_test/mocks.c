@@ -456,6 +456,11 @@ void audio_out_set_volume(uint8_t pct)
     g_volume_set = pct;
 }
 
+void audio_out_set_boost_db(uint8_t db)
+{
+    (void)db;
+}
+
 // ---- console events
 
 static char s_ev[512][400];         // the "ai" result event with its web fields is about 300 bytes
@@ -703,7 +708,8 @@ int g_backlight = -1;
 int g_power_off, g_latch_on;
 bool g_boot_down, g_pwr_held;
 int g_bat_mv = -1;
-bool g_bat_chg, g_bat_last_settled;
+bool g_bat_chg, g_bat_drain, g_bat_last_settled;
+int g_bat_last_q = -1;
 int g_net_state = NET_UP;
 bool g_portal;
 
@@ -761,25 +767,36 @@ int board_battery_pct(int mv)
 
 int g_bat_samples, g_bat_settled;
 
-bool board_battery_sample(bool settled)
+bool board_battery_sample(board_bat_q_t q)
 {
     g_bat_samples++;
-    g_bat_settled += settled ? 1 : 0;
-    g_bat_last_settled = settled;
+    g_bat_settled += q == BOARD_BAT_SETTLED ? 1 : 0;
+    g_bat_last_settled = q == BOARD_BAT_SETTLED;
+    g_bat_last_q = (int)q;
     return false;
 }
 
 void board_battery_state(board_bat_t *out)
 {
     memset(out, 0, sizeof(*out));
-    out->mv = g_bat_mv;
+    out->mv = out->raw = g_bat_mv;
     out->pct = board_battery_pct(g_bat_mv);
-    out->charging = out->pct >= 0 && g_bat_chg;
+    out->power = out->pct < 0 ? BOARD_PWR_BATTERY
+               : g_bat_drain ? BOARD_PWR_USB_DRAIN
+               : g_bat_chg   ? BOARD_PWR_CHARGING
+                             : BOARD_PWR_BATTERY;
+    out->charging = out->power == BOARD_PWR_CHARGING;
 }
 
-void board_battery_sim(int pct, bool charging)
+void board_battery_sim(int pct, board_power_t power)
 {
-    (void)pct, (void)charging;
+    (void)pct, (void)power;
+}
+
+const char *board_power_name(board_power_t p)
+{
+    static const char *const n[] = { "battery", "charging", "full", "drain" };
+    return (unsigned)p < BOARD_PWR__N ? n[p] : "?";
 }
 
 void net_status(net_status_t *out)
@@ -820,8 +837,9 @@ void mocks_reset(void)
     g_pwr_short = g_pwr_down = g_pwr_up = 0;
     g_locked = false;
     g_boot_refused = 0;
-    g_bat_chg = g_bat_last_settled = false;
+    g_bat_chg = g_bat_drain = g_bat_last_settled = false;
     g_bat_samples = g_bat_settled = 0;
+    g_bat_last_q = -1;
     g_inactive_ms = 100000;
     g_touch_down = false;
     g_ui_level = 0;
