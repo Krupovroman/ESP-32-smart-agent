@@ -75,8 +75,17 @@ EXIOn = TCA9554 port P(n-1). Output register defaults to 0xFF.
    be ASCII without spaces.
 8. **Download mode** if auto-reset fails: hold BOOT, tap RESET, release BOOT.
 9. Strapping pins in use: GPIO0 (BOOT), GPIO3 (TP_SCL), GPIO45/46 (LCD D1/D0) — no external pull-ups.
-10. **No charge status to the MCU.** The ETA6098 drives only its charge LED. The firmware infers charging from the
-    USB host (`usb_serial_jtag_is_connected()`, start-of-frame packets; a plain wall charger sends none) or from the
-    battery voltage rising at rest (+15 mV in 2 min below 4.15 V, readings within 60 s of a load step ignored),
-    docs/ui.md 3.16. With USB connected the ×3 divider read about 4065 mV (≈ 83 %) on this unit. What the divider
-    reads with USB and no cell is not measured yet (the model hides the indicator if the readings swing > 250 mV).
+10. **No charge status to the MCU.** The ETA6098 drives only its charge LED, and the system load hangs on the cell:
+    USB power is not the same as charging. Measured on this unit on a PC port (~0.5 A): idle, the ×3 divider read
+    4083 → 4086 mV over 40 s (slowly charging); with the speaker loud (speech boost, volume 100) the board takes more
+    than the port gives and the cell sags and drains. The firmware sees external power from the USB host
+    (`usb_serial_jtag_is_connected()`, start-of-frame packets; a plain wall charger sends none) or from the voltage
+    rising at rest (+15 mV in 2 min below 4.15 V), and decides charging / full / USB-but-draining from the settled
+    voltage's direction (docs/ui.md 3.16): readings are not taken while the speaker plays (and 15 s after), during a
+    turn (and 20 s after) or right after a backlight step; USB_DRAIN = the settled level 20 mV below 3 min ago (or
+    30 mV below its peak since charging began). While charging the cell reads higher than at rest (charge current x
+    internal resistance + polarisation): the model takes the plug-in step as that offset (60 mV when it has no
+    reference, e.g. booted on USB) and removes it before the discharge curve. To check the offset on a port: `bat`
+    on battery after 2 min idle (`mv`), plug in, `bat` after 2 min (`ofs` = the measured step), charge 10 min, unplug,
+    `bat` after 3 min: the percent should not have jumped. What the divider reads with USB and no cell is not
+    measured yet (the model hides the indicator if the readings swing > 250 mV).
