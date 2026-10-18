@@ -132,6 +132,9 @@ void ui_set_langs(const char *a, const char *b)
     scr_home_langs_changed();
     ui_save_str("tr_lang_a", g_lang_a);
     ui_save_str("tr_lang_b", g_lang_b);
+    // the app and the AI client read the pair from settings: write it now (queued ahead of anything the next turn
+    // does), not 1.5 s later or after a busy turn, so a chip held right after the pick already uses it
+    ui_save_flush();
     ui_emit(UI_IN_LANGS, 0);
 }
 

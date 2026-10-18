@@ -539,6 +539,7 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
   - **Firmware today** offers the protocol §4.2 codes whose scripts the fonts draw: ru, en, de, fr, es, it, pt, pl, tr, uk (names in the UI language). zh, ja, ko and ar are left out until a font or the `display_text` romanisation covers them: the sanitiser drops every glyph `ui_20` lacks, so their transcripts and translations would be empty. A stored code outside the list (from an older firmware or `set tr_lang_b zh`) falls back to en (ru when the other slot already is en), and the fallback is written back to `tr_lang_a` / `tr_lang_b`.
   - The subtitle says "только текст" when the TTS has no voice for that language. MAI-Voice has 28 locales and no uk; kk is also text-only.
   - Picking the language already in the other slot swaps the two.
+  - A new pair takes effect at once: the UI writes `tr_lang_a` / `tr_lang_b` immediately (not through the 1.5 s debounce) before it tells the app, so a chip held right after the pick uses it.
 - **S "Настройки":**
   1. Wi-Fi (SSID / "Не подключено")
   2. Телефон ("Настройка по QR")
