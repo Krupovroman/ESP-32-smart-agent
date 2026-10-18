@@ -1,5 +1,6 @@
 #include "net.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include "esp_check.h"
 #include "esp_event.h"
@@ -37,7 +38,13 @@ static char s_ip[16];
 static bool s_auto = false;          // reconnect automatically after drops
 static int s_backoff_s = 1;
 static TimerHandle_t s_retry_timer;
+static TaskHandle_t s_retry_task;
 static bool s_sntp_started;
+
+// Scan + connect need ~1.5 KB of stack and block up to 4 s: they run in this task, not in the
+// 2 KB FreeRTOS timer service (overflowed on every Wi-Fi drop) and not in the event loop.
+#define RETRY_STACK 4096
+#define RETRY_PRIO  4
 
 const char *net_state_name(net_state_t s)
 {
@@ -141,7 +148,11 @@ static void connect_best_saved(void)
     int best = 0;
     net_ap_t aps[16];
     int n = 0;
-    if (net_scan(4000, aps, 16, &n) == ESP_OK) {
+    esp_err_t scanned = net_scan(4000, aps, 16, &n);
+    if (!s_auto) {
+        return;              // net_connect() / net_disconnect() took over during the scan
+    }
+    if (scanned == ESP_OK) {
         int best_rssi = -127;
         for (int i = 0; i < s_n_saved; i++) {
             for (int k = 0; k < n; k++) {
@@ -156,12 +167,34 @@ static void connect_best_saved(void)
     start_sta(s_saved[best].ssid, s_saved[best].pass);
 }
 
+static void retry_task(void *arg)
+{
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        // checked under the lock: net_connect() clears s_auto before it waits for the lock
+        if (s_auto && s_state != NET_UP) {
+            connect_best_saved();
+        }
+        xSemaphoreGive(s_lock);
+    }
+}
+
+// Timer service context (2 KB stack): only wake the retry task.
 static void retry_cb(TimerHandle_t t)
 {
-    if (s_auto && s_state != NET_UP) {
-        xSemaphoreTake(s_lock, portMAX_DELAY);
-        connect_best_saved();
-        xSemaphoreGive(s_lock);
+    if (s_retry_task) {
+        xTaskNotifyGive(s_retry_task);
+    }
+}
+
+// Created with the first automatic connection, after the boot self-test measured the heap.
+// Caller holds s_lock.
+static void ensure_retry_task(void)
+{
+    if (!s_retry_task && xTaskCreate(retry_task, "net_retry", RETRY_STACK, NULL, RETRY_PRIO, &s_retry_task) != pdPASS) {
+        s_retry_task = NULL;
+        ESP_LOGE(TAG, "no memory for the reconnect task: no automatic reconnects");
     }
 }
 
@@ -232,6 +265,7 @@ esp_err_t net_start(void)
 {
     s_auto = true;
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    ensure_retry_task();
     connect_best_saved();
     xSemaphoreGive(s_lock);
     return ESP_OK;
@@ -245,6 +279,7 @@ esp_err_t net_connect(const char *ssid, const char *pass, bool save)
     s_auto = false;              // a manual attempt must not be raced by the retry timer
     xTimerStop(s_retry_timer, 0);
     xSemaphoreTake(s_lock, portMAX_DELAY);
+    ensure_retry_task();
     start_sta(ssid, pass);
     xSemaphoreGive(s_lock);
     EventBits_t b = xEventGroupWaitBits(s_evt, BIT_UP | BIT_FAIL, pdFALSE, pdFALSE, pdMS_TO_TICKS(20000));
@@ -312,8 +347,18 @@ esp_err_t net_scan(uint32_t timeout_ms, net_ap_t *out, int max, int *n)
         return ESP_ERR_TIMEOUT;
     }
     uint16_t cnt = 20;
-    wifi_ap_record_t recs[20];
-    ESP_RETURN_ON_ERROR(esp_wifi_scan_get_ap_records(&cnt, recs), TAG, "records");
+    // 1.8 KB: on the heap, so callers with small stacks (the retry task) can scan
+    wifi_ap_record_t *recs = malloc(sizeof(wifi_ap_record_t) * cnt);
+    if (!recs) {
+        esp_wifi_clear_ap_list();
+        return ESP_ERR_NO_MEM;
+    }
+    err = esp_wifi_scan_get_ap_records(&cnt, recs);
+    if (err != ESP_OK) {
+        free(recs);
+        ESP_LOGE(TAG, "records: %s", esp_err_to_name(err));
+        return err;
+    }
     for (int i = 0; i < cnt && *n < max; i++) {
         if (!recs[i].ssid[0]) {
             continue;
@@ -333,6 +378,7 @@ esp_err_t net_scan(uint32_t timeout_ms, net_ap_t *out, int max, int *n)
         out[*n].ch = recs[i].primary;
         (*n)++;
     }
+    free(recs);
     return ESP_OK;
 }
 
