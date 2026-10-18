@@ -42,6 +42,8 @@ typedef enum {
     UI_WAKE,            // leave dim / ambient / screen off (ui.md 5.8); also posted by ui_boot_down / ui_pwr_short
     UI_SCREEN_OFF,      // screen off now (PWR at H idle): backlight 0 until the next touch or button
     UI_WORK_DONE,       // internal (ui_work.c): s = finished background job, its done callback runs in taskLVGL
+    UI_SET_TURN,        // i = app turn tag: chat entries created from now on carry it (cm_entry_t.tag); the reader
+                        // and the card actions send it back, so the app acts on the turn shown
     UI_MSG__N
 } ui_msg_type_t;
 
@@ -61,13 +63,13 @@ typedef enum { UI_MOOD_NEUTRAL, UI_MOOD_HAPPY, UI_MOOD_SAD, UI_MOOD_SURPRISED, U
 
 typedef enum {
     UI_FAULT_NONE, UI_FAULT_NO_WIFI, UI_FAULT_BAD_KEY, UI_FAULT_NO_CREDIT, UI_FAULT_LOW_CREDIT, UI_FAULT_REGION,
-    UI_FAULT_MODEL, UI_FAULT_MODEL_EXPIRING, UI_FAULT_MIC, UI_FAULT__N
+    UI_FAULT_MODEL, UI_FAULT_MODEL_EXPIRING, UI_FAULT_MIC, UI_FAULT_NO_KEY, UI_FAULT__N
 } ui_fault_t;
 
 // Chat error cards (ui.md 3.14 / 5.6)
 typedef enum {
     UI_CARD_GENERIC, UI_CARD_NO_WIFI, UI_CARD_BAD_KEY, UI_CARD_NO_CREDIT, UI_CARD_REGION, UI_CARD_MODEL,
-    UI_CARD_RATE, UI_CARD_SERVER, UI_CARD_TLS, UI_CARD_MIC, UI_CARD_NO_SPEAKER, UI_CARD__N
+    UI_CARD_RATE, UI_CARD_SERVER, UI_CARD_TLS, UI_CARD_MIC, UI_CARD_NO_SPEAKER, UI_CARD_NO_KEY, UI_CARD__N
 } ui_card_t;
 
 typedef enum { UI_NET_OFF, UI_NET_CONNECTING, UI_NET_UP, UI_NET_FAILED } ui_net_t;
@@ -112,10 +114,11 @@ typedef enum {
     UI_IN_PTT_UP,       // i = held ms (the app decides hold vs latch)
     UI_IN_PTT_CANCEL,   // released beyond the cancel radius (discard)
     UI_IN_TEXT_ONLY,    // voice button: i = new text_only value
-    UI_IN_NEW_CHAT,     // "Новый разговор" (history and model context reset)
-    UI_IN_CARD_ACTION,  // i = ui_card_t whose action stadium was tapped
-    UI_IN_WRONG_LANG,   // reader: re-send the cached clip, i = forced source side
-    UI_IN_REPLAY,       // reader: speak the translation again
+    UI_IN_NEW_CHAT,     // "Новый разговор" (history and model context reset); i = 1: S -> История -> Удалить
+                        // (both chats already cleared, stay in S)
+    UI_IN_CARD_ACTION,  // retry stadium tapped: i = ui_card_t in bits 0-7, the card's turn tag (UI_SET_TURN) above
+    UI_IN_WRONG_LANG,   // reader: re-send that turn's clip with the other source forced; i = the entry's turn tag
+    UI_IN_REPLAY,       // reader: speak that turn's translation again; i = the entry's turn tag
     UI_IN_OPEN,         // no longer emitted: the UI opens these screens itself (ui_open_t kept for ui_open())
     UI_IN_DISMISS,      // error orb tapped
 
@@ -125,6 +128,7 @@ typedef enum {
     UI_IN_LANGS,        // translator languages changed (tr_lang_a / tr_lang_b saved)
     UI_IN_SPEAKER,      // Settings -> "Динамик": i = 1 connected, 0 none (RAM only)
     UI_IN_SLEEP,        // i = 0 awake, 1 dimmed, 2 ambient, 3 screen off (the app may stop the mic at 3)
+    UI_IN_HINTS,        // D -> "Показать подсказки": i = hints left (3); the app counts them down
 } ui_input_t;
 
 // Screens the UI opens on its own (pill, settings button, chips, offline orb, fault pill, card actions)

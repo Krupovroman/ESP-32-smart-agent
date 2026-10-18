@@ -482,7 +482,9 @@ int g_ui_ctx;
 bool g_boot_ok;
 int g_pwr_short, g_pwr_down, g_pwr_up;
 uint32_t g_inactive_ms;
+bool g_touch_down;
 int g_wait_release;
+int g_ui_level;
 static ui_input_cb_t s_in_cb;
 
 static void ui_rec(int type, int32_t i, const char *s)
@@ -497,11 +499,27 @@ static void ui_rec(int type, int32_t i, const char *s)
     strlcpy(r->s, s ? s : "", sizeof(r->s));
 }
 
+void ui_sleep_to(int level)
+{
+    // as ui_sleep.c: deeper levels only by its idle timer / screen off, any wake back to 0, each change reported
+    if (level != g_ui_level) {
+        g_ui_level = level;
+        if (s_in_cb) {
+            s_in_cb(UI_IN_SLEEP, level, NULL);
+        }
+    }
+}
+
 void ui_post(const ui_msg_t *m)
 {
     // UI_USER_WAVE carries 32 binary bytes, not text
     ui_rec(m->type, m->i, m->type == UI_USER_WAVE ? (m->s ? "<wave>" : NULL) : m->s);
     free(m->s);
+    if (m->type == UI_WAKE || m->type == UI_GOTO) {
+        ui_sleep_to(0);
+    } else if (m->type == UI_SCREEN_OFF && g_ui_level < 3) {
+        ui_sleep_to(3);
+    }
 }
 
 void ui_post_text(ui_msg_type_t type, int32_t i, const char *text)
@@ -551,9 +569,16 @@ void ui_unlock(void)
 {
 }
 
+int g_ui_lang;
+
 int ui_str_lang(void)
 {
-    return 0;
+    return g_ui_lang;
+}
+
+size_t ui_typed_text(char *out, size_t len)
+{
+    return len ? (out[0] = 0, 0) : 0;
 }
 
 int ui_count(int type)
@@ -600,6 +625,23 @@ uint32_t lv_display_get_inactive_time(const lv_display_t *d)
 {
     (void)d;
     return g_inactive_ms;
+}
+
+lv_indev_t *lv_indev_get_next(lv_indev_t *in)
+{
+    return in ? NULL : (lv_indev_t *)&g_touch_down;     // one pointer device
+}
+
+lv_indev_type_t lv_indev_get_type(const lv_indev_t *in)
+{
+    (void)in;
+    return LV_INDEV_TYPE_POINTER;
+}
+
+lv_indev_state_t lv_indev_get_state(const lv_indev_t *in)
+{
+    (void)in;
+    return g_touch_down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
 }
 
 // ---- board, net
@@ -700,6 +742,9 @@ void mocks_reset(void)
     g_boot_ok = true;
     g_pwr_short = g_pwr_down = g_pwr_up = 0;
     g_inactive_ms = 100000;
+    g_touch_down = false;
+    g_ui_level = 0;
+    g_ui_lang = 0;
     g_wait_release = 0;
     g_backlight = -1;
     g_power_off = g_latch_on = 0;

@@ -25,7 +25,7 @@
 #define SIM_GAP_MS  60          // simulated key edges: longer than the 30 ms debounce
 
 static const char *const s_fault_names[] = {
-    "none", "nowifi", "badkey", "nocredit", "lowcredit", "region", "model", "expiring", "mic",
+    "none", "nowifi", "badkey", "nocredit", "lowcredit", "region", "model", "expiring", "mic", "nokey",
 };
 
 static int need_app(void)
@@ -100,9 +100,9 @@ static int cmd_state(void)
     app_json_esc(model, sizeof(model), have_last ? al.model : "");
     app_json_esc(voice, sizeof(voice), ts.voice);
     printf("{\"state\":\"%s\",\"mode\":\"%s\",\"tr_dir\":%u,\"text_only\":%d,\"latched\":%d,\"ptt\":%d,\"turn\":%u,"
-           "\"clip_kept\":%d,\"screen\":\"%s\",\"hints\":%d,\"fault\":\"%s\",\"low_mem\":%d,",
+           "\"clip_kept\":%d,\"kept\":%u,\"kept_kb\":%u,\"screen\":\"%s\",\"hints\":%d,\"fault\":\"%s\",\"low_mem\":%d,",
            app_state_name(st.state), st.mode ? "translator" : "assistant", st.tr_dir, st.text_only, st.latched,
-           st.ptt_held, (unsigned)st.turn, st.clip_kept, st.screen, st.hints,
+           st.ptt_held, (unsigned)st.turn, st.clip_kept, (unsigned)st.kept, (unsigned)st.kept_kb, st.screen, st.hints,
            (unsigned)st.fault < sizeof(s_fault_names) / sizeof(s_fault_names[0]) ? s_fault_names[st.fault] : "?",
            st.low_mem);
     printf("\"net\":{\"state\":\"%s\",\"ssid\":\"%s\",\"rssi\":%d,\"ip\":\"%s\",\"portal\":%d},",

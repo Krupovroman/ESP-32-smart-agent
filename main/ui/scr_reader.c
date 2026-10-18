@@ -32,12 +32,17 @@ static void box_cb(lv_event_t *e)
     }
 }
 
+// The app acts on the turn of the entry shown (its tag), never on the newest one
+static int32_t entry_tag(void)
+{
+    const cm_entry_t *en = cm_find(s_entry);
+    return en ? (int32_t)en->tag : 0;
+}
+
 static void wrong_cb(lv_event_t *e)
 {
     (void)e;
-    const cm_entry_t *en = cm_find(s_entry);
-    int32_t other = en && en->side == UI_SIDE_A ? UI_SIDE_B : UI_SIDE_A;
-    if (!ui_emit(UI_IN_WRONG_LANG, other)) {
+    if (!ui_emit(UI_IN_WRONG_LANG, entry_tag())) {     // the app knows that turn's detected side
         ui_toast(ui_s(S_NOT_YET));
     }
 }
@@ -45,7 +50,7 @@ static void wrong_cb(lv_event_t *e)
 static void replay_cb(lv_event_t *e)
 {
     (void)e;
-    if (!ui_emit(UI_IN_REPLAY, (int32_t)s_entry)) {
+    if (!ui_emit(UI_IN_REPLAY, entry_tag())) {
         ui_toast(ui_s(S_NOT_YET));
     }
 }

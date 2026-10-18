@@ -130,6 +130,7 @@ static void act_cb(lv_event_t *e)
     case 0: ui_nav_push(UI_SCR_TOUCH, 0); break;
     case 1:
         ui_set(g_s_hints, 3);           // "Показать подсказки" (5.9)
+        ui_emit(UI_IN_HINTS, 3);        // the app's counter is the one that counts down
         ui_toast(ui_s(S_A_HINTS_ON));
         break;
     case 2: ui_nav_push(UI_SCR_LICENSES, 0); break;
