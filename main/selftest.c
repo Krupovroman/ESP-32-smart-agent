@@ -1,5 +1,6 @@
 // Boot self-test before an OTA image is confirmed (docs/architecture.md §8.1, §8.2), and the
-// RTC crash counter that selects safe mode after repeated crashes during boot.
+// RTC crash counter that selects safe mode after repeated crashes during boot or the first
+// minute after READY.
 #include "selftest.h"
 #include "board.h"
 #include "devconsole.h"
@@ -24,6 +25,7 @@ static const char *TAG = "selftest";
 
 #define CRASH_MAGIC       0x52414331u   // "RAC1": RTC words are valid
 #define SAFE_MODE_CRASHES 3
+#define STABLE_MS         60000         // a crash this soon after READY still counts as a boot crash
 #define GUARD_MS          10000
 #define LVGL_WINDOW_MS    500
 // heap gates at this point of the boot (§8.2; tighten after measuring)
@@ -59,7 +61,8 @@ bool selftest_boot_begin(void)
     devconsole_info_set("boot_crashes", v);
     devconsole_info_set("safe_mode", s_safe ? "true" : "false");
     if (s_safe) {
-        ESP_LOGE(TAG, "%u crashes during boot: SAFE MODE (no Wi-Fi, no audio)", (unsigned)s_rtc_crashes);
+        ESP_LOGE(TAG, "%u crashes during boot: SAFE MODE (no Wi-Fi, no audio); \"ota rollback\" boots the previous image",
+                 (unsigned)s_rtc_crashes);
     }
     return s_safe;
 }
@@ -201,9 +204,27 @@ esp_err_t selftest_run(const selftest_inputs_t *in)
     return ok ? e : ESP_FAIL;
 }
 
+static void stable_cb(void *arg)
+{
+    s_rtc_reached_ready = 1;
+    s_rtc_crashes = 0;
+    if (arg) {
+        ESP_LOGI(TAG, "%d s after READY without a crash: crash counter cleared", STABLE_MS / 1000);
+    }
+}
+
+// The image is confirmed before Wi-Fi, the AI client and the app start (§8.1): a missing router
+// or a relay outage must not roll a good image back. What fails after the confirmation is covered
+// here instead: the crash counter is cleared only after STABLE_MS of uptime, so a confirmed image
+// that crashes in app_start, on the first Wi-Fi drop or in TLS reaches safe mode after
+// SAFE_MODE_CRASHES boots (console up, "ota rollback" / USB) rather than rebooting forever.
 void selftest_ready(void)
 {
     devconsole_ready(!s_safe);
-    s_rtc_reached_ready = 1;
-    s_rtc_crashes = 0;
+    static esp_timer_handle_t s_stable;
+    const esp_timer_create_args_t a = { .callback = stable_cb, .arg = (void *)1, .name = "st_stable" };
+    if (s_stable || esp_timer_create(&a, &s_stable) != ESP_OK ||
+        esp_timer_start_once(s_stable, (uint64_t)STABLE_MS * 1000) != ESP_OK) {
+        stable_cb(NULL);       // no timer: clear now (a later crash then counts as a fresh boot)
+    }
 }
