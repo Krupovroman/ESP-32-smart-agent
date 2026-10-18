@@ -16,6 +16,7 @@ static const char *TAG = "audio_in";
 
 #define FRAME_SAMPLES  320                       // 20 ms at 16 kHz
 #define REC_CAP        (AUDIO_IN_RATE * AUDIO_IN_MAX_MS / 1000)
+#define PRE_CAP        (AUDIO_IN_RATE / 2)       // 500 ms pre-roll ring (docs/ui.md 5.1)
 
 static i2s_chan_handle_t s_rx;
 static SemaphoreHandle_t s_lock;
@@ -33,6 +34,8 @@ static audio_clip_t s_last;
 static bool s_have_last;
 static int16_t s_peak;
 static double s_sum_sq;
+static int16_t *s_pre;                           // PSRAM ring of the mic between recordings
+static size_t s_pre_pos, s_pre_fill;
 
 static esp_err_t apply_slot(bool right)
 {
@@ -133,6 +136,15 @@ static void capture_task(void *arg)
                 s_recording = false;
             }
             xSemaphoreGive(s_lock);
+        } else if (s_pre && n > 0) {
+            // between recordings the last 500 ms are kept, so a press can prepend the first syllable
+            xSemaphoreTake(s_lock, portMAX_DELAY);
+            for (size_t i = 0; i < n; i++) {
+                s_pre[s_pre_pos] = pcm[i];
+                s_pre_pos = (s_pre_pos + 1) % PRE_CAP;
+            }
+            s_pre_fill = s_pre_fill + n > PRE_CAP ? PRE_CAP : s_pre_fill + n;
+            xSemaphoreGive(s_lock);
         }
         int db = dbfs_x10(sum_sq, n);
         int lvl = (db + 600) * 100 / 500;
@@ -145,6 +157,7 @@ esp_err_t audio_in_init(void)
     s_lock = xSemaphoreCreateMutex();
     s_rec = heap_caps_malloc(REC_CAP * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     ESP_RETURN_ON_FALSE(s_rec, ESP_ERR_NO_MEM, TAG, "rec buffer");
+    s_pre = heap_caps_malloc(PRE_CAP * sizeof(int16_t), MALLOC_CAP_SPIRAM);   // optional: no pre-roll without it
 
     i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
     chan.dma_desc_num = 6;
@@ -175,6 +188,11 @@ esp_err_t audio_in_init(void)
 
 esp_err_t audio_in_start(uint32_t max_ms)
 {
+    return audio_in_start_ex(max_ms, 0);
+}
+
+esp_err_t audio_in_start_ex(uint32_t max_ms, uint32_t preroll_ms)
+{
     // without the capture task nothing would ever end the recording (console "mic rec" waits)
     ESP_RETURN_ON_FALSE(s_running, ESP_ERR_INVALID_STATE, TAG, "not initialised");
     if (max_ms == 0 || max_ms > AUDIO_IN_MAX_MS) {
@@ -190,6 +208,20 @@ esp_err_t audio_in_start(uint32_t max_ms)
     s_peak = 0;
     s_have_last = false;
     audio_inject_rewind();
+    // pre-roll from the mic ring; never for injected audio, which must stay bit-exact
+    size_t k = preroll_ms && s_pre && !audio_inject_active() ? (size_t)s_rate * preroll_ms / 1000 : 0;
+    k = k > s_pre_fill ? s_pre_fill : k;
+    k = k > s_rec_max ? s_rec_max : k;
+    size_t from = (s_pre_pos + PRE_CAP - k) % PRE_CAP;
+    for (size_t i = 0; i < k; i++) {
+        int16_t v = s_pre[(from + i) % PRE_CAP];
+        s_rec[i] = v;
+        s_sum_sq += (double)v * v;
+        int16_t a = v < 0 ? (int16_t)(v == -32768 ? 32767 : -v) : v;
+        if (a > s_peak) s_peak = a;
+    }
+    s_rec_len = k;
+    s_pre_fill = 0;     // the ring restarts after this recording: no stale audio in the next pre-roll
     s_recording = true;
     xSemaphoreGive(s_lock);
     return ESP_OK;
@@ -225,6 +257,18 @@ esp_err_t audio_in_stop(audio_clip_t *out)
 }
 
 bool audio_in_recording(void) { return s_recording; }
+
+size_t audio_in_peek(const int16_t **pcm)
+{
+    *pcm = s_rec;
+    if (!s_running) {
+        return 0;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    size_t n = s_rec_len;
+    xSemaphoreGive(s_lock);
+    return n;
+}
 
 const audio_clip_t *audio_in_last(void)
 {

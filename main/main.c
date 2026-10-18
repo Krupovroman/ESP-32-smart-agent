@@ -1,5 +1,6 @@
 #include "ai_client.h"
 #include "ai_cmds.h"
+#include "app.h"
 #include "audio_in.h"
 #include "audio_out.h"
 #include "board.h"
@@ -26,6 +27,7 @@ void app_main(void)
     bool safe = selftest_boot_begin();
     ESP_ERROR_CHECK(settings_init());
     ai_console_register();   // "ai" answers "not ready" until selftest_ready() (and in safe mode)
+    app_console_register();  // app, ptt, cancel, mode, textonly, btn: "app not started" in safe mode
     // the console comes this early so a board that fails later is still reachable. Its own
     // failure is not fatal (an abort here would boot-loop even in safe mode); the self-test
     // rejects a pending OTA image without a console.
@@ -64,6 +66,7 @@ void app_main(void)
         if (st.audio_out != ESP_OK) {
             ESP_LOGE(TAG, "speaker output unavailable");
         }
+        // no sound at boot: the volume only scales what a turn plays (no startup earcon)
         audio_out_set_volume((uint8_t)settings_get_int("volume"));
         audio_in_set_format(settings_get_int("mic_slot") == 0, settings_get_int("mic_shift"));
         devconsole_heap_stage("after_audio");
@@ -93,6 +96,10 @@ void app_main(void)
         }
         if (ai_client_init() != ESP_OK) {
             ESP_LOGE(TAG, "ai client unavailable");
+        }
+        // push-to-talk, buttons, battery and the UI input from here on (the UI's own demo fallbacks stop)
+        if (app_start() != ESP_OK) {
+            ESP_LOGE(TAG, "app unavailable");
         }
     } else {
         ota_selftest_skipped("safe mode");

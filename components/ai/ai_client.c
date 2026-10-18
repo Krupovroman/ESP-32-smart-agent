@@ -49,6 +49,15 @@ static const char SCHEMA_TRANSLATOR[] =
     "\"translation\":{\"type\":\"string\",\"description\":\"Only the translated text.\"}"
     "},\"required\":[\"src_lang\",\"transcript\",\"translation\"],\"additionalProperties\":false}";
 
+// Source forced by the user (hold a language chip, "wrong language"): the enum has that code only.
+static const char SCHEMA_TRANSLATOR_FORCED[] =
+    "{\"type\":\"object\",\"properties\":{"
+    "\"src_lang\":{\"type\":\"string\",\"enum\":[\"%s\"],\"description\":\"Language of the utterance.\"},"
+    "\"transcript\":{\"type\":\"string\",\"description\":\"Verbatim transcript in the original language; empty if "
+    "no intelligible speech.\"},"
+    "\"translation\":{\"type\":\"string\",\"description\":\"Only the translated text.\"}"
+    "},\"required\":[\"src_lang\",\"transcript\",\"translation\"],\"additionalProperties\":false}";
+
 static const char NOTICE_P3[] = "(ответ обрезан)";
 static const char NOTICE_P4[] = "Не расслышал. Повторите, пожалуйста.";
 
@@ -63,6 +72,7 @@ typedef struct {
     uint32_t rate;
     char *text;
     char lang_a[8], lang_b[8];
+    char src[8];                             // forced translator source, "" = detect
     int64_t t_submit_us;
     esp_err_t (*fn)(void *ctx);
     void *ctx;
@@ -79,6 +89,7 @@ typedef struct {
     bool openrouter;
     bool no_reasoning, json_object;          // protocol §9.1 400 auto-fixes
     char lang_a[8], lang_b[8];
+    char src[8];                             // forced translator source, "" = detect
     const char *user_text;                   // typed or Whisper text; NULL = voice
     const int16_t *pcm;
     size_t samples;
@@ -289,7 +300,11 @@ static cJSON *schema_json(const chat_t *ch)
         return cJSON_Parse(SCHEMA_ASSISTANT);
     }
     char buf[sizeof(SCHEMA_TRANSLATOR) + 16];
-    snprintf(buf, sizeof(buf), SCHEMA_TRANSLATOR, ch->lang_a, ch->lang_b);
+    if (ch->src[0]) {
+        snprintf(buf, sizeof(buf), SCHEMA_TRANSLATOR_FORCED, ch->src);
+    } else {
+        snprintf(buf, sizeof(buf), SCHEMA_TRANSLATOR, ch->lang_a, ch->lang_b);
+    }
     return cJSON_Parse(buf);
 }
 
@@ -369,7 +384,13 @@ static esp_err_t chat_build(chat_t *ch)
         cJSON *parts = cJSON_AddArrayToObject(m, "content");
         cJSON *t = cJSON_CreateObject();
         cJSON_AddStringToObject(t, "type", "text");
-        cJSON_AddStringToObject(t, "text", ch->mode == AI_MODE_ASSISTANT ? VOICE_TEXT_AS : VOICE_TEXT_TR);
+        char forced[64] = "";
+        if (ch->mode == AI_MODE_TRANSLATOR && ch->src[0]) {
+            snprintf(forced, sizeof(forced), "Utterance in %s:", ai_lang_name(ch->src));
+        }
+        cJSON_AddStringToObject(t, "text", ch->mode == AI_MODE_ASSISTANT ? VOICE_TEXT_AS
+                                           : ch->src[0]                  ? forced
+                                                                         : VOICE_TEXT_TR);
         cJSON_AddItemToArray(parts, t);
         cJSON *a = cJSON_CreateObject();
         cJSON_AddStringToObject(a, "type", "input_audio");
@@ -742,6 +763,7 @@ static void run_turn(job_t *j)
     pick_effort(ch);
     strlcpy(ch->lang_a, j->lang_a, sizeof(ch->lang_a));
     strlcpy(ch->lang_b, j->lang_b, sizeof(ch->lang_b));
+    strlcpy(ch->src, j->src, sizeof(ch->src));
     hist_touch(j->mode, ch->model, (int)cfg_int("hist_idle_min", 10));
 
     if (ai_turn_cancelled(j->turn)) {
@@ -784,7 +806,8 @@ static void run_turn(job_t *j)
             uint32_t ms = 0;
             stt_done = true;
             if (stt_transcribe_ex(j->turn, ch->pcm, ch->samples, ch->rate,
-                                  j->mode == AI_MODE_ASSISTANT ? ui_lang : NULL, &stt_text, &c, &ms, &err) != ESP_OK) {
+                                  j->mode == AI_MODE_ASSISTANT ? ui_lang : (ch->src[0] ? ch->src : NULL), &stt_text,
+                                  &c, &ms, &err) != ESP_OK) {
                 goto done;
             }
             res.cost += c;
@@ -1061,6 +1084,14 @@ esp_err_t ai_client_submit(const ai_request_t *r)
     }
     strlcpy(j->lang_a, a, sizeof(j->lang_a));
     strlcpy(j->lang_b, b, sizeof(j->lang_b));
+    if (r->src_lang && r->mode == AI_MODE_TRANSLATOR && j->pcm) {
+        char s[8];
+        strlcpy(s, r->src_lang, sizeof(s));
+        lower_ascii(s);
+        if (!strcmp(s, a) || !strcmp(s, b)) {
+            strlcpy(j->src, s, sizeof(j->src));
+        }
+    }
     if (xQueueSend(s_q, &j, 0) != pdTRUE) {
         free(j->text);
         free(j);

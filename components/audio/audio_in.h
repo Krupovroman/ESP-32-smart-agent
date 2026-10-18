@@ -26,8 +26,14 @@ typedef struct {
 esp_err_t audio_in_init(void);
 
 esp_err_t audio_in_start(uint32_t max_ms);
+// As audio_in_start, with up to preroll_ms of the microphone from just before the call prepended
+// (ui.md 5.1: the first syllable is never lost). Injected audio gets no pre-roll.
+esp_err_t audio_in_start_ex(uint32_t max_ms, uint32_t preroll_ms);
 esp_err_t audio_in_stop(audio_clip_t *out);
 bool audio_in_recording(void);
+// Samples recorded so far by the running (or last) recording; *pcm is the recording buffer, which only
+// grows while recording (live speech detection reads it without copying).
+size_t audio_in_peek(const int16_t **pcm);
 // The last finished clip (also after stop), or NULL.
 const audio_clip_t *audio_in_last(void);
 
