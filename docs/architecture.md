@@ -73,6 +73,7 @@ When this document and `protocol.md` disagree about the wire format, `protocol.m
 - `components/display/st77916_init_new.inc` and the bring-up sequence keep the xiaozhi MIT notice.
 - `components/dns_server` is copied from the IDF `captive_portal` example (Unlicense OR CC0-1.0).
 - Fonts are Montserrat (OFL), shipped with `assets/fonts/OFL.txt`.
+- The CJK font of the storage pack is a subset of Noto Sans CJK SC (SIL OFL 1.1, renamed "RA CJK"), with `assets/fonts/NotoSansCJK-OFL.txt`; the pack carries the same text as `cjk.ofl`. stb_truetype (inside LVGL's Tiny TTF) is MIT / public domain.
 - Nothing is copied from WU-AetherCore (PolyForm Noncommercial).
 
 ---
@@ -112,7 +113,7 @@ esp32-ai-assistant/
 │   ├─ ai/         ai_client.c prompts.c history.c models.c tts_client.c tts_split.c voices.c stt_client.c
 │   ├─ ota/        ota.c
 │   └─ devconsole/ devconsole.c cmd_sys.c cmd_io.c cmd_audio.c cmd_net.c cmd_ota.c upload.c
-├─ assets/  fonts/ (TTF + OFL.txt)  storage/ (optional UI sounds → spiffs image)
+├─ assets/  fonts/ (TTF + OFL.txt, cjk/RACJK-Medium.ttf → storage asset pack, §1.0)
 ├─ tools/   idf.ps1 (exists) dev.py (exists, protocol v2) py.ps1 build.ps1 flash.ps1 release.ps1
 │           restore.ps1 slot.ps1 mkfonts.ps1 secrets_push.py mkaudio.py
 ├─ tests/   acceptance.py golden/*.rgb565.z audio/*.wav sdkconfig.forcefail sdkconfig.forcepanic
@@ -146,14 +147,18 @@ esp32-ai-assistant/
 | orhttp | esp_http_client esp-tls mbedtls util |
 | ai | orhttp audio settings util (espressif__cjson) |
 | ota | app_update esp_https_ota esp_partition settings |
+| assets | esp_partition (esp_rom esp_timer) |
 | devconsole | console esp_driver_usb_serial_jtag util (display touch audio settings net ota ai) |
 
 The dependency direction is `main → {devconsole, ai, ota, net, orhttp, audio, touch, display, board, settings, util}`. `devconsole` never includes `main`. App and UI commands are registered from `main/app/dev_cmds.c` through `devconsole_register()`.
 
-Fonts are compiled into the app as rodata, so every A/B slot carries fonts that match its code. The `storage` SPIFFS partition holds only optional UI sounds:
+The Inter fonts are compiled into the app as rodata, so every A/B slot carries fonts that match its code. The `storage` partition (7.75 MB at 0x820000) holds the **asset pack**: today the CJK fallback font of the translator (ui.md 1.3), later optional UI sounds.
 
-- It is built with `spiffs_create_partition_image(storage assets/storage)` **without** `FLASH_IN_PROJECT`, and flashed with `idf.py storage-flash`.
-- It is mounted lazily with `format_if_mount_failed=false`. Formatting 7.75 MB takes tens of seconds and must never happen at boot.
+- **No file system.** The pack is a flat read-only image (`components/assets`, written by `tools/mkpack.py`): a 4 KB header (`"RAPK"`, format 1, entry count, pack size, CRC-32 of the header, a label) with up to 63 entries (name, 4 KB-aligned offset, size, CRC-32, aux), then the data. `assets_init()` finds the partition by label (its `spiffs` subtype in `partitions.csv` is only a label now; the table is unchanged), checks the header and maps the whole pack once with `esp_partition_mmap(…, ESP_PARTITION_MMAP_DATA)`: readers get plain pointers into the flash cache and nothing is copied to RAM. Nothing mounts, nothing formats, and a blank or foreign partition is just "absent".
+- **Integrity.** `assets_verify()` checks every entry's CRC-32 (estimated 50-80 ms per MB through the flash cache, 0.3-0.4 s for the pack; `font status` reports it) in the one-shot `cjk_crc` task after boot (core 0, priority 1, PSRAM stack: only its TCB is internal). A reader uses an entry only after that passed, so a half-written pack (the header is written first) is never parsed.
+- **Entries now:** `cjk.ttf` (5,043,260 B, 21,803 glyphs), `cjk.cov` (8 KB coverage bitmap of its cmap), `cjk.ofl` (its licence). The pack is 5,066,752 B, 62 % of the partition.
+- **Build and flash.** `main/CMakeLists.txt` builds `build/storage.bin` (target `storage_pack`, part of every build, re-run only when its inputs change) and registers it with `esp_partition_register_target(storage …)`. It is **not** part of `idf.py flash`; `idf.py -p COM7 storage-flash` writes it (only when the font changes). OTA images never touch it, so both A/B slots share it, and a slot without CJK support simply ignores it.
+- **Without the pack** the firmware runs as before: CJK languages are listed but disabled in the translator, and nothing else changes.
 
 ### 1.1 `util`
 
@@ -985,6 +990,7 @@ The draft assumed 300 KB. That number is not reachable on this chip with this co
 | Model picker: one 10-entry page (≤ 21 KB) + cJSON tree + 160 B × entries | ≈ 70 | transient, never during a turn |
 | `ai` and `tts` stacks, 10 + 8 | 18 | boot |
 | OTA buffers, settings cache, cJSON scratch | ≈ 40 | |
+| CJK glyph bitmaps (font draw buffers, ui.md 1.3) | ≤ 310 | grows with use, 608 glyphs at most; the cache nodes (≤ 160 KB) are inside the LVGL pool; the 5 MB font is mapped flash, no RAM |
 | **Total, worst case including the inject buffer** | **≈ 6,670** | |
 | **Headroom** | **≈ 1.49 MB** (≈ 2.4 MB without the inject buffer) | gate: `psram.free ≥ 1 MB` |
 
@@ -999,6 +1005,7 @@ The draft assumed 300 KB. That number is not reachable on this chip with this co
   - our code: ≈ 0.25 MB.
 
   That is 55 % or less of a 4 MB slot. `tools/build.ps1` fails above 85 %.
+- **Measured with the CJK fallback (feat-cjk):** the app is 2,002,912 B (48 % of the slot; Tiny TTF, stb_truetype and `ui_font.c` add 28 KB). The CJK font stays out of the app on purpose: the 5,066,752 B asset pack (§1.0) is written once to `storage` and never travels with an OTA image.
 - **Upload size.** A 30 s clip is 960,044 B of WAV and 1,280,060 base64 characters. A 10 s clip is 426,728 characters.
   - At 400 KB/s TLS upload *(measure M4)*, 10 s of speech uploads in ≈ 1.1 s.
   - AAC through `esp_audio_codec` (`format:"aac"`) is a v2 option if the upload dominates latency.
@@ -1234,6 +1241,8 @@ coredump, data, coredump, 0xfe0000, 0x20000
 - **Coredump:** 128 KB holds an ELF dump of about 20 tasks.
 
 **Never change this table again.** A change needs a full flash and can relocate NVS.
+
+The `storage` row keeps its `spiffs` subtype, but nothing mounts SPIFFS: the asset pack (§1.0) is found by the label `storage` and memory-mapped, so the subtype is only a name.
 
 ---
 
@@ -1481,7 +1490,7 @@ git rm --cached sdkconfig; Remove-Item .\sdkconfig; .\tools\idf.ps1 reconfigure 
 .\tools\idf.ps1 size; .\tools\idf.ps1 size-components
 .\tools\idf.ps1 -p COM7 flash                       # bootloader + table + otadata + ota_0
 .\tools\idf.ps1 -p COM7 app-flash                   # ota_0 only (see the 8.3 note)
-.\tools\idf.ps1 -p COM7 storage-flash               # SPIFFS assets, only when they change
+.\tools\idf.ps1 -p COM7 storage-flash               # asset pack build/storage.bin (CJK font, 5 MB) at 0x820000, only when it changes
 .\tools\idf.ps1 -p COM7 monitor                     # humans only: needs a TTY; Ctrl+] exits
 .\tools\py.ps1 tools\dev.py --port COM7 log 20      # agent-friendly log capture
 ```
@@ -1502,7 +1511,9 @@ Only one program can hold COM7 at a time. Close `monitor` or `dev.py` before fla
 | `tools\dev.py` (exists, moves to v2) | Library and CLI: `cmd`, `shot out.png [--mask]`, `snap name out.png`, `tap`, `swipe`, `ui-tap name`, `wav in.wav`, `mic-dump out.wav`, `events --until state=idle`, `log <s>`, `ota-push bin`, `wait-ready`, `reset` (`esptool --after hard-reset chip-id`) |
 | `tools\secrets_push.py secrets.json` | `{"wifi":[{"ssid","pass"}],"ai_key":"…"}` → `set` / `wifi connect`. The file is gitignored and never printed |
 | `tools\mkaudio.py` | Creates test fixtures with no microphone: `tts fetch "<text>" ru\|en` → 24 kHz WAV → resample to 16 kHz with stdlib `audioop`-free linear interpolation → `tests\audio\*.wav` (committed) |
-| `tools\mkfonts.ps1` | Runs `npx lv_font_conv@1.5.3 …` (Node is on PATH; the first run downloads the npm package, so run it manually) → `main\ui\fonts\*.c` (committed) |
+| `tools\mkfonts.ps1` | Runs `npx lv_font_conv@1.5.3 …` (Node is on PATH; the first run downloads the npm package, so run it manually) → `main\ui\fonts\*.c` (committed); then points `ui_16/20/28` at their CJK fallbacks (`.fallback = &ui_cjk_<px>`) |
+| `tools\mkcjk.py [--download \| src.otf]` | fonttools (`py -m pip install fonttools==4.67.0`): Noto Sans CJK SC Medium 2.004 (SHA-256 checked) → subset, TrueType outlines → `assets\fonts\cjk\RACJK-Medium.ttf` (committed; same input, same bytes) |
+| `tools\mkpack.py --font … --license … -o …` | Standard library only; run by the build (target `storage_pack`) → `build\storage.bin` (§1.0 layout). Without a build: `esptool --chip esp32s3 -p COM7 write-flash 0x820000 build\storage.bin` |
 | `tests\acceptance.py -m m1..m6 [-p COM7]` | Runs §10 and writes `tests\out\<ts>\report.json` and screenshots |
 
 ---
