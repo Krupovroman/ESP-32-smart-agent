@@ -91,20 +91,31 @@ EXIOn = TCA9554 port P(n-1). Output register defaults to 0xFF.
     stopping without one = still plugged in (`kept`). Charging or full: the plug-in's step against the level before
     (under 15 mV near v_full = the charger did not start: FULL at once), then the settled level: flat for 4 min
     (≤ +5 mV, the highest settled reading of the last minute against that of the minute 4-5 min before) near v_full,
-    or for 15 min at ≥ 3.95 V, = FULL, whatever the absolute voltage. That plateau is this divider's reading of a
-    full cell on the charger (the CV level): it is learned as **v_full** (NVS `bat_vfull`, default 4150, accepted
-    4000-4250) and the discharge curve is scaled by 4200 / v_full, so 100 % is what this unit reads when full (at
-    rest a full cell reads ~v_full − 30 mV ≈ 97 %). Readings are not taken while the speaker plays (and 15 s
-    after), during a turn (and 20 s after) or right after a backlight step (on battery at ≤ 20 % they are, for the
-    low-battery toasts); USB_DRAIN = the host there and the settled level 20 mV below 3 min ago (or 30 mV below its
-    peak since charging began). While charging the cell reads higher than at rest (charge current × internal
+    or for 15 min at ≥ 3.95 V, = FULL, whatever the absolute voltage. With the host, the settled level falling
+    near v_full with no long session (≥ 60 s of skipped readings) in that time is the charger stopping
+    (terminated: the cell relaxes 30-80 mV and the load moves onto it) = FULL too, and FULL holds while the load
+    drains the cell to the charger's recharge level (down to v_full − 160 mV); a fall across a long session is
+    USB_DRAIN at any level (this unit's PC port with the speaker at volume 100).
+    The CV level is this divider's reading of a full cell on the charger (the highest it reads there): it is learned
+    as **v_full** (NVS `bat_vfull`, default 4150, accepted 4000-4250) once a FULL has held 15 min, from its highest
+    settled level — lower only after a 4-min plateau and by ≤ 30 mV per charge, higher from any FULL — and the
+    discharge curve is scaled by 4200 / v_full, so 100 % is what this unit reads when full (at rest a full cell
+    reads ~v_full − 30 mV ≈ 97 %). A divider reading more than ~100 mV low is not learned downwards: `set bat_vfull`.
+    Readings are not taken while the speaker plays (and 15 s after), during a turn (and 20 s after) or right after
+    any backlight change (on battery at ≤ 20 % they are, for the low-battery toasts), and no step is measured
+    across a load step (also Wi-Fi joining or leaving, the portal); USB_DRAIN = the host there and the settled
+    level 20 mV below 3 min ago (or 30 mV below its peak since charging began) under v_full − 120 mV or across a
+    long session, or FULL's level under v_full − 160 mV. Leaving any state for BATTERY or USB_DRAIN the percent glides to the curve (1 point
+    per 15 s). While charging the cell reads higher than at rest (charge current × internal
     resistance + polarisation): the model takes the plug-in step as that offset (60 mV when it has no reference,
     e.g. booted on USB) and removes all of it before the curve. Every decision and one record a minute go into a
     12 h log in PSRAM (`bat log`, `bat log all`). To check on a port: `bat` on battery after 3 min idle (`mv`),
     plug in, `bat` after 2 min (`src`, `ofs` = the measured step, `why`), charge 10 min, unplug, `bat` after 3 min:
     the percent should not have jumped; then `bat log 60`. Known limits without a VBUS pin: a wall charger plugged
-    into a cell within ~1-3 % of full may step less than 35 mV (logged as `step_small`, not taken as power); a
-    charger that has terminated makes no step when unplugged either (no current flowed): the model notices only when
-    the cell has drained 60 mV (35 mV while charging) under the level it held. Not measured yet: the ETA6098's LED
-    states and its recharge threshold, whether it feeds the load after termination, and what the divider reads with
-    USB and no cell (the model hides the indicator if the readings swing > 250 mV).
+    into a cell within ~1-3 % of full may step less than 35 mV (logged as `step_small`; taken as power through the
+    trend only when the readings are calm, not under 15 mV); a charger that has terminated makes no step when
+    unplugged either (no current flowed): the model notices only when the cell has drained 60 mV (35 mV while
+    charging) under the level it held. Not measured yet: the ETA6098's LED states and its recharge threshold (the
+    model assumes ≤ 150 mV under the CV level), whether it terminates at all with the board's idle load on the cell
+    (it senses its whole output current) or feeds the load after termination, and what the divider reads with USB and
+    no cell (the model hides the indicator if the readings swing > 250 mV).

@@ -209,9 +209,10 @@ int       board_battery_mv(void);       /* adc_oneshot ch7 + adc_cali curve fitt
 /* battery model v3 (ui.md 3.16): the app calls sample() every poll_ms (5 s, 2 s while a step is measured); median
    of 5, Li-ion curve scaled by 4200 / v_full; external power = USB host (usb_serial_jtag_is_connected), a settled
    voltage step of 35 mV (a wall charger; down = unplugged), the host lost without a step down = kept (macOS
-   suspend); CHARGING / FULL (plug-in step < 15 mV near v_full, or flat 4 min: its level is learned as v_full) /
-   USB_DRAIN (settled -20 mV in 3 min with the host); the ETA6098 has no status pin to the MCU and the system load
-   hangs on the cell */
+   suspend); CHARGING / FULL (plug-in step < 15 mV near v_full, flat 4 min, or the charger stopping near v_full;
+   held 15 min, its highest level is learned as v_full) / USB_DRAIN (settled -20 mV in 3 min with the host below
+   v_full - 120, or FULL under v_full - 160); the ETA6098 has no status pin to the MCU and the system load hangs on
+   the cell */
 typedef enum { BOARD_PWR_BATTERY, BOARD_PWR_CHARGING, BOARD_PWR_FULL, BOARD_PWR_USB_DRAIN } board_power_t;
 typedef enum { BOARD_EXT_NONE, BOARD_EXT_USB, BOARD_EXT_CHARGER, BOARD_EXT_KEPT } board_ext_t;
 typedef enum { BOARD_BAT_SKIP, BOARD_BAT_LOADED, BOARD_BAT_SETTLED } board_bat_q_t;
@@ -508,7 +509,7 @@ void      settings_on_change(void (*cb)(const char *key, void *ctx), void *ctx);
 | `lcd_inv` | u8 | 1 | 1 = keep INVON from the init table |
 | `ota_url` | str 201 | `""` | |
 | `ref_url` | str 129 | `""` | `HTTP-Referer`, sent only to openrouter.ai |
-| `bat_vfull` | u16 | 4150 | 4000–4250 mV: the battery divider's reading of a full cell on the charger (100 %); learned from each charge's plateau and stored by the app (ui.md 3.16) |
+| `bat_vfull` | u16 | 4150 | 4000–4250 mV: the battery divider's reading of a full cell on the charger (100 %); learned from a FULL that held 15 min (down ≤ 30 mV per charge, changes < 8 mV ignored) and stored by the app once idle; `set` wins over what was learned before it (ui.md 3.16) |
 | `dev_flags` | u32 | 0 | b0 perf log, b1 HTTP trace (no secrets), b2 portal reachable on the STA IP, b3 allow `:free` models |
 
 **Namespace `wifi`:** `n` u8; `ssid0`..`ssid4` str 33; `pass0`..`pass4` str 65 (S); `last` u8.

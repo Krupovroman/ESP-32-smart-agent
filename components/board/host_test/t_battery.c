@@ -74,6 +74,8 @@ int sim_adc_pin_mv(void)
 static struct {
     uint32_t audio_until;   // the speaker plays until (0 = not)
     uint32_t audio_end;     // ... it stopped at
+    uint32_t turn_until;    // a turn (its Wi-Fi) runs until (0 = not)
+    uint32_t turn_end;      // ... it ended at
     uint32_t load_t;        // the last load step
     uint32_t t_bat;
     bool polled;
@@ -83,6 +85,8 @@ static struct {
     int changes;            // power state changes
     int pct_min, pct_max;
     int drain_pct_max;      // the highest percent shown in USB_DRAIN
+    int pct_last, drop_max; // the percent shown, and its largest fall from one reading to the next
+    int full_n;             // times FULL was entered (the lock screen's glow, A39)
     board_power_t last;
 } a;
 
@@ -103,6 +107,9 @@ static board_bat_q_t quality(uint32_t now)
     if (a.audio_until || (a.audio_end && now - a.audio_end < 15000)) {
         return BOARD_BAT_SKIP;
     }
+    if (a.turn_until || (a.turn_end && now - a.turn_end < 20000)) {
+        return BOARD_BAT_SKIP;
+    }
     return now - a.load_t >= 60000 ? BOARD_BAT_SETTLED : BOARD_BAT_LOADED;
 }
 
@@ -110,8 +117,9 @@ static void watch_reset(void)
 {
     board_bat_t b = st();
     a.chg_run = a.chg_max = a.changes = 0;
-    a.pct_min = a.pct_max = b.pct;
+    a.pct_min = a.pct_max = a.pct_last = b.pct;
     a.drain_pct_max = -1;
+    a.drop_max = a.full_n = 0;
     a.last = b.power;
 }
 
@@ -125,6 +133,10 @@ static void tick(void)
         a.audio_until = 0;
         a.audio_end = a.load_t = now;
         c.sag = 0;
+    }
+    if (a.turn_until && now >= a.turn_until) {
+        a.turn_until = 0;
+        a.turn_end = a.load_t = now;
     }
     board_bat_t b = st();
     uint32_t poll = b.poll_ms > 0 ? (uint32_t)b.poll_ms : 5000;
@@ -142,8 +154,13 @@ static void tick(void)
     }
     if (b.power != a.last) {
         a.changes++;
+        a.full_n += b.power == BOARD_PWR_FULL;
         a.last = b.power;
     }
+    if (b.pct >= 0 && a.pct_last >= 0 && a.pct_last - b.pct > a.drop_max) {
+        a.drop_max = a.pct_last - b.pct;
+    }
+    a.pct_last = b.pct;
     a.chg_run = b.power == BOARD_PWR_CHARGING ? a.chg_run + 100 : 0;
     a.chg_max = a.chg_run > a.chg_max ? a.chg_run : a.chg_max;
     if (b.pct >= 0) {
@@ -179,6 +196,13 @@ static void speaker(uint32_t ms, double sag)
     a.audio_until = now_ms() + ms;
     a.load_t = now_ms();
     c.sag = sag;
+}
+
+// A turn without sound (its Wi-Fi / TLS): skipped readings while it runs and 20 s after, loaded for 60 s after it
+static void turn(uint32_t ms)
+{
+    a.turn_until = now_ms() + ms;
+    a.load_t = now_ms();
 }
 
 // A new boot on a cell resting at rest (mV as read), drifting by rate mV/min, the USB host as given
@@ -352,8 +376,11 @@ static void t_usb_cv_plateau(void)
     t = until_power(BOARD_PWR_FULL, 8 * 60000);
     CHECK(t >= 0 && t <= 6 * 60000);        // flat over 4 min (the minute 4-5 min ago against the last one), 30 s
     board_bat_t b = st();
-    CHECK(b.pct == 100 && logged(BOARD_BEV_PLATEAU, seq) && logged(BOARD_BEV_VFULL, seq));
-    CHECK(b.vfull_learn >= 4112 && b.vfull_learn <= 4132 && b.vfull == b.vfull_learn);
+    CHECK(b.pct == 100 && logged(BOARD_BEV_PLATEAU, seq) && b.vfull_learn == -1);   // a pause is no end yet
+    run(VFULL_AFTER_MS);                    // still flat: the end of the charge
+    b = st();
+    CHECK(b.power == BOARD_PWR_FULL && logged(BOARD_BEV_VFULL, seq));
+    CHECK(b.vfull_learn >= 4120 && b.vfull_learn <= 4132 && b.vfull == b.vfull_learn);
     // the charger terminates (a 30 mV drop with the host there: under a step): still FULL for 20 min
     c.rest = 4100;
     charger(0, 0, -0.2, 0);
@@ -396,7 +423,8 @@ static void t_slow_charge(void)
     CHECK(st().power == BOARD_PWR_CHARGING && a.changes == 0);
     t = until_power(BOARD_PWR_FULL, 15 * 60000);
     CHECK(t >= 0 && t <= 10 * 60000);
-    CHECK(st().vfull_learn >= 4130 && st().vfull_learn <= 4150);
+    run(VFULL_AFTER_MS);
+    CHECK(s_vfull >= 4130 && s_vfull <= 4150);  // learned, or already within VFULL_STEP_MV of it
 }
 
 // (b) booted on USB with a full cell: no reference for a step, CHARGING by default, FULL by the plateau
@@ -492,6 +520,21 @@ static void t_weak_port_drain(void)
     CHECK(t >= 2 * 60000);                  // the minimum dwell, then the port's slow rise
     CHECK(a.drain_pct_max == pct_d);        // never up while draining
     CHECK(st().why == BOARD_BEV_DRAIN_END);
+    // ... near full too (this unit's case: a PC port, the speaker at volume 100): the fall is across the speaker, so
+    // it is the port, not the charger stopping (FULL)
+    boot(4060, -0.2, false);
+    run(5 * 60000);
+    g_usb = true;
+    charger(30, 10, 0.3, 0);
+    CHECK(until_power(BOARD_PWR_CHARGING, 15000) >= 0);
+    run(6 * 60000);
+    speaker(4 * 60000, 150);
+    charger(0, -20, -15, 0);
+    run(4 * 60000);
+    charger(30, 10, 0.3, 0);
+    watch_reset();
+    t = until_power(BOARD_PWR_USB_DRAIN, 4 * 60000);
+    CHECK(t >= 0 && a.full_n == 0 && st().why == BOARD_BEV_DRAIN && st().mv >= full_floor());
 }
 
 // A wall charger from 75 % to its CV level: FULL by the plateau, v_full learned; the charger terminates (the cell
@@ -509,12 +552,12 @@ static void t_wall_full(void)
     CHECK(t > 0);
     board_bat_t b = st();
     CHECK(b.ext == BOARD_EXT_CHARGER && b.pct == 100 && logged(BOARD_BEV_PLATEAU, seq));
-    CHECK(b.vfull_learn >= 4130 && b.vfull_learn <= 4150);
     c.rest = 4115;
     charger(0, 0, -0.3, 0);
     watch_reset();
     run(20 * 60000);
     CHECK(st().power == BOARD_PWR_FULL && a.changes == 0 && st().ext == BOARD_EXT_CHARGER);
+    CHECK(st().vfull_learn >= 4130 && st().vfull_learn <= 4150);    // the plateau's level, not the relaxed one
     // the charger starts again at its recharge level: a step up
     seq = log_next();
     charger(50, 10, 1, 4150);
@@ -624,24 +667,251 @@ static void t_nobat(void)
     CHECK(st().pct == -1);
 }
 
+// ---- review: the cases the first version got wrong
+
+// The end of a charge on a PC port: the charger terminates in its CV phase, the load moves onto the cell (a drop at
+// once, under or over a step) and the polarisation relaxes over minutes: FULL holds at 100 %, no USB_DRAIN ("USB: не
+// хватает тока"), the full glow once
+static void t_end_of_charge(void)
+{
+    printf("t_end_of_charge\n");
+    static const struct {
+        double now, relax;
+    } k[] = { { 20, 30 }, { 30, 25 }, { 10, 45 }, { 40, 30 } };
+    for (size_t i = 0; i < sizeof(k) / sizeof(k[0]); i++) {
+        boot(4060, -0.2, false);
+        run(5 * 60000);
+        g_usb = true;
+        charger(40, 10, 0.5, 4122);
+        watch_reset();
+        CHECK(until_power(BOARD_PWR_FULL, 12 * 60000) >= 0);
+        run(10 * 60000);                    // still in CV
+        c.rest = 4122 - k[i].now - k[i].relax;
+        c.ohm = c.cv = 0;
+        c.rate = -0.3;
+        c.pol = k[i].relax;
+        c.pol_to = 0;
+        if (i == 3) {
+            turn(15000);                    // a short turn just then: no session that drained it
+        }
+        run(30 * 60000);
+        board_bat_t b = st();
+        CHECK(b.power == BOARD_PWR_FULL && b.pct == 100 && a.full_n == 1 && a.changes == 2);
+    }
+}
+
+// Wall chargers that must be seen even though the cell was higher a while ago (why a step up is compared only with a
+// step down seen just before it, not with older levels): a near-full cell drained idle (-0.8 mV/min) for 20 min, then
+// a charger in its CV phase (a small step, 20 mV: the trend); after a 10-min loud session (the cell 35 mV lower), a
+// weak charger (40 mV); shortly after a turn
+static void t_charger_seen(void)
+{
+    printf("t_charger_seen\n");
+    boot(4100, -0.8, false);
+    run(20 * 60000);
+    charger(20, 0, 0.2, 0);
+    int t = until_power(BOARD_PWR_CHARGING, 4 * 60000);
+    CHECK(t >= 0 && st().ext == BOARD_EXT_CHARGER);
+    boot(3950, -0.3, false);
+    run(10 * 60000);
+    speaker(10 * 60000, 120);
+    c.rate = -3.5;
+    run(10 * 60000);
+    c.rate = -0.3;
+    run(3 * 60000);
+    charger(40, 10, 1.5, 0);
+    t = until_power(BOARD_PWR_CHARGING, 15000);
+    CHECK(t >= 0 && t <= 10000 && st().ext == BOARD_EXT_CHARGER);
+    boot(3900, -0.3, false);
+    run(6 * 60000);
+    turn(60000);
+    run(2 * 60000 + 30000);
+    charger(40, 10, 1.5, 0);                // a weak one: a 40 mV step
+    t = until_power(BOARD_PWR_CHARGING, 15000);
+    CHECK(t >= 0 && t <= 10000 && st().ext == BOARD_EXT_CHARGER);
+}
+
+// Leaving FULL the percent glides down to the curve (1 point at a time) instead of jumping: a FULL taken at the
+// plug-in at 4.04 V (the charger did not start), the host gone, the cell drained 60 mV: BATTERY
+static void t_full_glide(void)
+{
+    printf("t_full_glide\n");
+    boot(4040, -0.2, false);
+    run(5 * 60000);
+    g_usb = true;
+    CHECK(until_power(BOARD_PWR_FULL, 20000) >= 0 && st().pct == 100);
+    g_usb = false;
+    run(60000);
+    CHECK(st().ext == BOARD_EXT_KEPT);
+    c.rate = -3;
+    watch_reset();
+    int t = until_power(BOARD_PWR_BATTERY, 40 * 60000);
+    CHECK(t > 0);
+    run(15 * 60000);
+    board_bat_t b = st();
+    CHECK(a.drop_max <= 1 && b.pct == pct_of(b.mv));     // there now, and no jump on the way
+}
+
+// v_full is learned only from a CV plateau that lasts: not from a port that only holds the cell (flat 15 min at
+// 4.02 V: FULL as the spec says, nothing learned), at most VFULL_DOWN_MV lower per charge (a plateau that was not the
+// CV level cannot pull the scale far), and back up from a FULL that read higher. A slow charge near full (1.2 mV/min,
+// under the plateau's 5 mV in 4 min) shows FULL early (the spec's rule) and stays FULL while it tops up: no flapping;
+// the CV level it reaches restores v_full when it ends
+static void t_vfull_guard(void)
+{
+    printf("t_vfull_guard\n");
+    boot(4020, -0.2, false);
+    run(5 * 60000);
+    g_usb = true;
+    charger(15, 0, 0, 0);                   // a weak port: as much in as the load takes
+    CHECK(until_power(BOARD_PWR_FULL, 25 * 60000) >= 0);
+    run(VFULL_AFTER_MS + 60000);
+    CHECK(st().vfull_learn == -1 && s_vfull == VFULL_DEF_MV);
+    // a CV level 90 mV under the default: learned in steps
+    boot(4000, -0.2, false);
+    run(5 * 60000);
+    g_usb = true;
+    charger(40, 10, 1, 4060);
+    CHECK(until_power(BOARD_PWR_FULL, 25 * 60000) >= 0);
+    run(VFULL_AFTER_MS + 60000);
+    CHECK(st().vfull_learn == VFULL_DEF_MV - VFULL_DOWN_MV && s_vfull == st().vfull_learn);
+    // a slow charge into a CV level at the default
+    boot(4060, -0.2, false);
+    run(5 * 60000);
+    g_usb = true;
+    charger(40, 10, 1.2, 4150);
+    CHECK(until_power(BOARD_PWR_CHARGING, 15000) >= 0);
+    watch_reset();
+    run(60 * 60000);
+    CHECK(a.full_n <= 1 && a.changes <= 2 && s_vfull >= VFULL_DEF_MV - VFULL_DOWN_MV);
+    g_usb = false;                          // unplugged at its CV level: a step down
+    c.rest = 4100;
+    charger(0, 0, -0.3, 0);
+    CHECK(until_power(BOARD_PWR_BATTERY, 15000) >= 0);
+    CHECK(s_vfull >= VFULL_DEF_MV - 5);
+}
+
+// The MacBook's other reading: the charger runs ~20 s on a nearly full cell and terminates (a 30 mV drop, under a
+// step): CHARGING for a few minutes, then FULL as the level stays down, never USB_DRAIN; then the port suspends: kept
+static void t_short_charge(void)
+{
+    printf("t_short_charge\n");
+    boot(4083, -0.2, false);
+    run(5 * 60000);
+    g_usb = true;
+    charger(30, 5, 0, 0);
+    watch_reset();
+    run(20000);
+    charger(0, 0, -0.2, 0);
+    int t = until_power(BOARD_PWR_FULL, 8 * 60000);
+    CHECK(t >= 0 && a.drain_pct_max < 0 && st().pct == 100);
+    g_usb = false;
+    run(60000);
+    CHECK(st().power == BOARD_PWR_FULL && st().ext == BOARD_EXT_KEPT);
+}
+
+// A charger that never takes the cell back up (a fault, its safety timer) with the host there: FULL from the plug-in
+// (no step), the load drains the cell: FULL down to v_full - FULL_HOLD_MV, then USB_DRAIN, the percent gliding down
+// to the curve of the uncharged cell (no charging offset: no current flows)
+static void t_charger_idle(void)
+{
+    printf("t_charger_idle\n");
+    boot(4083, -0.2, false);
+    run(5 * 60000);
+    g_usb = true;
+    CHECK(until_power(BOARD_PWR_FULL, 20000) >= 0);
+    c.rate = -1.5;
+    watch_reset();
+    int t = until_power(BOARD_PWR_USB_DRAIN, 90 * 60000);
+    CHECK(t > 30 * 60000 && st().why == BOARD_BEV_FULL_EXIT);
+    run(10 * 60000);
+    board_bat_t b = st();
+    CHECK(b.power == BOARD_PWR_USB_DRAIN && a.changes == 1 && a.drop_max <= 1);
+    CHECK(iabs(b.pct - pct_of(b.mv)) <= 2);
+}
+
+// The charger's own cycle after its termination: the load drains the cell to the recharge level (~120 mV under the
+// CV level), the charger starts again (a step up), CV, termination: FULL - CHARGING (a top-up) - FULL, 100 % all
+// along, never USB_DRAIN
+static void t_recharge_cycle(void)
+{
+    printf("t_recharge_cycle\n");
+    boot(4060, -0.2, false);
+    run(5 * 60000);
+    g_usb = true;
+    charger(40, 10, 0.5, 4122);
+    CHECK(until_power(BOARD_PWR_FULL, 12 * 60000) >= 0);
+    run(VFULL_AFTER_MS);
+    watch_reset();
+    uint32_t seq = log_next();
+    for (int i = 0; i < 2; i++) {
+        c.rest = 4122 - 20 - 30;            // terminated: the load on the cell, the polarisation relaxing
+        c.ohm = c.cv = 0;
+        c.pol = 30;
+        c.pol_to = 0;
+        c.rate = -1.5;
+        while (st().mv > 4122 - 120) {
+            run(5000);
+        }
+        charger(100, 20, 2, 4122);          // the recharge: the full current, at its CV level at once
+        CHECK(until_power(BOARD_PWR_CHARGING, 15000) >= 0);
+        CHECK(until_power(BOARD_PWR_FULL, 15 * 60000) >= 0);
+        run(5 * 60000);
+    }
+    CHECK(a.pct_min == 100 && a.drain_pct_max < 0 && a.full_n == 2 && a.changes == 4);
+    CHECK(s_vfull >= 4115 && s_vfull <= 4132);  // learned once ...
+    CHECK(!logged(BOARD_BEV_VFULL, seq));       // ... and no further NVS write for the same level
+}
+
+// The host's packets flickering (a hub, a waking MacBook) every 3 s for 20 min: the state holds and the log is not
+// flooded with "usb" events
+static void t_usb_flicker(void)
+{
+    printf("t_usb_flicker\n");
+    boot(3900, -0.3, false);
+    run(5 * 60000);
+    g_usb = true;
+    charger(60, 20, 2, 0);
+    CHECK(until_power(BOARD_PWR_CHARGING, 15000) >= 0);
+    run(60000);
+    uint32_t seq = log_next();
+    watch_reset();
+    for (int i = 0; i < 400; i++) {
+        g_usb = !g_usb;
+        run(3000);
+    }
+    g_usb = true;
+    run(10000);
+    CHECK(a.changes == 0 && st().power == BOARD_PWR_CHARGING);
+    CHECK(log_next() - seq <= 40);          // the minute records and a few events
+}
+
+// battery_test.exe [-v [-t]] [name]: -v the model's log, -t every reading as well; name: only the tests whose name
+// contains it
 int main(int argc, char **argv)
 {
-    s_verbose = argc > 1 && !strcmp(argv[1], "-v");
-    s_trace = argc > 2 && !strcmp(argv[2], "-t");      // every reading as well
+    int i = 1;
+    s_verbose = i < argc && !strcmp(argv[i], "-v") && ++i;
+    s_trace = i < argc && !strcmp(argv[i], "-t") && ++i;
+    const char *only = i < argc ? argv[i] : NULL;
     g_now_us = 1000000;
-    t_wall_plug_unplug();
-    t_usb_full_no_step();
-    t_user_report();
-    t_usb_cv_plateau();
-    t_slow_charge();
-    t_usb_boot_full();
-    t_macbook();
-    t_weak_port_drain();
-    t_wall_full();
-    t_not_a_charger();
-    t_log();
-    t_vfull();
-    t_nobat();
+    static const struct {
+        const char *name;
+        void (*fn)(void);
+    } k_tests[] = {
+#define T(f) { #f, f }
+        T(t_wall_plug_unplug), T(t_usb_full_no_step), T(t_user_report),  T(t_usb_cv_plateau), T(t_slow_charge),
+        T(t_usb_boot_full),    T(t_macbook),          T(t_weak_port_drain), T(t_wall_full),    T(t_not_a_charger),
+        T(t_log),              T(t_vfull),            T(t_nobat),        T(t_end_of_charge),  T(t_charger_seen),
+        T(t_full_glide),       T(t_vfull_guard),      T(t_usb_flicker),  T(t_short_charge),   T(t_charger_idle),
+        T(t_recharge_cycle),
+#undef T
+    };
+    for (size_t k = 0; k < sizeof(k_tests) / sizeof(k_tests[0]); k++) {
+        if (!only || strstr(k_tests[k].name, only)) {
+            k_tests[k].fn();
+        }
+    }
     printf("%d checks, %d failures\n", s_checks, s_fail);
     return s_fail ? 1 : 0;
 }

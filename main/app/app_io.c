@@ -61,8 +61,10 @@ static bool s_bat_polled, s_bat_warned, s_bat_crit;
 static uint32_t s_bat_poll_ms = BAT_POLL_MS;    // when the model wants its next reading
 static int s_bat_vfull_seen = -1;       // the model's last learned v_full, saved as bat_vfull
 static int32_t s_bat_posted = -1;       // UI_BAT_MAKE() value last sent to the UI
-static uint32_t s_load_t;               // last load step: a turn, sound, the mic, a backlight change (settle clock)
+static uint32_t s_load_t;               // last load step: a turn, sound, the mic, a backlight change, the Wi-Fi state
+                                        // or the portal (settle clock)
 static uint32_t s_audio_t, s_turn_t, s_screen_t;   // the speaker last played, a turn last ran, the backlight changed
+static int s_bl_seen = -1;              // the backlight level at the last battery reading
 static bool s_low_mem;
 static int s_ambient = VAD_NO_HINT;
 static save_t s_save[] = { { .key = "mode" }, { .key = "text_only" }, { .key = "bat_vfull" } };
@@ -289,7 +291,10 @@ void app_io_setting(const char *key)
         audio_in_set_format(settings_get_int("mic_slot") == 0, settings_get_int("mic_shift"));
     }
     if (all || !strcmp(key, "bat_vfull")) {
-        board_battery_set_vfull(settings_get_int("bat_vfull"));    // the battery's 100 % (ui.md 3.16)
+        // the battery's 100 % (ui.md 3.16); set by hand, a later learning that comes back to the old value is
+        // stored again
+        s_bat_vfull_seen = -1;
+        board_battery_set_vfull(settings_get_int("bat_vfull"));
     }
 }
 
@@ -331,6 +336,12 @@ static void poll_net(void)
     net_status(&ns);
     if ((int)ns.state != s_net) {
         bool was_up = s_net == NET_UP;
+        if (s_net >= 0 && was_up != (ns.state == NET_UP)) {
+            // joined (scanning and joining end, the radio idles in modem sleep) or lost: the radio's draw steps, and
+            // so does the battery voltage (ui.md 3.16). Not the retries' connecting / failed (every minute without a
+            // network: the readings would never settle; their scans are short, a spike to the step detector)
+            s_load_t = app_now_ms();
+        }
         s_net = (int)ns.state;
         static const ui_net_t map[] = { UI_NET_OFF, UI_NET_CONNECTING, UI_NET_UP, UI_NET_FAILED };
         ui_post(&(ui_msg_t){ .type = UI_SET_NET, .i = (unsigned)ns.state < 4 ? map[ns.state] : UI_NET_OFF });
@@ -344,6 +355,7 @@ static void poll_net(void)
     bool portal = portal_active();
     if (portal != s_portal) {
         s_portal = portal;
+        s_load_t = app_now_ms();        // the access point's radio on or off: a load step
         ui_post(&(ui_msg_t){ .type = UI_PORTAL, .i = portal });
         devcon_event("portal", "\"on\":%d", portal);
         app_portal_changed(portal);
@@ -374,7 +386,18 @@ static board_bat_q_t bat_quality(uint32_t now)
 void app_io_battery(bool sample)
 {
     if (sample) {
-        board_battery_sample(bat_quality(app_now_ms()));
+        uint32_t now = app_now_ms();
+        // a backlight change is a load step whoever made it (the UI's fades, its brightness adjuster, a QR shown at
+        // full brightness): the cell's voltage steps with the backlight current, and a step up must not read as a
+        // charger plugged in (ui.md 3.16)
+        int bl = board_backlight_get();
+        if (bl != s_bl_seen) {
+            if (s_bl_seen >= 0) {
+                s_load_t = s_screen_t = now;
+            }
+            s_bl_seen = bl;
+        }
+        board_battery_sample(bat_quality(now));
     }
     board_bat_t b;
     board_battery_state(&b);

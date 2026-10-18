@@ -718,6 +718,11 @@ void board_backlight_set(uint8_t pct)
     g_backlight = pct;
 }
 
+uint8_t board_backlight_get(void)
+{
+    return g_backlight < 0 ? 0 : (uint8_t)g_backlight;
+}
+
 void board_power_off(void)
 {
     g_power_off++;
@@ -797,6 +802,9 @@ void board_battery_state(board_bat_t *out)
 void board_battery_set_vfull(int mv)
 {
     g_bat_vfull_set = mv;
+    if (mv != g_bat_vfull_learn) {
+        g_bat_vfull_learn = -1;     // as battery.c: set by hand, the earlier learning no longer stands
+    }
 }
 
 void board_battery_sim(int pct, board_power_t power)

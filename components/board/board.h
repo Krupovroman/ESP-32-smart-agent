@@ -56,10 +56,15 @@ typedef enum {
     BOARD_PWR_BATTERY,      // no external power seen (also while a plug-in's step is being measured, a few seconds)
     BOARD_PWR_CHARGING,     // external power, the settled voltage stepped up on plugging in or keeps rising
     BOARD_PWR_FULL,         // external power, the charger not charging: the settled level flat for 4 min near
-                            // v_full (15 min anywhere >= 3.95 V), or a plug-in step under 15 mV near v_full; a new
-                            // rise or step up ends it
-    BOARD_PWR_USB_DRAIN,    // USB host present but the settled voltage fell >= 20 mV within 3 min: the load takes
-                            // more than the port gives; back to CHARGING on a settled rise of 12 mV
+                            // v_full (15 min anywhere >= 3.95 V), a plug-in step under 15 mV near v_full, or the
+                            // charger stopping near v_full (a step down or a fall with the host); a new rise or step
+                            // up ends it, with the host also a fall across a long session or a level under v_full -
+                            // 160 mV (USB_DRAIN): the cell relaxing and the load draining it to the recharge level
+                            // after termination is no exit
+    BOARD_PWR_USB_DRAIN,    // USB host present but the settled voltage fell >= 20 mV within 3 min, below v_full -
+                            // 120 mV or across a long session (readings skipped >= 60 s: the speaker): the load
+                            // takes more than the port gives (or the charger stopped low); back to CHARGING on a
+                            // settled rise of 12 mV
     BOARD_PWR__N
 } board_power_t;
 
@@ -77,7 +82,8 @@ typedef enum {
 typedef enum {
     BOARD_BEV_MINUTE,       // not an event: the log's record of the minute
     BOARD_BEV_BOOT,         // the first reading
-    BOARD_BEV_USB,          // the USB host appeared (d = the settled level before, -1 none)
+    BOARD_BEV_USB,          // the USB host appeared (d = the settled level before, -1 none; back while the power
+                            // was still seen: at most one in 2 min)
     BOARD_BEV_STEP,         // ... the plug-in step measured >= 15 mV: CHARGING (d = the step)
     BOARD_BEV_NO_STEP,      // ... under 15 mV: the charger did not start, FULL near v_full (d = the step)
     BOARD_BEV_NO_REF,       // ... no settled level to measure it from (booted on USB, under load): CHARGING
@@ -87,18 +93,24 @@ typedef enum {
     BOARD_BEV_STEP_DOWN,    // a settled step down >= 35 mV without a host: unplugged (d = the step); on battery
                             // (ext none): a load the app does not grade
     BOARD_BEV_STEP_SMALL,   // a confirmed step of 15-34 mV: only logged, at most one in 2 min (d = the step)
-    BOARD_BEV_CHG_STOP,    // ... with the host still there: the charger stopped (FULL near v_full, else USB_DRAIN)
+    BOARD_BEV_CHG_STOP,     // ... with the host still there, or CHARGING's settled level 20 mV under 3 min ago (30
+                            // under its peak) with no long session meanwhile: the charger stopped (FULL at >= v_full
+                            // - 120 mV, else USB_DRAIN)
     BOARD_BEV_TREND_UP,     // calm readings rose 15 mV within 2 min: a charger whose step was missed (d = the rise)
     BOARD_BEV_FALL,         // no host: the settled level 35 mV (FULL: 60) under its highest: power lost (d = fall)
     BOARD_BEV_PLATEAU,      // CHARGING: not risen > 5 mV in 4 min at >= v_full - 100 mV (> 10 mV in 15 min at
                             // >= 3.95 V): FULL (d = the change)
     BOARD_BEV_RISE,         // FULL: a calm level 20 mV above its lowest, rising: CHARGING again (d = the rise)
-    BOARD_BEV_FULL_EXIT,    // FULL with a host: 100 mV under its highest: CHARGING (d = the fall)
-    BOARD_BEV_DRAIN,        // the settled level fell with a host: USB_DRAIN (d = the fall)
+    BOARD_BEV_FULL_EXIT,    // FULL with a host, the level under v_full - 160 mV: the charger does not take it back
+                            // up: USB_DRAIN (d = the fall from its highest)
+    BOARD_BEV_DRAIN,        // the settled level fell with a host, under v_full - 120 mV or across a long session:
+                            // USB_DRAIN (d = the fall)
     BOARD_BEV_DRAIN_END,    // ... rose 12 mV from its lowest, or the host went: CHARGING (d = the rise)
     BOARD_BEV_NOBAT,        // settled readings swing > 250 mV: no cell (d = the spread)
     BOARD_BEV_CELL,         // ... they agree again
-    BOARD_BEV_VFULL,        // v_full learned from a plateau (d = the new value, mV)
+    BOARD_BEV_VFULL,        // v_full learned (d = the new value, mV): a FULL's highest level once it held 15 min
+                            // (lower only after the 4-min plateau, by 30 mV at most per charge), or higher when it
+                            // ends; changes under 8 mV are not taken
     BOARD_BEV_LOAD_END,     // on battery, a step up back to the level before a step down of the last 10 min: a
                             // load the app does not grade ended, no charger (d = the step)
     BOARD_BEV__N
@@ -131,7 +143,8 @@ typedef struct {
     unsigned skipped;   // readings skipped for load since boot
     board_ext_t ext;    // external power and where it is known from (NONE while a plug-in is still measured)
     int vfull;          // v_full in use (mV): the divider's reading of a full cell on the charger = 100 %
-    int vfull_learn;    // v_full learned from a plateau since boot, -1 = none (the app stores it: bat_vfull)
+    int vfull_learn;    // v_full learned since boot or since it was last set, -1 = none (the app stores it:
+                        // bat_vfull)
     int poll_ms;        // when the model wants the next reading: 5000, 2000 while a step is being measured
     board_bat_ev_t why; // the last event
 } board_bat_t;
@@ -142,7 +155,7 @@ bool board_battery_sample(board_bat_q_t q);
 // Latest model state (any task).
 void board_battery_state(board_bat_t *out);
 // v_full (the setting bat_vfull, 4000-4250 mV; out of range = 4150): the reading that maps to 100 % (the curve is
-// scaled by 4200 / v_full). Call from the task that samples.
+// scaled by 4200 / v_full). A value other than the one learned clears vfull_learn. Call from the task that samples.
 void board_battery_set_vfull(int mv);
 // Console override for UI tests: pct 0..100 and the power state (FULL shows 100); pct < 0 ends it.
 void board_battery_sim(int pct, board_power_t power);

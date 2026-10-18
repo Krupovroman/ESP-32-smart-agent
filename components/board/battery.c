@@ -8,10 +8,14 @@
 //   unplugged; the host's packets stopping without one = still plugged in (macOS suspends an idle CDC device: no
 //   packets, VBUS still there).
 // - Charging or full: the plug-in step (under 15 mV near full = the charger did not start: FULL), then the settled
-//   level: flat for 4 min near v_full (15 min anywhere >= 3.95 V) = FULL, whatever the absolute voltage (the level is
-//   learned as v_full, the 100 % of this divider), rising again = CHARGING.
-// - USB_DRAIN: the host there and the settled level falling (a PC port gives less than the loud speaker takes).
-// Readings under load are not taken (app_io.c grades them), and every decision goes into the battery log (bat log).
+//   level: flat for 4 min near v_full (15 min anywhere >= 3.95 V) = FULL, whatever the absolute voltage (a FULL's
+//   highest level is learned as v_full, the 100 % of this divider), rising again = CHARGING. With the host a calm
+//   fall near v_full is the charger stopping (FULL), and FULL holds while the cell relaxes and drains towards the
+//   recharge level after termination.
+// - USB_DRAIN: the host there and the settled level falling below near-full or across a long session (a PC port
+//   gives less than the loud speaker takes), or FULL's level under the recharge level.
+// Readings under load are not taken (app_io.c grades them), leaving any state the percent glides to the curve rather
+// than jumping, and every decision goes into the battery log (bat log).
 #include "board.h"
 #include "board_pins.h"
 
@@ -46,8 +50,11 @@ static const char *TAG = "battery";
 #define STEP_SMALL_GAP_MS 120000    // is only logged (evidence: what a full cell's plug-in makes), one this often
 #define STEP_CONFIRM_N  3           // a reading that far off and the next two settled ones: their median
 #define DIP_MS          600000      // a step up back to within STEP_SMALL_MV of the level before a step down on
-                                    // battery this recent: a load the app does not grade ended (OTA, the portal's
-                                    // radio), not a charger
+                                    // battery this recent: a load the app does not grade ended, not a charger. Only
+                                    // a step down seen while settled arms it: comparing with older levels would
+                                    // take a near-full cell's small charger step (it drained meanwhile) or a weak
+                                    // charger after a long session for a load's end (the app grades the loads it
+                                    // knows: the speaker, turns, the backlight, Wi-Fi and the portal)
 
 // Plugged in with a USB host: the step against the run's level before it, from the first PEND_N settled readings
 #define PEND_N          3
@@ -59,6 +66,8 @@ static const char *TAG = "battery";
 // (or none to look in) = still plugged in (EXT_KEPT)
 #define LOST_WATCH_MS   12000
 #define LOST_SETTLED_N  2
+#define USB_EV_GAP_MS   120000      // the host back while power was already seen: logged at most this often (a
+                                    // flickering host would flood the log)
 
 // External power without a host ends on a fall: a settled level this far under the highest one since it began (or
 // since the host went), FULL_LOST_MV in FULL (after the charger's termination the cell relaxes by 30-50 mV and the
@@ -89,15 +98,26 @@ static const char *TAG = "battery";
 #define FULL_DWELL_MS   180000      // FULL: a slow rise ends it only after this long (a confirmed step at once):
 #define FULL_RISE_MV    20          // ... a calm level this far above the lowest since FULL began and half of it
                                     // within PLATEAU_MS: the charger started again (a wobble is no rise)
-#define FULL_EXIT_MV    100         // ... with a host, this far under its highest: not holding (CHARGING; without a
-                                    // host the fall above ends the external power)
+#define FULL_HOLD_MV    160         // ... with a host, FULL holds down to v_full - this: after its termination the
+                                    // charger lets the load drain the cell to its recharge level (~100-150 mV under
+                                    // the CV level) and starts again (a step up); lower, it does not: USB_DRAIN.
+                                    // Without a host the fall above ends the external power. A fall while CHARGING
+                                    // with a host is the charger stopping too (terminated: the cell relaxes 30-80 mV
+                                    // and the load moves onto it): FULL at >= full_floor(), else USB_DRAIN
 
-// v_full: the divider's reading of a full cell on the charger (the CV level); the curve is scaled by
-// CURVE_FULL_MV / v_full. Learned from each plateau, stored by the app (bat_vfull).
+// v_full: the divider's reading of a full cell on the charger (the CV level: the highest it reads on the charger);
+// the curve is scaled by CURVE_FULL_MV / v_full. Learned once a FULL has lasted VFULL_AFTER_MS, from the highest
+// settled level during it: lower only when that FULL began with a 4-min plateau near v_full (the CV level), by at
+// most VFULL_DOWN_MV per charge (a slow charge's pause or a weak port that only holds the cell is no CV level: one
+// such plateau cannot pull the scale far, and the next real charge's CV level lifts it back); higher from any FULL
+// (no reading on the charger is above the CV level), also when it ends. Stored by the app (bat_vfull, one NVS
+// write per change of at least VFULL_STEP_MV).
 #define VFULL_DEF_MV    4150
 #define VFULL_MIN_MV    4000
 #define VFULL_MAX_MV    4250
-#define VFULL_STEP_MV   5           // learned again only when it moved this much (one NVS write per change)
+#define VFULL_STEP_MV   8
+#define VFULL_DOWN_MV   30
+#define VFULL_AFTER_MS  900000
 #define CURVE_FULL_MV   4200
 
 // The window (USB_DRAIN, FULL): filtered readings with their time
@@ -108,6 +128,10 @@ static const char *TAG = "battery";
 #define RECENT_SPAN_MS  30000       // least this: one low reading is no trend
 #define DRAIN_MV        20          // USB host present and now this much below 3 min ago: USB_DRAIN; or, a slow
 #define DRAIN_PEAK_MV   30          // drain (a weak port), this much below the highest level since charging began
+                                    // (near full and with no heavy load in that time: the charger stopped, FULL)
+#define HEAVY_MS        60000       // readings skipped this long in a row: a heavy load (a loud session, a long
+                                    // answer) that can drain the cell on a weak port; not a backlight step's 3 s nor
+                                    // a short turn (that coinciding with a charger's termination would read as one)
 #define DRAIN_END_MV    12          // ... until a settled reading this far above the lowest one since,
 #define DRAIN_MIN_MS    120000      // ... at the earliest this long after it began (a cell recovering from the load
                                     // rises too: no flapping, and the note stays long enough to be read)
@@ -135,6 +159,9 @@ static const char *TAG = "battery";
 #define OFS_REF_MAX_MS  600000
 #define PCT_AGAINST     5           // on battery the percent rises only by this much at once and on a calm reading
                                     // (a cell recovering from a load reads higher for a while)
+#define PCT_GLIDE_MS    15000       // entering BATTERY or USB_DRAIN from another state the percent falls to the
+                                    // curve by 1 point this often, not at once (FULL showed 100 at any level, the
+                                    // charging offset is an estimate): no jump on unplugging or a stop
 #define NOBAT_SPREAD_MV 250         // settled readings this far apart: no cell, a charger output swinging on its own
 #define NOBAT_CLEAR_MV  80          // ... back to a cell once they agree within this
 
@@ -165,6 +192,7 @@ static struct {
     uint32_t small_t;                       // the last small step logged
     uint32_t dip_t;                         // the last step down on battery (0 = none), and the level before it
     int dip_ref;
+    uint32_t usb_ev_t;                      // the host-back event last logged
     // plugged in with a host: the step being measured (pend_t 0 = not)
     uint32_t pend_t;
     int pend_ref, pend_v[PEND_N], pend_n;
@@ -181,13 +209,21 @@ static struct {
     int hist[TREND_N], hist_n, hist_i;
     int trend_base;                         // the reading its rise was measured from
     uint32_t busy_t;                        // the last reading that was not SETTLED (skipped or loaded), 0 = none yet
+    uint32_t skip_since;                    // the skipped readings in a row began (0 = not skipping), and the last
+    uint32_t heavy_t;                       // reading of such a run HEAVY_MS long (0 = none)
     // window
     win_t win[WIN_N];
     int win_n, win_i;
     int level_peak;                         // highest settled level (the window's "now") since the state began
     int trough;                             // lowest filtered reading since USB_DRAIN began
     int full_lo, full_hi;                   // lowest calm / highest settled level since FULL began
+    bool plat_p4;                           // decide(): the plateau that made FULL was the 4-min one near v_full
+    bool full_plat, full_learned;           // this FULL began with it; v_full learned from this FULL
     uint32_t power_t;                       // the current power state began
+    bool glide;                             // the percent falls to the curve 1 point per PCT_GLIDE_MS ...
+    uint32_t glide_t;                       // ... the last point at
+    bool drain_idle;                        // USB_DRAIN because the charger stopped (from FULL, a step down): no
+                                            // charge current, so no charging offset either
     // charging offset
     int bat_ref;                            // last settled level on battery, and when
     uint32_t bat_ref_t;
@@ -555,12 +591,13 @@ static void win_push(uint32_t now, int mv, bool settled)
 // The window: *hi = the highest of the last minute's settled readings (at least RECENT_MIN of them over at least
 // RECENT_SPAN_MS, so a fall must last and a cell still recovering from a load does not count; -1 = not enough), *ref =
 // the newest reading of any kind at least 3 min old (older when readings were skipped meanwhile: a fall over a longer
-// time is still a fall; a reference taken under load only makes a fall smaller; -1 = none)
-static void win_scan(uint32_t now, int *hi, int *ref)
+// time is still a fall; a reference taken under load only makes a fall smaller; -1 = none), taken at *ref_t
+static void win_scan(uint32_t now, int *hi, int *ref, uint32_t *ref_t)
 {
     int n_recent = 0;
     uint32_t newest = 0, oldest = 0;
     *hi = *ref = -1;
+    *ref_t = 0;
     for (int k = 0; k < s_m.win_n; k++) {
         const win_t *w = &s_m.win[(s_m.win_i - 1 - k + WIN_N) % WIN_N];     // newest first
         uint32_t age = now - w->t;
@@ -577,6 +614,7 @@ static void win_scan(uint32_t now, int *hi, int *ref)
             }
         } else if (age >= WIN_MS) {
             *ref = w->mv;
+            *ref_t = w->t;
             break;
         }
     }
@@ -676,7 +714,7 @@ static int full_floor(void)
 }
 
 typedef struct {
-    uint32_t now;
+    uint32_t now, ref3_t;
     board_power_t was;
     bool usb, set_now, calm;
     int mv, hi, ref3, ref4, ref15, step;
@@ -707,6 +745,7 @@ static board_power_t decide(const dec_in_t *in, board_bat_ev_t *ev, int *evd)
     }
     bool d_ok = in->hi >= 0 && in->ref3 >= 0;
     int d = in->hi - in->ref3;
+    bool d_heavy = d_ok && s_m.heavy_t && s_m.heavy_t >= in->ref3_t;  // a long session in the 3 min
     switch (in->was) {
     case BOARD_PWR_BATTERY:
         return BOARD_PWR_CHARGING;          // external power without a measured step (the trend, a host without a
@@ -725,8 +764,11 @@ static board_power_t decide(const dec_in_t *in, board_bat_ev_t *ev, int *evd)
         }
         return BOARD_PWR_USB_DRAIN;
     case BOARD_PWR_FULL:
-        if (in->usb && d_ok && d <= -DRAIN_MV) {
-            *ev = BOARD_BEV_DRAIN;          // falling faster than the idle load drains a cell after termination
+        // a fall alone is no USB_DRAIN: after its termination the charger leaves the load on the cell, which relaxes
+        // and drains towards the recharge level; a fall across a long session (HEAVY_MS) is (the port gave less than
+        // the load took), and so is a level the charger would have topped up by now
+        if (in->usb && d_heavy && d <= -DRAIN_MV) {
+            *ev = BOARD_BEV_DRAIN;
             *evd = d;
             return BOARD_PWR_USB_DRAIN;
         }
@@ -736,18 +778,27 @@ static board_power_t decide(const dec_in_t *in, board_bat_ev_t *ev, int *evd)
             *evd = in->hi - s_m.full_lo;
             return BOARD_PWR_CHARGING;
         }
-        if (in->usb && in->hi >= 0 && s_m.full_hi - in->hi >= FULL_EXIT_MV) {
-            *ev = BOARD_BEV_FULL_EXIT;
+        if (in->usb && in->hi >= 0 && in->hi < s_vfull - FULL_HOLD_MV) {
+            *ev = BOARD_BEV_FULL_EXIT;      // the cell drains on USB and the charger does not take it back
             *evd = in->hi - s_m.full_hi;
-            return BOARD_PWR_CHARGING;
+            return BOARD_PWR_USB_DRAIN;
         }
         return BOARD_PWR_FULL;
     default:
         break;
     }
-    if (in->usb && ((d_ok && d <= -DRAIN_MV) || (in->hi >= 0 && s_m.level_peak - in->hi >= DRAIN_PEAK_MV))) {
-        *ev = BOARD_BEV_DRAIN;              // without a host a fall ends the external power instead (unplugged or
-        *evd = d_ok && d <= -DRAIN_MV ? d : in->hi - s_m.level_peak;     // overloaded: unknown)
+    bool d_fall = d_ok && d <= -DRAIN_MV, p_fall = in->hi >= 0 && s_m.level_peak - in->hi >= DRAIN_PEAK_MV;
+    if (in->usb && (d_fall || p_fall)) {
+        // without a host a fall ends the external power instead (unplugged or overloaded: unknown). With a long
+        // session in the time measured the load took more than the port gives; else, near full, the charger stopped
+        // (terminated: the cell relaxes and the load moves onto it)
+        *evd = d_fall ? d : in->hi - s_m.level_peak;
+        bool heavy = d_fall ? d_heavy : s_m.heavy_t && s_m.heavy_t >= s_m.power_t;
+        if (!heavy && in->hi >= full_floor()) {
+            *ev = BOARD_BEV_CHG_STOP;
+            return BOARD_PWR_FULL;
+        }
+        *ev = BOARD_BEV_DRAIN;
         return BOARD_PWR_USB_DRAIN;
     }
     // the charger holds its CV level, or terminated: full for this charger
@@ -763,15 +814,22 @@ static board_power_t decide(const dec_in_t *in, board_bat_ev_t *ev, int *evd)
     } else if (in->now - s_m.plat_t >= PLATEAU_HOLD_MS) {
         *ev = BOARD_BEV_PLATEAU;
         *evd = p4 ? in->hi - in->ref4 : in->hi - in->ref15;
+        s_m.plat_p4 = p4;
         return BOARD_PWR_FULL;
     }
     return BOARD_PWR_CHARGING;
 }
 
-// A plateau's level is this divider's reading of a full cell on the charger: the curve's 100 % from now on
-static void vfull_learn(int v)
+// v = the highest settled level of a FULL (this divider's reading of a full cell on the charger): the curve's 100 %
+// from now on. Lower only when down (that FULL began with the plateau near v_full), by VFULL_DOWN_MV at most.
+static void vfull_learn(int v, bool down)
 {
-    if (v < VFULL_MIN_MV || v > VFULL_MAX_MV || abs(v - s_vfull) < VFULL_STEP_MV) {
+    if (v <= 0 || (v < s_vfull && !down)) {
+        return;
+    }
+    v = v < s_vfull - VFULL_DOWN_MV ? s_vfull - VFULL_DOWN_MV : v;
+    v = v < VFULL_MIN_MV ? VFULL_MIN_MV : v > VFULL_MAX_MV ? VFULL_MAX_MV : v;
+    if (abs(v - s_vfull) < VFULL_STEP_MV) {
         return;
     }
     s_vfull = v;
@@ -879,6 +937,13 @@ bool board_battery_sample(board_bat_q_t q)
     if (q != BOARD_BAT_SETTLED) {
         s_m.busy_t = now ? now : 1;         // the calm clock (wall-charger trend, FULL plateau)
     }
+    if (q != BOARD_BAT_SKIP) {
+        s_m.skip_since = 0;
+    } else if (!s_m.skip_since) {
+        s_m.skip_since = now ? now : 1;
+    } else if (now - s_m.skip_since >= HEAVY_MS) {
+        s_m.heavy_t = now ? now : 1;        // a long session (a fall across it is a drain)
+    }
     // s_model is written only here (this task): no lock needed to read it
     const board_bat_t *p = &s_model;
     board_bat_t m = *p;                     // a skipped reading keeps the level
@@ -905,7 +970,8 @@ bool board_battery_sample(board_bat_q_t q)
         s_m.lost_t = 0;
         if (s_m.ext == BOARD_EXT_NONE) {
             usb_plugged(now, before);
-        } else {
+        } else if (!s_m.usb_ev_t || now - s_m.usb_ev_t >= USB_EV_GAP_MS) {
+            s_m.usb_ev_t = now ? now : 1;
             ev_add(BOARD_BEV_USB, before);  // back (it was suspended, or a charger came first)
         }
         s_m.ext = BOARD_EXT_USB;
@@ -1029,7 +1095,8 @@ bool board_battery_sample(board_bat_q_t q)
     }
 
     int hi, ref3;
-    win_scan(now, &hi, &ref3);
+    uint32_t ref3_t;
+    win_scan(now, &hi, &ref3, &ref3_t);
     if (hi > s_m.level_peak) {
         s_m.level_peak = hi;
     }
@@ -1046,27 +1113,36 @@ bool board_battery_sample(board_bat_q_t q)
     }
     board_bat_ev_t ev = BOARD_BEV__N;
     int evd = 0;
-    dec_in_t in = { .now = now, .was = p->power, .usb = usb, .set_now = set_now, .calm = calm, .mv = m.mv,
-                    .hi = hi, .ref3 = ref3, .ref4 = ref4, .ref15 = ref15, .step = step };
+    dec_in_t in = { .now = now, .ref3_t = ref3_t, .was = p->power, .usb = usb, .set_now = set_now, .calm = calm,
+                    .mv = m.mv, .hi = hi, .ref3 = ref3, .ref4 = ref4, .ref15 = ref15, .step = step };
     m.power = decide(&in, &ev, &evd);
     if (ev != BOARD_BEV__N && m.power != p->power) {
         ev_add(ev, evd);
     }
     if (m.power != p->power) {
+        if (p->power == BOARD_PWR_FULL) {
+            vfull_learn(s_m.full_hi, false);    // a FULL that read higher than v_full: it is too low
+        }
         // a new state starts its own window: a fall that began before it does not count again
         win_clear();
         m.d3_ok = m.d4_ok = false;
         s_m.trough = m.mv;
         s_m.power_t = now;
         s_m.plat_t = 0;
+        s_m.glide = m.power == BOARD_PWR_BATTERY || m.power == BOARD_PWR_USB_DRAIN;
+        s_m.glide_t = now - PCT_GLIDE_MS;
+        s_m.drain_idle = m.power == BOARD_PWR_USB_DRAIN && (p->power == BOARD_PWR_FULL || step < 0);
         if (m.power == BOARD_PWR_FULL) {
             s_m.full_lo = s_m.full_hi = hi >= 0 ? hi : m.mv;
-            if (ev == BOARD_BEV_PLATEAU) {
-                vfull_learn(hi);
-            }
+            s_m.full_plat = ev == BOARD_BEV_PLATEAU && s_m.plat_p4;
+            s_m.full_learned = false;
         }
     } else if (m.power == BOARD_PWR_USB_DRAIN && fresh && m.mv < s_m.trough) {
         s_m.trough = m.mv;
+    }
+    if (m.power == BOARD_PWR_FULL && !s_m.full_learned && now - s_m.power_t >= VFULL_AFTER_MS) {
+        s_m.full_learned = true;            // held long enough to be the end of a charge, not its pause
+        vfull_learn(s_m.full_hi, s_m.full_plat);
     }
     offset_track(now, m.power, m.mv, fresh, settled);
     m.ofs = s_m.ofs;
@@ -1077,7 +1153,7 @@ bool board_battery_sample(board_bat_q_t q)
     } else if ((s_m.pend_t || s_m.lost_t) && p->pct >= 0) {
         // being measured: as shown (the plug-in's readings already carry the charging offset)
     } else if (fresh || p->pct < 0) {
-        bool fed = m.power == BOARD_PWR_CHARGING || m.power == BOARD_PWR_USB_DRAIN;
+        bool fed = m.power == BOARD_PWR_CHARGING || (m.power == BOARD_PWR_USB_DRAIN && !s_m.drain_idle);
         int pct = pct_of(fed ? m.mv - s_m.ofs : m.mv);
         int was = p->pct;
         if (pct >= 0 && was >= 0) {
@@ -1088,6 +1164,17 @@ bool board_battery_sample(board_bat_q_t q)
             } else if (pct > was && (pct - was < PCT_AGAINST || !calm)) {
                 pct = was;                          // on battery: a recovering cell (for minutes after a session),
             }                                       // or a wall charger not seen yet
+            if (s_m.glide && m.power != BOARD_PWR_CHARGING) {
+                // just left FULL (100 at any level) or the charger (an estimated offset): down to the curve
+                if (pct >= was - 1) {
+                    s_m.glide = false;
+                } else if (now - s_m.glide_t >= PCT_GLIDE_MS) {
+                    pct = was - 1;
+                    s_m.glide_t = now;
+                } else {
+                    pct = was;
+                }
+            }
         }
         m.pct = pct;
     }
@@ -1134,9 +1221,13 @@ void board_battery_state(board_bat_t *out)
 void board_battery_set_vfull(int mv)
 {
     int v = mv >= VFULL_MIN_MV && mv <= VFULL_MAX_MV ? mv : VFULL_DEF_MV;
+    if (v != s_m.vfull_learn) {
+        s_m.vfull_learn = -1;       // set by hand: what was learned before no longer stands (a new learning does)
+    }
     taskENTER_CRITICAL(&s_mux);
     s_vfull = v;
     s_model.vfull = v;
+    s_model.vfull_learn = s_m.vfull_learn;
     taskEXIT_CRITICAL(&s_mux);
 }
 

@@ -2,7 +2,8 @@
 # charger and USB host (t_battery.c); the ADC, USB-Serial-JTAG, clock and FreeRTOS are stand-ins (stubs\).
 # Needs the MSVC Build Tools (cl.exe) and a Windows 10/11 SDK; the ESP-IDF build does not see this folder.
 #   powershell -NoProfile -ExecutionPolicy Bypass -File components\board\host_test\build.ps1
-#   components\board\host_test\out\battery_test.exe [-v]   -> "N checks, 0 failures", exit code 0 (-v: the model's log)
+#   components\board\host_test\out\battery_test.exe [-v [-t]] [name]   -> "N checks, 0 failures", exit code 0
+#   (-v: the model's log, -t: every reading too; name: only the tests whose name contains it)
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $comp = (Resolve-Path (Join-Path $here '..')).Path
