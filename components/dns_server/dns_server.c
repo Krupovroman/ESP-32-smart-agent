@@ -4,9 +4,14 @@
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
 
+#include <errno.h>
 #include <sys/param.h>
+#include <sys/time.h>
 #include <inttypes.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_check.h"
@@ -56,10 +61,15 @@ typedef struct __attribute__((__packed__))
     uint32_t ip_addr;
 } dns_answer_t;
 
+#define DNS_RX_TIMEOUT_MS (500)     // recvfrom wakes up this often to see a stop request
+#define DNS_STOP_WAIT_MS  (2000)
+
 // DNS server handle
 struct dns_server_handle {
-    bool started;
+    volatile bool started;
     TaskHandle_t task;
+    SemaphoreHandle_t done;         // given by the task after it closed its socket
+    volatile int sock;
     int num_of_entries;
     dns_entry_pair_t entry[];
 };
@@ -210,25 +220,34 @@ void dns_server_task(void *pvParameters)
             ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
             break;
         }
+        handle->sock = sock;
         ESP_LOGI(TAG, "Socket created");
 
         int err = bind(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
         if (err < 0) {
             ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
+            close(sock);
+            handle->sock = -1;
+            break;
         }
         ESP_LOGI(TAG, "Socket bound, port %d", DNS_PORT);
+        // a receive timeout lets the task see stop_dns_server() and close the socket itself;
+        // deleting it inside recvfrom() leaked the socket and kept port 53 bound
+        struct timeval tv = { .tv_sec = 0, .tv_usec = DNS_RX_TIMEOUT_MS * 1000 };
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
         while (handle->started) {
-            ESP_LOGI(TAG, "Waiting for data");
             struct sockaddr_in6 source_addr; // Large enough for both IPv4 or IPv6
             socklen_t socklen = sizeof(source_addr);
             int len = recvfrom(sock, rx_buffer, sizeof(rx_buffer) - 1, 0, (struct sockaddr *)&source_addr, &socklen);
 
             // Error occurred during receiving
             if (len < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    continue;      // timeout tick
+                }
                 ESP_LOGE(TAG, "recvfrom failed: errno %d", errno);
-                close(sock);
-                break;
+                break;             // closed below
             }
             // Data received
             else {
@@ -259,11 +278,13 @@ void dns_server_task(void *pvParameters)
         }
 
         if (sock != -1) {
-            ESP_LOGE(TAG, "Shutting down socket");
+            ESP_LOGI(TAG, "Shutting down socket");
             shutdown(sock, 0);
             close(sock);
+            handle->sock = -1;
         }
     }
+    xSemaphoreGive(handle->done);   // the handle is not touched after this
     vTaskDelete(NULL);
 }
 
@@ -273,10 +294,22 @@ dns_server_handle_t start_dns_server(dns_server_config_t *config)
     ESP_RETURN_ON_FALSE(handle, NULL, TAG, "Failed to allocate dns server handle");
 
     handle->started = true;
+    handle->sock = -1;
     handle->num_of_entries = config->num_of_entries;
     memcpy(handle->entry, config->item, config->num_of_entries * sizeof(dns_entry_pair_t));
+    handle->done = xSemaphoreCreateBinary();
+    if (!handle->done) {
+        free(handle);
+        ESP_LOGE(TAG, "Failed to allocate dns server semaphore");
+        return NULL;
+    }
 
-    xTaskCreate(dns_server_task, "dns_server", 4096, handle, 5, &handle->task);
+    if (xTaskCreate(dns_server_task, "dns_server", 4096, handle, 5, &handle->task) != pdPASS) {
+        vSemaphoreDelete(handle->done);
+        free(handle);
+        ESP_LOGE(TAG, "Failed to create dns server task");
+        return NULL;
+    }
     return handle;
 }
 
@@ -284,7 +317,15 @@ void stop_dns_server(dns_server_handle_t handle)
 {
     if (handle) {
         handle->started = false;
-        vTaskDelete(handle->task);
+        // the task leaves recvfrom() within DNS_RX_TIMEOUT_MS and closes its socket
+        if (xSemaphoreTake(handle->done, pdMS_TO_TICKS(DNS_STOP_WAIT_MS)) != pdTRUE) {
+            ESP_LOGE(TAG, "DNS task did not stop, deleting it");
+            vTaskDelete(handle->task);
+            if (handle->sock >= 0) {
+                close(handle->sock);
+            }
+        }
+        vSemaphoreDelete(handle->done);
         free(handle);
     }
 }
