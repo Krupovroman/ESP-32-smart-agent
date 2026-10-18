@@ -45,8 +45,12 @@
 #define FADE_TOP_H      24      // y 80-104
 #define FADE_BOT_H      16      // y 228-244
 #define CHAT_GAP        6       // between a user bubble and its reply (turn gap = 6 + 8)
+#define BAT_X           145     // battery glyph + percent above the pill (3.16): x 145-215, y 16-36,
+#define BAT_Y           16      // |(35,164)| = 167.7; the empty pill starts at y 36, the conversation pill's
+#define BAT_W           70      // label line at y 36 (only its transparent box reaches up to y 24)
+#define BAT_H           20
 
-static lv_obj_t *s_scr, *s_pill, *s_pill_lbl, *s_status, *s_orb;
+static lv_obj_t *s_scr, *s_pill, *s_pill_lbl, *s_status, *s_orb, *s_bat;
 static lv_obj_t *s_left, *s_left_lbl, *s_right, *s_right_lbl, *s_wdot;
 static lv_obj_t *s_hint1, *s_hint2, *s_chat;
 static bool s_conv;                 // conversation layout (>= 1 message)
@@ -277,6 +281,30 @@ static void side_refresh(void)
         lv_label_set_text_static(s_right_lbl, SYM_COG);
         lv_obj_set_flag(s_wdot, LV_OBJ_FLAG_HIDDEN, ui_get(g_s_speaker) != 0);
     }
+}
+
+// Battery above the pill (3.16): the level glyph (F240-F244) or, while charging, a green bolt, and the percent;
+// red below 15 %, green when full; hidden without a reading
+static void bat_refresh(void)
+{
+    int32_t v = ui_get(g_s_battery);
+    int pct = UI_BAT_PCT(v);
+    if (pct == UI_BAT_NONE) {
+        lv_obj_add_flag(s_bat, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    bool full = (v & UI_BAT_FULL) != 0, chg = (v & UI_BAT_CHARGING) && !full;
+    char glyph[24], buf[48];
+    if (chg) {
+        snprintf(glyph, sizeof(glyph), "#%06lX " SYM_BOLT "#", (unsigned long)ui_accent(UI_ACC_SUCCESS)->top);
+    } else {
+        snprintf(glyph, sizeof(glyph), "%s", full ? SYM_BAT_FULL : ui_bat_glyph(pct));
+    }
+    snprintf(buf, sizeof(buf), ui_s(S_HB_FMT), glyph, pct);
+    uint32_t col = pct < 15 ? ui_accent(UI_ACC_ERROR)->top : full ? ui_accent(UI_ACC_SUCCESS)->top : UI_COL_TEXT2;
+    lv_obj_set_style_text_color(s_bat, ui_col(col), 0);
+    lv_label_set_text(s_bat, buf);
+    lv_obj_remove_flag(s_bat, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void hint_refresh(void)
@@ -1115,6 +1143,10 @@ static void misc_obs(lv_observer_t *o, lv_subject_t *s)
         pill_refresh();
         return;
     }
+    if (s == g_s_battery) {
+        bat_refresh();
+        return;
+    }
     side_refresh();     // text_only, speaker
 }
 
@@ -1203,6 +1235,14 @@ lv_obj_t *scr_home_create(void)
     s_status_txt[0] = 0;
     s_status_err = false;
 
+    // after the pill, so a pressed pill's fill never covers it; not clickable (the pill keeps its whole box)
+    s_bat = centred_label(s_scr, "home_bat", &st_text16);
+    lv_label_set_long_mode(s_bat, LV_LABEL_LONG_MODE_DOTS);
+    lv_label_set_recolor(s_bat, true);
+    lv_obj_set_pos(s_bat, BAT_X, BAT_Y);
+    lv_obj_set_size(s_bat, BAT_W, BAT_H);
+    lv_obj_add_flag(s_bat, LV_OBJ_FLAG_HIDDEN);
+
     // Orb: a sibling of the chat, never a child, so a drag on it never scrolls (2.4)
     s_orb = ui_orb_create(s_scr, ORB_HERO);
     lv_obj_set_name_static(s_orb, "home_orb");
@@ -1254,6 +1294,7 @@ lv_obj_t *scr_home_create(void)
     ui_watch(g_s_hints, misc_obs, s_scr, NULL);
     ui_watch(g_s_face, misc_obs, s_scr, NULL);
     ui_watch(g_s_tr_dir, misc_obs, s_scr, NULL);
+    ui_watch(g_s_battery, misc_obs, s_scr, NULL);
     ui_watch(g_s_state, state_obs, s_scr, NULL);
     rebuild_chat();
     return s_scr;

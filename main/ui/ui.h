@@ -39,11 +39,13 @@ typedef enum {
     UI_SET_FACE,        // i = 1 eyes and mouth on the orb ("Лицо шара", default), 0 plain orb
     UI_SET_TR_DIR,      // i = 0 auto (pill "RU ⇄ EN"), 1 A -> B, 2 B -> A (pill "RU → EN" / "EN → RU")
 
-    UI_WAKE,            // leave dim / ambient / screen off (ui.md 5.8); also posted by ui_boot_down / ui_pwr_short
-    UI_SCREEN_OFF,      // screen off now (PWR at H idle): backlight 0 until the next touch or button
+    UI_WAKE,            // leave dim / ambient / screen off (ui.md 5.8); also posted by ui_boot_down
+    UI_SCREEN_OFF,      // screen off now (power off on USB, console): backlight 0 until the next touch or button
     UI_WORK_DONE,       // internal (ui_work.c): s = finished background job, its done callback runs in taskLVGL
     UI_SET_TURN,        // i = app turn tag: chat entries created from now on carry it (cm_entry_t.tag); the reader
                         // and the card actions send it back, so the app acts on the turn shown
+    UI_SET_BATTERY,     // i = UI_BAT_MAKE(pct, flags): battery level and charging (Home chrome, lock screen)
+    UI_LOCK,            // i = ui_lock_req_t (ui_keylock / ui_pwr_short / ui_boot_down post it)
     UI_MSG__N
 } ui_msg_type_t;
 
@@ -76,6 +78,17 @@ typedef enum { UI_NET_OFF, UI_NET_CONNECTING, UI_NET_UP, UI_NET_FAILED } ui_net_
 
 typedef enum { UI_SIDE_AUTO = -1, UI_SIDE_A = 0, UI_SIDE_B = 1 } ui_side_t;
 
+// UI_SET_BATTERY argument: percent in bits 0-6 (UI_BAT_NONE = no reading) and the flags above it
+#define UI_BAT_NONE         127
+#define UI_BAT_CHARGING     (1 << 7)
+#define UI_BAT_FULL         (1 << 8)
+#define UI_BAT_USB          (1 << 9)
+#define UI_BAT_MAKE(pct, flags) ((int32_t)(((pct) < 0 || (pct) > 100 ? UI_BAT_NONE : (pct)) | (flags)))
+#define UI_BAT_PCT(v)       ((int)((v) & 0x7F))
+
+// UI_LOCK argument
+typedef enum { UI_LOCK_OFF, UI_LOCK_ON, UI_LOCK_TOGGLE, UI_LOCK_NUDGE } ui_lock_req_t;
+
 // Screens (ui.md 2.1). Each has a { name, builder, context } row in s_screens (ui.c); the builder returns a new
 // screen built with ui_chrome_screen() and is deleted by the navigation stack when the user leaves it.
 // UI_GOTO takes the id in i and an optional decimal screen argument in s (e.g. "1" = brightness for ADJUST).
@@ -105,6 +118,7 @@ typedef enum {
     UI_SCR_DIALOG,      // C: confirm dialog
     UI_SCR_ONBOARD,     // O1-O5 first boot (arg = step 1..5)
     UI_SCR_AMBIENT,     // Z: clock and dot orb
+    UI_SCR_LOCK,        // lock screen (3.16): an overlay over the stack, never pushed ("ui goto lock" locks)
     UI_SCR__N
 } ui_screen_t;
 
@@ -130,6 +144,7 @@ typedef enum {
                         // is also sent once when the app registers its callback)
     UI_IN_SLEEP,        // i = 0 awake, 1 dimmed, 2 ambient, 3 screen off (the app may stop the mic at 3)
     UI_IN_HINTS,        // D -> "Показать подсказки": i = hints left (3); the app counts them down
+    UI_IN_LOCK,         // i = 1 locked (the app ends whatever runs, speech included), 0 unlocked
 } ui_input_t;
 
 // Screens the UI opens on its own (pill, settings button, chips, offline orb, fault pill, card actions)
@@ -174,17 +189,23 @@ int ui_audit_json(char *out, size_t len);
 
 // ---- Physical buttons (ui.md 2.3). Thread-safe: they read an atomic context and post to the UI queue.
 ui_ctx_t ui_context(void);
-// BOOT pressed. false: ignored here (K, C, O1-O4; a toast explains). true: talk; from T_READ / T_LIST / T_QR /
-// T_ADJUST the UI jumps to H first.
+// BOOT pressed. false: ignored here (K, C, O1-O4: a toast explains; locked: the padlock shakes, "Нажмите PWR").
+// true: talk; from T_READ / T_LIST / T_QR / T_ADJUST the UI jumps to H first.
 bool ui_boot_down(void);
-// PWR short press. true: the UI went back one level. false: already at H (cancel a turn or screen off).
-bool ui_pwr_short(void);
+// PWR short press: lock when unlocked, unlock when locked (PWR is no longer "back").
+void ui_pwr_short(void);
 // PWR pressed / released: the rim POWER ring appears at 600 ms and fills until 3000 ms; release retracts it.
 void ui_pwr_down(void);
 void ui_pwr_up(void);
 
+// ---- Lock (ui.md 3.16): RAM only, the device always boots unlocked. Thread-safe.
+// Lock (iris closes, padlock clicks) or unlock (shackle springs, iris opens).
+void ui_keylock(bool on);
+// True from the start of the lock animation to the start of the unlock: touch and BOOT are refused meanwhile.
+bool ui_keylocked(void);
+
 // ---- Sleep (ui.md 5.8). Thread-safe.
-// Screen off now (PWR at H idle); the next touch, BOOT or PWR wakes it.
+// Screen off now (power off on USB); the next touch, BOOT or PWR wakes it.
 void ui_screen_off(void);
 // True while dimmed, ambient or off (a BOOT / PWR press is then a wake first).
 bool ui_asleep(void);

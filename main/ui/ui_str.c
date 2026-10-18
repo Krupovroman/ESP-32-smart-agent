@@ -24,14 +24,14 @@ static const str_def_t s_tab[S__N] = {
     E(S_ST_UPLOAD, "Отправляю %d %%", "Sending %d %%", SLOT_STATUS),
     E(S_ST_THINK, "Думаю" TXT_ELLIPSIS, "Thinking" TXT_ELLIPSIS, SLOT_STATUS),
     E(S_ST_THINK2, "Ещё немного" TXT_ELLIPSIS, "Almost there" TXT_ELLIPSIS, SLOT_STATUS),
-    // ui.md "Долго… PWR — отмена" is 186 px in ui_16, over the 180 px conversation status slot
-    E(S_ST_THINK3, "Долго" TXT_ELLIPSIS " PWR: отмена", "Slow" TXT_ELLIPSIS " PWR cancels", SLOT_STATUS),
+    // PWR now locks (and ends the turn with it): holding the orb aborts and starts a new question
+    E(S_ST_THINK3, "Долго" TXT_ELLIPSIS " держите шар", "Slow" TXT_ELLIPSIS " hold the orb", SLOT_STATUS),
     E(S_ST_SPEAK_HINT, "Нажмите " TXT_EMDASH " стоп", "Tap to stop", SLOT_STATUS),
     E(S_ST_NOT_HEARD, "Не расслышал", "Didn't catch that", SLOT_STATUS),
     E(S_ST_TOO_SHORT, "Слишком коротко", "Too short", SLOT_STATUS),
     E(S_ST_CANCELLED, "Отменено", "Cancelled", SLOT_STATUS),
     E(S_ST_RETRY, "Повтор %d/2" TXT_ELLIPSIS, "Retry %d/2" TXT_ELLIPSIS, SLOT_STATUS),
-    E(S_ST_BUSY_HINT, "PWR " TXT_EMDASH " отмена", "PWR cancels", SLOT_STATUS),
+    E(S_ST_BUSY_HINT, "Держите " TXT_EMDASH " заново", "Hold to restart", SLOT_STATUS),
 
     // "Держите шар" is 108 px: line 1 (between the side buttons) holds <= 100, line 2 (below them) <= 124
     E(S_HINT1, "Держите", "Hold the orb", SLOT_HINT),
@@ -275,12 +275,22 @@ static const str_def_t s_tab[S__N] = {
     E(S_O4_P, "Есть динамик", "Yes, it is", SLOT_STEP_P),
     E(S_O4_B, "Нет динамика", "No speaker", SLOT_STEP_B),
     E(S_O5_T, "Готово!", "All set!", SLOT_STEP_T),
-    E(S_O5_S, "Держите шар и говорите", "Hold the orb and speak", SLOT_STEP_S),
+    // 281 / 246 px of 290 (Inter metrics with kerning)
+    E(S_O5_S, "Держите шар или BOOT и говорите", "Hold the orb or BOOT and speak", SLOT_STEP_S),
     E(S_O5_P, "Начать", "Start", SLOT_STEP_P),
 
     E(S_K_QUESTION, "Вопрос", "Question", SLOT_PROMPT),
     E(S_K_INPUT, "Ввод", "Input", SLOT_PROMPT),
     E(S_NEW_CHAT_Q, "Начать новый разговор?", "Start a new conversation?", SLOT_DLG_T),
+
+    E(S_HB_FMT, "%s %d%%", "%s %d%%", SLOT_HOME_BAT),               // battery glyph or bolt, percent
+    E(S_BAT_LOW, "Батарея %d %%", "Battery %d %%", SLOT_TOAST),
+    E(S_LK_HINT, "Нажмите PWR", "Press PWR", SLOT_LOCK_LINE),
+    E(S_LK_PCT, "%d %%", "%d %%", SLOT_LOCK_BAT),
+    E(S_LK_FULL, "Заряжено", "Charged", SLOT_LOCK_BAT),
+    E(S_O5_G1, "BOOT " TXT_TIMES "2 " TXT_EMDASH " смена режима", "BOOT " TXT_TIMES "2 " TXT_EMDASH " switch mode",
+      SLOT_GUIDE1),
+    E(S_O5_G2, "PWR " TXT_EMDASH " блокировка", "PWR " TXT_EMDASH " lock", SLOT_GUIDE2),
 };
 
 static int s_lang;
@@ -489,6 +499,12 @@ static slot_def_t slot_of(uint8_t slot)
     case SLOT_QR2: return (slot_def_t){ &ui_16, 150, "" };              // Q caption 2
     case SLOT_QR_TITLE: return (slot_def_t){ &ui_20, 100, "" };         // Q arc title
     case SLOT_QR_LINE: return (slot_def_t){ &ui_20, 220, "" };          // Q "received" lines
+    // x 145-215, y 16-36: |(35,164)| = 167.7; "%s" stands for the 20 px battery glyph ("EN" is 22)
+    case SLOT_HOME_BAT: return (slot_def_t){ &ui_16, 70, "" };
+    case SLOT_LOCK_LINE: return (slot_def_t){ &ui_16, 220, "" };        // lock screen date line (3.16)
+    case SLOT_LOCK_BAT: return (slot_def_t){ &ui_20, 140, "" };         // 160 px line, bolt + space are 17 px
+    case SLOT_GUIDE1: return (slot_def_t){ &ui_16, 240, "" };           // O5 guide x 60-300, y 276-296
+    case SLOT_GUIDE2: return (slot_def_t){ &ui_16, 170, "" };           // O5 guide x 95-265, y 298-318
     default: return (slot_def_t){ NULL, 0, "" };
     }
 }

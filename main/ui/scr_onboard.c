@@ -114,8 +114,8 @@ void ui_onboard_check(void)
 
 static bool back_cb(void)
 {
-    // PWR / back = previous step; on O1 it leaves the flow to H (the only way out without finishing it, so a
-    // device without a key is never stuck in the onboarding)
+    // swipe right = previous step (PWR locks now); on O1 it leaves the flow to H (the only way out without
+    // finishing it, so a device without a key is never stuck in the onboarding)
     if (s_step > 1) {
         ui_nav_replace(UI_SCR_ONBOARD, (uint32_t)(s_step - 1));
         return true;
@@ -183,12 +183,27 @@ static void btn_cb(lv_event_t *e)
     }
 }
 
+// O5 has no secondary button: its place shows what the two keys do (2.3). Line 1 x 60-300, y 276-296
+// (|(120,116)| = 166.9), line 2 x 95-265, y 298-318 (|(85,138)| = 162.1); the dots start at y 335.
+static void guide_line(lv_obj_t *scr, const char *name, const char *text, int32_t cy, int32_t w)
+{
+    lv_obj_t *l = lv_label_create(scr);
+    lv_obj_set_name_static(l, name);
+    lv_obj_add_style(l, &st_text16, 0);
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_size(l, w, 20);
+    lv_obj_set_pos(l, 180 - w / 2, cy - 10);
+    lv_label_set_text_static(l, text);
+}
+
 lv_obj_t *scr_onboard_build(uint32_t arg)
 {
     s_step = arg >= 1 && arg <= 5 ? (int)arg : 1;
     s_active = true;
     lv_obj_t *scr = ui_step_screen("onboard", &s_st, s_step, btn_cb);
     lv_obj_add_event_cb(scr, loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);
+    ui_chrome_swipe_back(scr);      // a right swipe goes one step back (the step template does not scroll)
     switch (s_step) {
     case 1:
         ui_step_set(&s_st, ui_s(S_O1_T), ui_s(S_O1_S), ui_s(S_O1_P), ui_s(S_O1_B));
@@ -200,6 +215,8 @@ lv_obj_t *scr_onboard_build(uint32_t arg)
     default:
         ui_step_set(&s_st, ui_s(S_O5_T), ui_s(S_O5_S), ui_s(S_O5_P), NULL);
         ui_orb_set_expr(s_st.orb, EXPR_HAPPY, 0);
+        guide_line(scr, "onboard_guide1", ui_s(S_O5_G1), 286, 240);
+        guide_line(scr, "onboard_guide2", ui_s(S_O5_G2), 308, 170);
         break;
     }
     return scr;

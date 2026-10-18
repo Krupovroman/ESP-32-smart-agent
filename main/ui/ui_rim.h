@@ -21,3 +21,6 @@ void ui_rim_busy(bool on);
 void ui_rim_power(int32_t permille);
 // Current POWER value (-1 when hidden).
 int32_t ui_rim_power_get(void);
+// Lock screen up: the rim moves above its overlay and draws only the POWER channel (the scroll thumb, comet and
+// recording sweep of the screen below stay hidden); false draws every channel again.
+void ui_rim_power_only(bool on);

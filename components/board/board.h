@@ -43,5 +43,27 @@ const char *board_btn_ev_name(board_btn_ev_t ev);
 // ---- Battery (battery.c): ADC1 channel 7 (GPIO8) behind a x3 divider, curve-fitting calibration.
 // Battery voltage in mV (average of 8 reads), or -1 when the ADC is unavailable.
 int board_battery_mv(void);
-// Rough LiPo state of charge 0..100 for mv; -1 when mv is outside a single cell's range (no battery, USB).
+// Li-ion state of charge 0..100 for a resting voltage (discharge curve, not linear); -1 when mv is outside a
+// single cell's range (no battery).
 int board_battery_pct(int mv);
+
+// Battery model (docs/ui.md 3.16). The ETA6098 charger has no status pin: charging is the USB host being present
+// (start-of-frame packets, usb_serial_jtag_is_connected(); a plain wall charger sends none) or the settled voltage
+// rising by 15 mV within 2 min below 4.15 V; full is either of those at >= 4.15 V (left below 4.11 V).
+typedef struct {
+    int pct;            // 0..100, -1 = no battery reading (or settled readings swinging: no cell on the charger)
+    int mv;             // median of the last 5 readings, -1 = none
+    bool charging;
+    bool full;
+    bool usb;           // USB host connected
+    bool sim;           // pct / charging come from board_battery_sim()
+} board_bat_t;
+
+// One reading into the model (median of 5, 2 min trend); the app calls it every 5 s. settled: no load step lately
+// (the app idle, the screen unchanged), so the reading may start the charging trend; others only update the level
+// and may end it. True when pct, charging, full or usb changed.
+bool board_battery_sample(bool settled);
+// Latest model state (any task).
+void board_battery_state(board_bat_t *out);
+// Console override for UI tests: pct 0..100 and charging (100 + charging = full); pct < 0 ends it.
+void board_battery_sim(int pct, bool charging);

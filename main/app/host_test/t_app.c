@@ -228,6 +228,66 @@ static void t_tap_latched(void)
     CHECK(ui_last(UI_SET_MOOD) && ui_last(UI_SET_MOOD)->i == UI_MOOD_SAD);
 }
 
+static void t_double(void)
+{
+    printf("t_double\n");
+    // a BOOT tap records from the press and latches once the 300 ms double-tap window has passed
+    boot();
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    CHECK(s_a.st == APP_LISTENING && g_rec_starts == 1);
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 90);
+    CHECK(s_a.st == APP_LISTENING && !s_a.latched && s_a.latch_wait);
+    step(APP_DOUBLE_MS + 40);
+    CHECK(s_a.latched && !s_a.latch_wait && last_state_is(UI_ST_REC_LATCHED));
+    post_ev(EV_CANCEL, 0, 0);
+    step(400);
+    // double tap: the first tap's recording goes without a word, the mode switches with a toast
+    int st0 = ui_count(UI_STATUS);
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 80);
+    step(120);
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    CHECK(s_a.mode == 1 && s_a.st == APP_IDLE && !g_recording && ui_last(UI_SET_MODE)->i == 1 && g_nsub == 0);
+    CHECK(ui_last(UI_TOAST) && ui_last(UI_TOAST)->i == S_MODE_TRANSLATOR && ui_count(UI_STATUS) == st0);
+    CHECK(strstr(ev_last("boot_double"), "translator") != NULL);
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 80);
+    step(400);
+    CHECK(s_a.st == APP_IDLE && g_rec_starts == 2 && !s_a.latched);
+    // and back
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 80);
+    step(60);
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 80);
+    step(400);
+    CHECK(s_a.mode == 0 && ui_last(UI_TOAST)->i == S_MODE_ASSISTANT);
+    // a second press after the window is the latched recording's "send"
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 80);
+    audio(300, 0);
+    audio(900, 1);
+    CHECK(s_a.latched && s_a.st == APP_LISTENING);
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    CHECK(s_a.st == APP_UPLOADING && s_a.mode == 0 && g_nsub == 1);
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 80);
+    // the orb inside the window: the BOOT tap was a single one, so the orb press sends it
+    boot();
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 80);
+    audio(100, 1);
+    ui_in(UI_IN_PTT_DOWN, UI_SIDE_AUTO);
+    CHECK(s_a.st != APP_LISTENING && s_a.mode == 0 && strstr(ev_last("rec"), "\"why\":\"press\""));
+    ui_in(UI_IN_PTT_UP, 80);
+    // a hold is no tap: release sends, and a quick press after it is a new recording, not a double
+    boot();
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    audio(300, 0);
+    audio(900, 1);
+    audio(200, 0);
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 1400);
+    CHECK(s_a.st == APP_UPLOADING && s_a.boot_tap_t == 0);
+}
+
 static void t_gate(void)
 {
     printf("t_gate\n");
@@ -338,7 +398,7 @@ static void t_voice(void)
     pump();
     CHECK(s_a.st == APP_IDLE && ui_last(UI_BOT_MSG) && ui_last(UI_BOT_MSG)->i == 1);
 
-    // PWR while the reply waits for its audio: the text is shown, nothing is spoken, no "Отменено"
+    // PWR (lock) while the reply waits for its audio: the text is shown, nothing is spoken, no "Отменено"
     boot();
     set_int("text_only", 0);
     s_a.text_only = false;
@@ -350,8 +410,9 @@ static void t_voice(void)
     btn(BOARD_BTN_PWR, BTN_EV_DOWN, 0);
     btn(BOARD_BTN_PWR, BTN_EV_UP, 120);
     btn(BOARD_BTN_PWR, BTN_EV_CLICK, 120);
-    CHECK(s_a.st == APP_IDLE && g_tts_cancel_upto >= turn && ui_count(UI_BOT_MSG) == 1);
+    CHECK(g_locked && s_a.st == APP_IDLE && g_tts_cancel_upto >= turn && ui_count(UI_BOT_MSG) == 1);
     CHECK(!strcmp(ui_last(UI_BOT_MSG)->s, "Ответ.") && ui_count(UI_STATUS) == st0);
+    g_locked = false;
 
     // a hold barge-in in that phase keeps the reply on screen too
     say(1000);
@@ -524,45 +585,83 @@ static void t_cancel(void)
     audio(500, 1);
     ui_in(UI_IN_PTT_CANCEL, 0);
     CHECK(s_a.st == APP_IDLE && g_nsub == 0);
-    // PWR while uploading
+    // PWR while uploading: it locks, and the lock ends the turn without a word
     say(1000);
     uint32_t turn = s_a.turn;
+    int st0 = ui_count(UI_STATUS);
     btn(BOARD_BTN_PWR, BTN_EV_DOWN, 0);
     btn(BOARD_BTN_PWR, BTN_EV_UP, 120);
     btn(BOARD_BTN_PWR, BTN_EV_CLICK, 120);
-    CHECK(s_a.st == APP_IDLE && g_cancel_upto >= turn && ui_last(UI_STATUS)->i == S_ST_CANCELLED);
-    CHECK(g_pwr_down == 1 && g_pwr_up == 1);
+    CHECK(g_locked && g_pwr_short == 1 && s_a.st == APP_IDLE && g_cancel_upto >= turn && ui_count(UI_STATUS) == st0);
+    CHECK(g_pwr_down == 1 && g_pwr_up == 1 && strstr(ev_last("lock"), "\"on\":1"));
     // the cancelled turn still reports that its audio is released (architecture test 4.6), nothing else
     int nui = g_nui;
     emit_simple(AI_EV_RELEASED, turn, 0);
     emit_error(AI_EV_ERROR, turn, "N2", "late");
     pump();
     CHECK(strstr(ev_last("ai"), "\"phase\":\"released\"") && g_nui == nui && s_a.st == APP_IDLE);
-    // PWR at H idle: screen off, and the UI's SLEEP(3) report does not light it again (flow-1); BOOT wakes and
-    // talks at once
+    // locked: BOOT talks to no one (its release neither), a second PWR click unlocks, then BOOT talks again
+    int starts = g_rec_starts;
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 900);
+    CHECK(g_boot_refused == 1 && g_rec_starts == starts && s_a.st == APP_IDLE);
     btn(BOARD_BTN_PWR, BTN_EV_DOWN, 0);
     btn(BOARD_BTN_PWR, BTN_EV_CLICK, 100);
+    CHECK(!g_locked && g_pwr_short == 2);
+    btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
+    CHECK(s_a.st == APP_LISTENING);
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 900);
+    post_ev(EV_CANCEL, 0, 0);
+    // a recording is discarded by the lock too; nothing of the press carries over
+    post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_ORB);
+    audio(400, 1);
+    btn(BOARD_BTN_PWR, BTN_EV_DOWN, 0);
+    btn(BOARD_BTN_PWR, BTN_EV_CLICK, 100);
+    CHECK(g_locked && s_a.st == APP_IDLE && !g_recording && !s_a.held && g_nsub == 1);
+    post_ev(EV_PTT_UP, 900, APP_SRC_ORB);
+    CHECK(s_a.st == APP_IDLE && g_nsub == 1);
+    // a chip held from before the lock reports its 400 ms hold while locked: no recording
+    starts = g_rec_starts;
+    ui_in(UI_IN_PTT_DOWN, UI_SIDE_A);
+    CHECK(g_rec_starts == starts && s_a.st == APP_IDLE && !s_a.held);
+    ui_in(UI_IN_PTT_UP, 600);
+    ui_keylock(false);
+    pump();
+    // the UI's own screen off (power off on USB, console): its SLEEP(3) report does not light it again (flow-1);
+    // BOOT wakes and talks at once
+    app_io_screen_off();
     int off_at = ui_index(UI_SCREEN_OFF, 0);
     step(1000);
     CHECK(app_io_screen() == APP_SCREEN_OFF && g_ui_level == 3 && off_at >= 0 && ui_index(UI_WAKE, off_at) < 0);
     btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
     CHECK(app_io_screen() == APP_SCREEN_ON && g_ui_level == 0 && s_a.st == APP_LISTENING);
-    btn(BOARD_BTN_BOOT, BTN_EV_UP, 60);
+    btn(BOARD_BTN_BOOT, BTN_EV_UP, 900);
     post_ev(EV_CANCEL, 0, 0);
     // a touch on the dark screen only wakes it
     app_io_screen_off();
     ui_in(UI_IN_PTT_DOWN, UI_SIDE_AUTO);
     CHECK(app_io_screen() == APP_SCREEN_ON && s_a.st == APP_IDLE && g_wait_release == 1);
-    // PWR on a dark screen: the click only wakes
+    // PWR on a dark screen: the click only wakes (no lock)
     app_io_screen_off();
+    int pwr = g_pwr_short;
     btn(BOARD_BTN_PWR, BTN_EV_DOWN, 0);
     btn(BOARD_BTN_PWR, BTN_EV_CLICK, 100);
+    CHECK(app_io_screen() == APP_SCREEN_ON && g_pwr_short == pwr && !g_locked);
+    // ... but locked, the press lights the lock screen and its click unlocks: one press
+    ui_keylock(true);
+    pump();
+    app_io_screen_off();
+    btn(BOARD_BTN_PWR, BTN_EV_DOWN, 0);
     CHECK(app_io_screen() == APP_SCREEN_ON);
-    // PWR off the Home screen goes back
+    btn(BOARD_BTN_PWR, BTN_EV_CLICK, 100);
+    CHECK(!g_locked && g_pwr_short == pwr + 1);
+    // a dimmed screen is still seen: PWR locks it (on any screen; PWR is no longer "back")
+    ui_sleep_to(1);
+    pump();
     g_ui_ctx = UI_CTX_READ;
     btn(BOARD_BTN_PWR, BTN_EV_DOWN, 0);
     btn(BOARD_BTN_PWR, BTN_EV_CLICK, 100);
-    CHECK(g_pwr_short == 1 && app_io_screen() == APP_SCREEN_ON);
+    CHECK(g_locked && g_pwr_short == pwr + 2 && app_io_screen() == APP_SCREEN_ON);
 }
 
 static void t_errors(void)
@@ -603,16 +702,32 @@ static void t_errors(void)
     int cards = ui_count(UI_ERROR), starts = g_rec_starts;
     post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_BOOT);
     post_ev(EV_PTT_UP, 100, APP_SRC_BOOT);
+    // a BOOT tap may be the first of a double tap: "not ready" comes once the window has passed
+    CHECK(ui_count(UI_ERROR) == cards);
+    step(APP_DOUBLE_MS + 40);
     CHECK(ui_count(UI_ERROR) == cards + 1 && ui_last(UI_ERROR)->i == UI_CARD_NO_WIFI && g_rec_starts == starts);
     post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_BOOT);
     post_ev(EV_PTT_UP, 100, APP_SRC_BOOT);
+    step(APP_DOUBLE_MS + 40);
     CHECK(ui_count(UI_ERROR) == cards + 1 && last_state_is(UI_ST_ERROR));
+    // a double tap while not ready only switches the mode: no error at all
+    step(4100);
+    int errs = ui_count(UI_STATUS) + ui_count(UI_ERROR);
+    post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_BOOT);
+    post_ev(EV_PTT_UP, 90, APP_SRC_BOOT);
+    step(100);
+    post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_BOOT);
+    post_ev(EV_PTT_UP, 90, APP_SRC_BOOT);
+    step(400);
+    CHECK(s_a.mode == 1 && ui_count(UI_STATUS) + ui_count(UI_ERROR) == errs && g_rec_starts == starts);
+    post_ev(EV_SET_MODE, 0, 1);
     // no key (ux-10): its own card (with "Ввести ключ") and "Нет ключа" in the pill, not "Ключ не принят"
     g_net_state = NET_UP;
     step(600);
     set_str("ai_key", "");
     step(25000);
     post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_BOOT);
+    step(APP_TAP_MS + 20);              // held: no double tap any more, the error while it is still down
     CHECK(ui_last(UI_ERROR)->i == UI_CARD_NO_KEY && !ui_last(UI_ERROR)->has_s);
     CHECK(ui_last(UI_SET_FAULT)->i == UI_FAULT_NO_KEY);
     post_ev(EV_PTT_UP, 100, APP_SRC_BOOT);
@@ -925,11 +1040,54 @@ static void t_power(void)
     CHECK(app_io_screen() == APP_SCREEN_ON && g_ui_level == 0);
     settings_set_int("dim_s", 60);
     pump();
-    // battery: toast at 10 %
+    // battery (3.16): the state goes to the UI when it changes; toasts at 15 % and 5 %, once each per discharge
     boot();
-    g_bat_mv = 3360;
-    step(31000);
-    CHECK(ui_last(UI_TOAST) && ui_last(UI_TOAST)->has_s && strstr(ui_last(UI_TOAST)->s, "Батарея"));
+    g_bat_mv = 3480;                    // the mock curve: 20 %
+    step(BAT_POLL_MS + 100);
+    CHECK(ui_last(UI_SET_BATTERY) && UI_BAT_PCT(ui_last(UI_SET_BATTERY)->i) == 20 && ui_count(UI_TOAST) == 0);
+    g_bat_mv = 3430;                    // 14 %
+    step(BAT_POLL_MS + 100);
+    CHECK(ui_count(UI_TOAST) == 1 && ui_last(UI_TOAST)->has_s && strstr(ui_last(UI_TOAST)->s, "Батарея 14 %"));
+    g_bat_mv = 3420;                    // 13 %: no second toast
+    step(BAT_POLL_MS + 100);
+    CHECK(ui_count(UI_TOAST) == 1 && UI_BAT_PCT(ui_last(UI_SET_BATTERY)->i) == 13);
+    g_bat_mv = 3340;                    // 4 %
+    step(BAT_POLL_MS + 100);
+    CHECK(ui_count(UI_TOAST) == 2 && strstr(ui_last(UI_TOAST)->s, "Батарея 4 %"));
+    int nbat = ui_count(UI_SET_BATTERY);
+    step(BAT_POLL_MS + 100);            // nothing changed: nothing posted
+    CHECK(ui_count(UI_SET_BATTERY) == nbat && ui_count(UI_TOAST) == 2);
+    g_bat_chg = true;                   // charging starts a new cycle
+    step(BAT_POLL_MS + 100);
+    CHECK((ui_last(UI_SET_BATTERY)->i & UI_BAT_CHARGING) && ui_count(UI_TOAST) == 2);
+    g_bat_chg = false;
+    step(BAT_POLL_MS + 100);
+    CHECK(ui_count(UI_TOAST) == 3 && !(ui_last(UI_SET_BATTERY)->i & UI_BAT_CHARGING));
+    // the console's "bat sim" hands the state over at once
+    g_bat_mv = 4200;
+    post_ev(EV_BATTERY, 0, 0);
+    CHECK(UI_BAT_PCT(ui_last(UI_SET_BATTERY)->i) == 100);
+    g_bat_mv = -1;
+    // the charging trend sees only settled readings: none in the first minute (boot), none for a minute after a
+    // turn or a screen change (the cell recovers from the load: no false "charging")
+    boot();
+    g_bat_mv = 3900;
+    step(BAT_SETTLE_MS - 1000);
+    CHECK(g_bat_samples >= 10 && g_bat_settled == 0);
+    step(2 * BAT_POLL_MS);
+    CHECK(g_bat_settled > 0 && g_bat_last_settled);
+    say(1000);
+    step(BAT_POLL_MS);
+    CHECK(!g_bat_last_settled);
+    post_ev(EV_CANCEL, 0, 0);
+    step(BAT_SETTLE_MS + BAT_POLL_MS);
+    CHECK(g_bat_last_settled);
+    app_io_ui_sleep(1);                 // dimmed: less backlight current
+    step(BAT_POLL_MS + 100);
+    CHECK(!g_bat_last_settled);
+    step(BAT_SETTLE_MS);
+    CHECK(g_bat_last_settled);
+    g_bat_mv = -1;
     // BOOT ignored where the UI says so (keyboard): its release too
     boot();
     g_boot_ok = false;
@@ -1086,8 +1244,9 @@ static void t_misc(void)
     boot();
     s_low_mem = true;
     post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_BOOT);
-    CHECK(s_a.st == APP_ERROR && g_rec_starts == 0 && !strcmp(s_a.last_err, "M0"));
     post_ev(EV_PTT_UP, 100, APP_SRC_BOOT);
+    step(APP_DOUBLE_MS + 40);
+    CHECK(s_a.st == APP_ERROR && g_rec_starts == 0 && !strcmp(s_a.last_err, "M0"));
     s_low_mem = false;
 }
 
@@ -1095,6 +1254,7 @@ int main(void)
 {
     t_hold_text_only();
     t_tap_latched();
+    t_double();
     t_gate();
     t_inject_end();
     t_voice();

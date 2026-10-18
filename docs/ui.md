@@ -257,7 +257,7 @@ Wi-Fi signal strength is drawn as 4 bars in the row's draw event, not with glyph
 | `t_blink` | close 70 ms ease_in, hold 40 ms, open 110 ms ease_out | eye blink |
 | ticker | 33 ms (30 Hz) `lv_timer` | all continuous orb motion |
 
-Motion is calm: no bounce and no overshoot, with one exception: a 110 ms ease_out "settle" after the press-in.
+Motion is calm: no bounce and no overshoot, with two exceptions: a 110 ms ease_out "settle" after the press-in, and the padlock's shackle on the lock screen (§3.16), which clicks shut and springs open with an ease_out_back (about 10 % past the end).
 
 ---
 
@@ -287,10 +287,11 @@ There are 10 templates: `T_HOME`, `T_LIST`, `T_TEXT`, `T_ADJUST`, `T_QR`, `T_DIA
 | Q | Phone setup | `T_QR` | SoftAP + QR + portal progress | S, O2, O3, fault pill | caller / H |
 | P / PE | Provider & keys / endpoint editor | `T_LIST` | chat / STT / TTS base URL + key + model | S, fault pill | S |
 | D | Diagnostics & About | `T_LIST` | versions, network, latency, tests, licences | S | S |
-| D.touch | Touch test | `T_TOUCH` | dot + coordinates at each sample | D | D (PWR) |
+| D.touch | Touch test | `T_TOUCH` | dot + coordinates at each sample | D | D (✕ circle) |
 | C | Confirm dialog | `T_DIALOG` | destructive actions | S, D, HIST | caller |
 | Z | Ambient | `T_AMBIENT` | clock + dot orb | idle timeout | H on wake |
-| X | Screen off | – | backlight 0, LVGL paused | PWR at idle, timeout | H on wake |
+| X | Screen off | – | backlight 0, LVGL paused | timeout, power off on USB | H on wake |
+| LK | Lock screen | overlay on the top layer (§3.16) | clock, date, battery ring; touch and BOOT refused | PWR short, anywhere | PWR short: the screen that was locked |
 
 Error states are not separate screens. They appear in the **pill**, the **orb** and a **card in the chat**, and they route to W, Q, P or AI (§3.14, §5.6).
 
@@ -315,36 +316,50 @@ Power ─► S0 ─┬─ first boot ─► O1 Language ─► O2 Network ─┬
    │ S ─► A Volume | A Brightness | W ─► K ─► WC | Q | AI ─► K | V | P ─► PE ─► K | D ─► C       │
    │ idle 30 s ─► dim 25 % (face SLEEPY) · +60 s ─► Z · +5 min ─► X                              │
    └─────────────────────────────────────────────────────────────────────────────────────────────┘
-Global: PWR short = back one level (on H idle: screen off) · PWR hold 3 s = power off
-        swipe right = back on T_LIST / T_READ / T_QR / T_ADJUST (redundant accelerator)
+Global: PWR short = lock / unlock (LK, §3.16) · PWR hold 3 s = power off
+        back = title zone, ✕ / "Отмена" / "Готово", or swipe right on T_LIST / T_READ / T_QR / T_ADJUST / O-steps
         BOOT = talk; from T_LIST/T_READ/T_QR/T_ADJUST it jumps to H/H′ and records
-        (ignored in K, C, O1–O4)
+        BOOT double tap = Assistant ⇄ Translator (A21 morph + toast)
+        (BOOT ignored in K, C, O1–O4 and while locked)
 Maximum depth: H → S → P → PE → K (4 levels).
 ```
 
 ### 2.3 Physical buttons and touch, per context
 
-- Tap/hold threshold: 400 ms, the same as `long_press_time`.
-- PWR short means released before 600 ms. PWR hold means the ring appears at 600 ms and fills until 3000 ms.
+**Roles of the two keys** (also on O5, §5.7):
+
+| Key | Gesture | Action |
+|---|---|---|
+| BOOT | hold (≥ 400 ms) | push-to-talk: records from press-down, release sends |
+| BOOT | tap (< 400 ms) | hands-free talk: the recording starts at press-down and latches 300 ms after the release (the double-tap window); the next press sends |
+| BOOT | double tap (second press ≤ 300 ms after the first release) | Assistant ⇄ Translator: the first tap's recording is discarded silently, the mode morphs (A21), toast "Переводчик" / "Ассистент". While the app is not ready (no Wi-Fi, no key), the tap's "not ready" card waits for the window, so a double tap only switches |
+| PWR | short (released < 600 ms) | **lock** when unlocked, **unlock** when locked (§3.16). PWR is no longer "back": the title zone, ✕ / "Отмена" / "Готово" and the right swipe are |
+| PWR | hold 3 s | power off on battery (GPIO7 low); on USB: screen off + toast "Питание от USB". The rim POWER ring appears at 600 ms and fills until 3000 ms, also over the lock screen |
+
+- Tap/hold threshold: 400 ms, the same as `long_press_time`. Double-tap window: 300 ms (`APP_DOUBLE_MS`) after the first release; a single tap's audio is never delayed (it records from the press), only its latched look waits.
+- Locking ends whatever runs (recording discarded, request aborted, speech stopped) without a status text, and no press carries over into the locked state.
 
 | Context | BOOT hold (≥ 400 ms) | BOOT tap (< 400 ms) | PWR short | PWR hold 3 s | Touch |
 |---|---|---|---|---|---|
-| H / H′ idle | records from press-down; release sends | latched recording | screen off | power off on battery (GPIO7 low); on USB: screen off + toast "Питание от USB" | orb = talk; pill = M; side buttons per mode |
-| Recording (hold) | release = send | – | cancel (discard) | – | slide beyond the cancel radius arms cancel |
-| Recording (latched) | press = send | press = send | cancel | – | orb tap = send |
-| Uploading / thinking | ≥ 400 ms: abort and start a new recording | ignored (orb pulse, hint) | abort the request | – | orb: same as BOOT |
-| Speaking | press stops speech; still held at 400 ms → new recording (barge-in) | stop speech | stop speech | – | orb, voice button and chips stop speech |
-| Translator chip held (≥ 400 ms) | – | – | cancel | – | release sends with the source forced to that chip |
-| `T_LIST` / `T_READ` / `T_QR` / `T_ADJUST` | jump to H/H′ and record (hold semantics) | jump to H/H′, latched | back | power off | title zone or swipe right = back |
-| K | ignored (toast "Сначала завершите ввод") | ignored | cancel (= ✕) | power off | keys |
-| C | ignored | ignored | "Отмена" | – | buttons |
-| O1–O4 | ignored | ignored | previous step | power off | buttons |
-| Dimmed (25 %) | wake + act | wake + act | wake | – | the first touch only wakes and is swallowed (`lv_indev_wait_release`) |
-| Z / X | wake to H/H′ and record at once | wake + latched | wake | power off | wake (swallowed) |
+| H / H′ idle | records from press-down; release sends | latched recording (double tap: mode) | lock | power off on battery; on USB: screen off + "Питание от USB" | orb = talk; pill = M; side buttons per mode |
+| Recording (hold) | release = send | – | lock (recording discarded) | – | slide beyond the cancel radius arms cancel |
+| Recording (latched) | press = send | press = send | lock (discarded) | – | orb tap = send |
+| Uploading / thinking | ≥ 400 ms: abort and start a new recording | ignored (orb pulse, hint "Держите — заново") | lock (request aborted) | – | orb: same as BOOT |
+| Speaking | press stops speech; still held at 400 ms → new recording (barge-in) | stop speech | lock (speech stopped) | – | orb, voice button and chips stop speech |
+| Translator chip held (≥ 400 ms) | – | – | lock (discarded) | – | release sends with the source forced to that chip |
+| `T_LIST` / `T_READ` / `T_QR` / `T_ADJUST` | jump to H/H′ and record (hold semantics) | jump to H/H′, latched | lock | power off | title zone or swipe right = back |
+| K | ignored (toast "Сначала завершите ввод") | ignored | lock (the draft stays) | power off | keys; ✕ = cancel |
+| C | ignored | ignored | lock | – | buttons |
+| O1–O5 | ignored | ignored | lock | power off | buttons; swipe right = previous step |
+| Dimmed (25 %) / Z | wake + act | wake + act | wake + lock | – | the first touch only wakes and is swallowed (`lv_indev_wait_release`) |
+| X (screen off) | wake to H/H′ and record at once | wake + latched | wake only | power off | wake (swallowed) |
+| **LK locked** | refused: padlock shakes, hint "Нажмите PWR" | refused (same) | **unlock** (dimmed or dark too: one press) | power off | refused (same); a dark lock screen lights |
 
 ### 2.4 Why the inputs never conflict
 
-- **Modes change only through the pill.** Switching is two taps (pill → row). There is no swipe, no tileview, no rim menu and no CST816 gesture code (all are ignored). Swipe navigation would be invisible, would compete with chat scrolling, and a tileview would redraw 129.6k px per frame.
+- **Modes change only through the pill or a BOOT double tap.** Switching is two taps (pill → row) or BOOT twice. There is no swipe, no tileview, no rim menu and no CST816 gesture code (all are ignored). Swipe navigation would be invisible, would compete with chat scrolling, and a tileview would redraw 129.6k px per frame.
+- **BOOT tap vs double tap.** The tap records from press-down, as before; only its latched state waits for the 300 ms window. A second press inside the window discards that recording without a word, so a double tap never sends anything. A press of the orb inside the window ends it at once (the tap was single, the orb sends it).
+- **Lock vs everything.** The lock screen is a modal overlay on the top layer: it catches every touch (`lv_indev_wait_release`, so nothing below gets a release either), and the app refuses BOOT through `ui_boot_down()`. Navigation underneath (an app `UI_GOTO`) never removes it; only PWR (or the console) unlocks.
 - **Hold-to-talk vs scrolling.**
   - The orb is a **sibling** of the chat container, never a child.
   - Flags: `LV_OBJ_FLAG_ADV_HITTEST` (circle radius core_r + 10). `LV_OBJ_FLAG_PRESS_LOCK` stays on (the default for children), so the orb stays pressed while the finger slides out to arm cancel.
@@ -352,7 +367,7 @@ Maximum depth: H → S → P → PE → K (4 levels).
   - The screen itself is not scrollable.
   - Result: a drag that starts on the orb never scrolls, and a drag that starts on the chat never talks. The orb hit circle (compact: y 250–330) never overlaps the chat viewport (y 80–244).
 - **Scrolling vs tapping.** LVGL's 10 px scroll limit means a scroll never fires CLICKED. A tap that opens HIST or RD is ignored if `LV_EVENT_SCROLL_END` happened less than 300 ms earlier, which covers "tap to stop a fling".
-- **Swipe-right-back** exists only on screens whose containers scroll vertically, so a horizontal drag never starts a scroll and becomes `LV_EVENT_GESTURE` (default minimum 50 px, velocity 3). The arc adjuster and the keyboard clear `GESTURE_BUBBLE`. After a gesture the handler calls `lv_indev_wait_release(lv_indev_active())`, so the row under the finger gets no CLICKED. It does not exist on H, K, C or O-steps. Every swipe has a visible equivalent (title zone, PWR), so nothing is hidden.
+- **Swipe-right-back** exists only on screens whose containers scroll vertically, so a horizontal drag never starts a scroll and becomes `LV_EVENT_GESTURE` (default minimum 50 px, velocity 3). The arc adjuster and the keyboard clear `GESTURE_BUBBLE`. After a gesture the handler calls `lv_indev_wait_release(lv_indev_active())`, so the row under the finger gets no CLICKED. It does not exist on H, K or C. The onboarding steps (which do not scroll) have it as their only "previous step", since PWR locks now. Every other swipe has a visible equivalent (title zone, ✕, "Готово"), so nothing is hidden.
 - **Chip tap vs chip hold.**
   - Recording is decided at 400 ms, and the 0.5 s mic pre-roll is prepended, so no speech is lost.
   - A release before 400 ms opens LP and the pre-roll audio is discarded. No network request is ever made.
@@ -401,6 +416,8 @@ Notes:
 
 Every change invalidates only the old and new spans (`lv_draw_arc_get_area` → `lv_obj_invalidate_area`), never the 113k px box (§7.4).
 
+While the lock screen is up (§3.16) the rim sits above its overlay and draws only POWER (`ui_rim_power_only()`), so the 3 s power-off ring shows over the battery ring; the other channels of the screen below are hidden.
+
 **Side buttons on H / H′:**
 - Circles Ø52 centred at (100,292) and (260,292): |(80,112)| + 26 = 163.6, OK.
 - Each spans about ±10.9° around 125.5° and 54.5°.
@@ -418,8 +435,10 @@ Used when the current session has no messages.
 | Left side button | Assistant: voice toggle F028/F6A9. Translator: chip A | 163.6 OK | 52 |
 | Right side button | Assistant: settings F013. Translator: chip B | 163.6 OK | 52 |
 | First-use hint (only while `s_hints > 0`) | two `ui_16` `text-2` lines centred at (180,306) and (180,326), each ≤ 100 px. RU "Держите шар" / "или BOOT", EN "Hold the orb" / "or BOOT". Translator: "Говорите" / "RU или EN" | 144.9 / 163.8 OK | – |
+| Battery (§3.16) | `ui_16` label x 145–215, y 16–36 (70×20), centred: level glyph F240–F244 (or a `success` bolt F0E7 while charging) + "85%"; `text-2`, `error` below 15 %, `success` when full; hidden without a reading; not clickable, created after the pill | 167.7 OK | – |
 
 - Clearance from the orb drawing to each side button: |(80,100)| − 26 − 99 = 3 px.
+- The battery sits directly above the pill (its box ends where the empty pill starts, y 36). In the conversation layout it overlaps only the pill's transparent top band (y 24–36); the pill's label line starts at y 36, and a pressed pill's `surface-1` fill is drawn under the battery, which is created after it. The rim RECORD sweep (r 164–168) passes 1–3 px above its corners while recording.
 - The hint sits 6 px below halo2 (y 290) and 4 px from each button.
 - The orb's bounding box overlaps the button boxes. The buttons are created after the orb (so they are on top), and the orb hit test is circular, so the buttons win.
 
@@ -476,7 +495,7 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
 | Scroll thumb | `ui_rim` SCROLL | – |
 
 - On open it scrolls to the tapped message (`lv_obj_scroll_to_view(child, LV_ANIM_OFF)`).
-- Back: title zone, PWR or swipe right.
+- Back: title zone or swipe right (PWR locks).
 - Translator bubbles in HIST open RD on tap.
 
 ### 3.6 RD, translation reader
@@ -631,7 +650,7 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
 - Volume is a software gain of (v/100)². A 60 ms tick plays on release when a speaker is present.
 - Keep `change_rate` 720°/s.
 - The arc clears `GESTURE_BUBBLE`.
-- PWR or "Готово" goes back.
+- "Готово" or a right swipe goes back (PWR locks).
 - NVS save is debounced 1.5 s and only happens in IDLE.
 
 ### 3.10 Phone setup (`T_QR`)
@@ -657,7 +676,7 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
 - **Step 3: data received.** The QR is hidden and three `ui_20` lines are shown, centred at y 130 / 166 / 202 (w ≤ 220): "Wi-Fi ✓", "Ключ API ✓", "Модель ✓". Then "Подключаюсь…". On success: H with the toast "Готово".
 - **Portal:** our own `esp_http_server` page, because esp-wifi-connect cannot take keys.
   - Fields: Wi-Fi SSID (scan list + manual) and password, an OpenRouter key (never echoed back), chat model, TTS voice, an advanced section with base URL / key / model for each endpoint, and the UI language.
-  - It closes after a save, after 10 min, or on PWR.
+  - It closes after a save, after 10 min, or when Q is left (title zone, swipe right). Locking over Q keeps it running.
 - **Backlight** is forced to 100 % while a QR is shown.
 - **LVGL 9.5 call order:** `lv_qrcode_set_size()`, then the colours, then `set_quiet_zone`, then `lv_qrcode_update()`. In 9.5, a size change after the data clears the code (fixed in 9.6).
 
@@ -671,7 +690,7 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
 | "Отмена" | stadium x 56–176, y 226–276, `surface-1` | 146.8 OK |
 | "Удалить" / "Сбросить" | stadium x 184–304, y 226–276, `error` fill, `ink` text | 146.8 OK |
 
-PWR means "Отмена".
+"Отмена" is the way out; PWR locks over the dialog, which is still there after the unlock.
 
 ### 3.12 Step template (`T_STEP`): onboarding and Wi-Fi connecting
 
@@ -727,7 +746,35 @@ The first error card switches an empty H to the conversation layout.
 - Black screen with a 12 px `text-1` dot at the last sample.
 - `ui_16` "x 182 · y 177 · 23 Гц" at (180,180).
 - A small `lv_obj` dot is moved, so the invalidated area is about 2 × 14² px.
-- PWR exits.
+- A ✕ circle Ø52 at (180,300) exits (|(0,120)| + 26 = 146); its own touches are not samples. PWR locks.
+
+### 3.16 Lock screen (LK) and battery
+
+PWR short locks and unlocks (§2.3). Nothing is stored: the device always boots unlocked.
+
+**One overlay, not a screen.** `scr_lock.c` puts a single 360×360 object on `lv_layer_top()` over whatever is open; the navigation stack below stays as it is, so the unlock reveals exactly the screen that was locked (a half-typed K, a dialog, Q with its portal running). The overlay catches every touch and draws in `LV_EVENT_DRAW_MAIN`: the iris, the battery ring, the padlock and its pulse ring. Clock, date, hint and battery line are child labels. While it is up, `ui_rim` moves above it and draws only its POWER channel (the 3 s power-off ring stays visible); top-layer toasts and the sleep catcher stay above it.
+
+| Element | Geometry | Fit |
+|---|---|---|
+| Backdrop / iris | black annulus centred (180,180), outer r 182 (past the glass), inner r animated; below r 3 one black rectangle | – (by design, exempt from the audit) |
+| Padlock at rest | k = 0.55 of the 60 × 84 base (body 60 × 46 r 12 in the mode accent gradient, shackle arc r 21 w 7 in `text-2`, keyhole `ink`), centre (180,84): box x 162–198, y 59–109; while it opens (k → 0.95, shackle raised 16k): x 151–209, y 29–124 | 122 / 154 OK |
+| Padlock while locking | k 0.6 → 1 at the centre (180,180): box x 150–210, y 122–222 (raised shackle +16) | 65 OK |
+| Clock | `ui_48` `text-1` "14:32", x 100–260, y 132–188 (w ≤ 160) | 93 OK |
+| Date / hint | `ui_16`, x 70–290, y 198–218 (w ≤ 220): date `text-2` "сб, 18 октября"; on a refused input "Нажмите PWR" / "Press PWR" in `text-1` crossfades in for 1.5 s | 116 OK |
+| Battery line | `ui_20`, x 100–260, y 249–275: "85 %", `success` bolt + "85 %" while charging, `success` "Заряжено" / "Charged" when full, `error` below 15 % | 124 OK |
+| Battery ring | rim band r 160–168: track `surface-2`, level arc from 12 o'clock clockwise 360°·pct, `success` ≥ 30 %, `warning` 15–29 %, `error` < 15 %; while charging a 36° piece mixed 43 % toward white travels along the filled part (100°/s, A38) | 168 OK |
+| Pulse ring | r 40 → 92, w 3, centre (180,180), mode accent pre-mixed to black | 92 OK |
+
+**Sleep while locked.** Whatever the screen below and `dim_s`: dimmed (25 %) after 10 s, off after 20 s, never ambient (`ui_sleep.c`), counted from the lock (the lock and the unlock restart LVGL's idle clock, so a console `lock` after a long idle does not go dark at once). The lock stays. A touch or BOOT on a dark or dim lock screen lights it and shows the hint. A PWR press on it unlocks at once (one press): a press that lit a dark screen holds the lit lock screen for 400 ms, then the unlock runs, about 1 s in all.
+
+**PWR during an animation.** A PWR press while the lock or the unlock runs plays the running timeline back from the frame it shows (A35 backwards opens the iris again, A36 backwards closes it and brings the padlock and the content back), so the padlock never jumps and the content never pops in.
+
+**Refused input.** Touch (the overlay calls `lv_indev_wait_release`, so nothing below sees the touch or its release) and BOOT (`ui_boot_down()` → `UI_LOCK_NUDGE`): the padlock shakes (A37) and the hint replaces the date. Locking emits `UI_IN_LOCK 1`: the app ends whatever runs without a status text (recording discarded, request aborted, speech stopped). Wi-Fi, battery and other state keep updating underneath and on the overlay.
+
+**Battery model** (`components/board/battery.c`, `board_battery_state()`): a reading every 5 s (8 ADC samples averaged), median of the last 5, a Li-ion discharge curve (3.30 V 0 %, 3.61 V 5 %, 3.71 V 15 %, 3.77 V 30 %, 3.84 V 50 %, 3.95 V 70 %, 4.02 V 80 %, 4.11 V 90 %, 4.20 V 100 %, linear in between). The ETA6098 charger has no status pin, so **charging** = USB host present (`usb_serial_jtag_is_connected()`, start-of-frame packets) or the filtered voltage 15 mV higher than 2 min ago below 4.15 V; **full** = either condition at ≥ 4.15 V, left only below 4.11 V (a cell in the charger's CV phase hovers at the threshold, which would flip "Заряжено" ⇄ "85 %").
+- **Settled readings only start the trend.** A cell's voltage also rises after a load ends (a turn's speech, mic and Wi-Fi; the backlight dimming or going off), which would read as a wall charger. So `app_io.c` passes `settled` = no turn, speaker, mic, backlight or screen-level change for 60 s; only settled readings enter the 2 min history and may start the trend. It ends on a settled 10 mV fall over 2 min or a settled reading 25 mV under the peak since, and on any reading 60 mV under the peak (unplugged while in use; a turn's sag on the charger stays well under that).
+- **No cell.** Settled readings more than 250 mV apart within the median window (a charger output swinging with no cell behind it) report no reading (pct −1, indicator hidden) until they agree within 80 mV again. A charger that holds a steady 4.2 V with no cell reads as full; not observed on this board yet.
+- A plain wall charger is seen only by the rising voltage, and not at all when the device boots on it with the cell already in the flat part of the curve; at full on a wall charger the model may show "discharging, 97 %". The percent follows the charge direction and moves against it only by ≥ 5 points at once (load sag). The app posts `UI_SET_BATTERY` (`UI_BAT_MAKE(pct, flags)`) when the state changes and toasts "Батарея 15 %" and "Батарея 5 %" once each per discharge (re-armed by charging or above 20 %).
 
 ---
 
@@ -791,7 +838,7 @@ R4                 [ EN ] [ .,?! ] [ ✓ ]              EN: [ RU ] [ .,?! ] [ �
 ```
 R1   [ а ] [ б ] [ в ] [ г ]       lower case
 R2   [ А ] [ Б ] [ В ] [ Г ]       upper case
-R3        [ ‹ ] [ 2 ]              back to level 1 (also PWR) · the group's digit
+R3        [ ‹ ] [ 2 ]              back to level 1 · the group's digit
 R4   (one hidden key)
 ```
 
@@ -1053,7 +1100,7 @@ Cost and memory:
 | Other key / base URL / model id | EN | printable ASCII, ≤ 200 | key: yes | len ≥ 1; URL must start with `http` |
 | Question | UI language | any, ≤ 500 | no | len ≥ 1 |
 
-- **✕ or PWR** sends `LV_EVENT_CANCEL` to the textarea and returns to the caller. The caller keeps the draft only for questions.
+- **✕** sends `LV_EVENT_CANCEL` to the textarea and returns to the caller (PWR locks; the unlock comes back to K). The caller keeps the draft only for questions.
 - BOOT is ignored on this screen.
 
 ---
@@ -1071,7 +1118,8 @@ Cost and memory:
 | IDLE | press (BOOT or orb) | REC_PRESS | capture with pre-roll; earcon up; orb LISTENING; status "Слушаю…"; `ui_rim` RECORD |
 | IDLE (H′) | chip pressed ≥ 400 ms | REC_PRESS (forced source = chip) | the chip glows; status "Слушаю… (RU)" |
 | REC_PRESS | release after ≥ 400 ms | SEND | earcon down |
-| REC_PRESS | release after < 400 ms | REC_LATCHED | ■ mark; status "Нажмите — отправлю" |
+| REC_PRESS | release after < 400 ms | REC_LATCHED | ■ mark; status "Нажмите — отправлю". A BOOT tap latches 300 ms after its release (the recording runs on meanwhile) |
+| REC_PRESS (BOOT tap) | second BOOT press ≤ 300 ms after the release | IDLE | double tap: the recording is discarded silently; the mode switches (A21) with a toast |
 | REC_PRESS (orb) | finger beyond the cancel radius (hero 110, compact 70 px from the orb centre) | REC_CANCEL | orb grey with ✕; status "Отпустите — отмена" |
 | REC_CANCEL | finger back inside | REC_PRESS | – |
 | REC_CANCEL | release | IDLE | discard; earcon "cancel" |
@@ -1080,7 +1128,7 @@ Cost and memory:
 | REC_LATCHED | no speech for 5 s | IDLE | neutral status "Не расслышал" for 2 s |
 | REC_* | 25 s elapsed | – | status countdown "Ещё 5 с" … "1 с"; rim ring turns `warning` |
 | REC_* | 30 s elapsed | SEND | automatic |
-| REC_* | PWR | IDLE | discard; "Отменено" |
+| REC_* | PWR (lock) | IDLE | discard, no status text; the lock screen closes over it |
 | SEND | VAD speech < 300 ms | IDLE | "Слишком коротко" for 1.5 s; **no request** |
 | SEND | otherwise | UPLOADING | the waveform bubble appears (A16); encode, POST |
 | UPLOADING | body fully written | THINKING | – |
@@ -1088,15 +1136,16 @@ Cost and memory:
 | THINKING | reply/translation text | SPEAKING if voice is on and a speaker is present; otherwise ANSWERED → IDLE | reply appears (§5.4) |
 | SPEAKING | playback finished | IDLE | – |
 | SPEAKING | press (BOOT/orb/chip) | IDLE, or REC_PRESS if still held at 400 ms | TTS flushed within 50 ms; recording starts after the flush (no pre-roll, so no TTS tail is captured) |
-| UPLOADING / THINKING | tap | – | orb pulse; hint "PWR — отмена" (first uses) |
+| UPLOADING / THINKING | tap | – | orb pulse; hint "Держите — заново" (first uses) |
 | UPLOADING / THINKING | hold ≥ 400 ms | REC_PRESS | old request aborted |
-| UPLOADING / THINKING | PWR | IDLE | abort; "Отменено" |
+| UPLOADING / THINKING / SPEAKING | PWR (lock) | IDLE | abort, speech stopped, no status text |
+| IDLE (not ready) | BOOT tap | – | "not ready" card after the 300 ms window, unless a second press makes it a double tap |
 | any | network/API error | ERROR for 2.4 s | then IDLE or OFFLINE (§5.6) |
 
 ### 5.2 Cancel, interrupt, text-only, no speaker
 
-- **Cancel recording:** PWR, or slide off the orb and release.
-- **Interrupt speech:** tap the orb, BOOT, PWR, the voice button or a chip. The voice button also switches to text-only.
+- **Cancel recording:** slide off the orb and release; PWR locks and discards it too.
+- **Interrupt speech:** tap the orb, BOOT, the voice button or a chip (PWR locks and stops it). The voice button also switches to text-only.
 - **Barge-in:** hold BOOT or the orb while the device speaks.
 - **Text-only toggle:**
   - Controls: the left side button on H (F028 ↔ F6A9), M → "Ответ голосом", or the same row in S.
@@ -1149,7 +1198,7 @@ Orb states:
 | LISTENING | `#34E0C3` → `#29AF98`, r 70 + 4L [30 + 2L] | h1 `#10433B` r 80; h2 hidden | 24 bars [16], width 6 [4], round caps, `#34E0C3`; r_in 78 [34]; length 4 + 16·Lᵢ [3 + 7·Lᵢ], so r_out ≤ 98 [44] | WIDE. Latched: ■ (F04D, `ui_20`, `ink`) at (cx, cy + 30); compact: ■ replaces the eyes | "Слушаю…" / "Нажмите — отправлю" / "Ещё 5 с"; rim RECORD |
 | CANCEL-ARMED | `#6B7380` flat | hidden | bars `#6B7380` | ✕ `ui_28` `ink` | "Отпустите — отмена" |
 | UPLOADING | mode mid (`#44568C` / `#8C5D2A`) | h1 = mode dim | progress arc r 82 [36], width 4 [3], mode accent, from 270° clockwise to `s_upload_pct`; track `surface-2` | NEUTRAL, gaze (0, −6k), eyes `text-1` | "Отправляю 62 %" |
-| THINKING | mode mid, r 66↔70 over 1.2 s | h1 mode dim | arc A r 82 [36] w 4, 70°, +300°/s; arc B r 90 [41] w 3 [2], 40°, −200°/s; opa 255 / 140 | LOOK | "Думаю…" → 6 s "Ещё немного…" → 20 s "Долго… PWR — отмена" |
+| THINKING | mode mid, r 66↔70 over 1.2 s | h1 mode dim | arc A r 82 [36] w 4, 70°, +300°/s; arc B r 90 [41] w 3 [2], 40°, −200°/s; opa 255 / 140 | LOOK | "Думаю…" → 6 s "Ещё немного…" → 20 s "Долго… держите шар" (a hold aborts and records anew; PWR locks) |
 | SPEAKING | `#B794FF` → `#8F73C7`, r 70 + 4T [30 + 2T] | h1 `#372C4D` | echo rings r 76 + 12T (w 3, opa 160) and r 84 + 14T (w 2, opa 90) [32 + 6T / 37 + 7T] | mood expression for 1.5 s, then NEUTRAL + mouth; translator: gaze toward the target chip (gy + 6k), target chip pulses (A19) | "Нажмите — стоп" (first uses) |
 | ANSWER-READY (text-only) | mode accent | h1 flashes to mode mid 300 ms, back in 600 ms | – | HAPPY for 600 ms, gaze down (gy + 6k) | – |
 | ERROR | `#FF5C5C` → `#C74848`, shake | h1 `#4D1C1C` | – | ⚠ `ui_28` `ink` | short error in coral |
@@ -1224,7 +1273,7 @@ Interaction and mood:
 | Mic dead | flat or zero RMS for the whole clip | "Микрофон ›" coral | "Микрофон молчит" · "Microphone is silent" | "Диагностика" → D |
 | No speaker | configuration flag | voice button F6A9 + yellow dot | "Динамик не подключён" / "Отвечаю текстом" | "Проверить звук" → D |
 | TTS failed | `/audio/speech` error | – | text shown, with the note "голос недоступен" | – |
-| Low battery | ≤ 10 % | toast "Батарея 10 %" | – | – |
+| Low battery | ≤ 15 % and ≤ 5 % while discharging (§3.16) | toast "Батарея 15 %", then "Батарея 5 %", once each per discharge; Home battery and lock ring turn `error` below 15 % | – | – |
 
 The SSE parser must ignore `: OPENROUTER PROCESSING` comment lines and treat `finish_reason: "error"` inside a 200 response as a failure.
 
@@ -1235,6 +1284,8 @@ The SSE parser must ignore `: OPENROUTER PROCESSING` comment lines and treat `fi
 3. **O3, Key.** Skipped if Q delivered it. Primary "С телефона (QR)", secondary "Ввести вручную" (K hex). Subtitle "Ключ: openrouter.ai/keys".
 4. **O4, Speaker.** "Проверим звук" plays three chimes. Primary "Слышу", secondary "Нет динамика"; the latter sets `s_speaker = 0` and text-only, the primary turns voice replies on (`text_only` = 0). Both are saved (`speaker`).
 5. **O5, First try.** Hero orb with the hint "Скажите «Привет»". This is a real round trip; any fault is shown with its fix (§5.6). On success: face HAPPY, "Готово" → H.
+   - Firmware today: title "Готово!", subtitle "Держите шар или BOOT и говорите" (281 px of 290), primary "Начать", and in the secondary button's place a two-line key guide in `ui_16` `text-2`: "BOOT ×2 — смена режима" (212 px; x 60–300, y 276–296, 166.9 OK) and "PWR — блокировка" (155 px; x 95–265, y 298–318, 162.1 OK).
+   - Every step goes one step back with a right swipe (O1 leaves the flow to H); PWR locks.
 
 ### 5.8 Sleep, ambient, power
 
@@ -1243,8 +1294,8 @@ The SSE parser must ignore `: OPENROUTER PROCESSING` comment lines and treat `fi
 | 30 s idle | backlight → 25 % (LEDC hardware fade, 800 ms); face SLEEPY |
 | +60 s | Z ambient, backlight 15 % |
 | +5 min | screen off: backlight 0, mic off, LVGL timers paused, the LVGL task sleeps |
-| Wake | BOOT wakes to H/H′ and **records at once**. PWR or touch wakes; the waking touch is swallowed. After ≥ 15 min, a new session starts (empty hero) |
-| PWR at H idle | screen off immediately |
+| Wake | BOOT wakes to H/H′ and **records at once**. PWR on a dark screen or a touch wakes; the waking touch is swallowed. After ≥ 15 min, a new session starts (empty hero) |
+| PWR short | locks (from a dimmed or ambient screen too; it lights first). Locked: dimmed after 10 s, off after 20 s, never ambient; PWR unlocks in one press from any of these (§3.16) |
 | PWR held | at 0.6 s the rim POWER ring starts and fills over 2.4 s; release retracts it in 200 ms. At 100 %: on battery GPIO7 goes low (power off); on USB the screen goes off and the toast "Питание от USB" appears |
 
 ### 5.9 Earcons and first-use hints
@@ -1355,6 +1406,10 @@ The two partial buffers let DMA of one chunk overlap rendering of the next. A 20
 | A32 | Backlight dim / wake | LEDC `ledc_set_fade_with_time` | duty | 800 ms / 150 ms | 0 | 0 |
 | A33 | Screen change | `lv_screen_load(scr)`, **no load animation**, then `lv_obj_delete(old)` | – | – | 129.6k once | ≈ 20 ms, single frame |
 | A34 | Reader flip | style `transform_rotation` 0 ↔ 1800 | – | instant | 46k once through a 185 KB ARGB8888 layer | ≈ 30–60 ms, single frame (measure) |
+| A35 | Lock (§3.16) | one linear `lv_anim` 0 → 700 on the overlay; each part eases itself | iris inner r 182 → 0 (0–300 ms ease_in_out); padlock appears at the centre, k 0.6 → 1, pre-mixed 0 → 255 (180–340 ease_out); shackle drops 16 → 0 with ease_out_back, the click (320–450); pulse ring r 40 → 92, fading (380–560 ease_out, over before the ring band fades in, so a frame never queues more than about 18 of the 32 invalidated areas); padlock glides to (180,84), k 1 → 0.55 (450–640 ease_in_out); clock, date, battery ring and line 0 → 255 once the padlock has left the clock (560–700 ease_out) | 700 ms | creating the overlay: 129.6k once; iris band in 12 × 30° pieces ≤ 25k; at 560–700: ring band 12 pieces ≈ 36k + labels ≈ 18k + padlock old/new ≈ 6k (≤ 90k) | ≈ 4–7 ms |
+| A36 | Unlock | the same `lv_anim` 0 → 560 | shackle springs 0 → 16 (0–180 ease_out_back); padlock k 0.55 → 0.95 and 255 → 0 (140–340 ease_in); content 255 → 0 (60–240 ease_in); iris inner r 0 → 182 (300–560 ease_in_out) on the screen that was locked | 560 ms (+ up to 400 ms lit first when PWR woke a dark lock screen) | ≤ 66k at 140–240; iris band ≤ 25k; deleting the overlay: 129.6k once | ≈ 4–7 ms |
+| A37 | Refused input on the lock screen | `lv_anim` on the padlock's x offset; two `lv_anim` on the hint mix | dx = 6·sin(1080°·u)·(1 − u); date → "Нажмите PWR" (150 ms ease_out), back after 1.4 s (200 ms ease_in) | 360 ms / 1.75 s | padlock box ≈ 3k + 2 labels ≈ 9k | < 1 ms |
+| A38 | Charging highlight | 40 ms `lv_timer` while locked, charging and lit | a 36° piece, 43 % toward white, travels along the filled ring, 100°/s, then starts over | continuous | old + new span ≈ 2 × 3k | < 0.5 ms |
 
 ### 6.3 Patterns not used, and why
 
@@ -1500,7 +1555,7 @@ All styles are static `lv_style_t` objects initialised once in `ui_theme_init()`
 | `s_volume`, `s_brightness` | 0–100 / 5–100 | UI | A, LEDC observer, audio (atomic copy) |
 | `s_ui_lang` | 0 ru / 1 en | UI | `lv_translation_set_language("ru"/"en")`, rebuild of H + the current screen |
 | `s_lang_a`, `s_lang_b`, `s_tr_dir` | language index; 0 auto / 1 A→B / 2 B→A | UI | pill, chips, prompt builder |
-| `s_battery`, `s_charging` | −1 USB, 0–100; 0/1 | power task | ambient, toasts, "Выключение" row |
+| `s_battery` (`g_s_battery`) | `UI_BAT_MAKE(pct, flags)`: percent 0–100 or `UI_BAT_NONE` (127), `UI_BAT_CHARGING` / `_FULL` / `_USB` bits | app (`UI_SET_BATTERY`, on change) | Home battery, lock screen ring and line |
 | `s_portal` | OFF, AP_UP, PHONE_JOINED, DATA_RX, DONE, FAIL | portal task | Q |
 | `s_clock_min` | 0–1439 | RTC/SNTP task, once a minute | Z |
 | `s_hints` | 0–3 | app | H hint, hint strings |
@@ -1552,7 +1607,7 @@ ui_subj_t ui_subj_int(int32_t init, int32_t min, int32_t max)
 3. **High-rate values** (mic RMS, TTS RMS, upload bytes) are `atomic_int` written by their producers and read by the ticker.
 4. **The exception path:** `lvgl_port_lock(100)` / `lvgl_port_unlock()` only for rare direct calls from other tasks (dev-console snapshot, touch injection), and the timeout must be handled. Never hold it across I/O or other mutexes, and never take it in an ISR. It is not needed inside the LVGL task.
 5. **Event handlers never block.** They post commands to the app FSM (`app_post(CMD_TALK_DOWN)`, …).
-6. **Physical buttons:** a GPIO ISR (any edge) sends a task notification to the input task. That task debounces (20 ms), measures the 400 ms tap/hold, and handles the 600 ms / 3 s PWR thresholds, then calls `app_post()` and `ui_post()`.
+6. **Physical buttons:** a GPIO ISR (any edge) sends a task notification to the input task. That task debounces (20 ms), measures the 400 ms tap/hold, and handles the 600 ms / 3 s PWR thresholds, then calls `app_post()` and `ui_post()`. (Firmware today: a 10 ms `esp_timer` poll with 30 ms debounce in `buttons.c`; the app task owns the 300 ms BOOT double-tap window and asks the UI to lock / unlock with `ui_pwr_short()`, which the UI decides in queue order.)
 
 ```c
 typedef struct { uint16_t type; int32_t a, b; char *text; } ui_msg_t;   /* text owned by the UI after posting */
@@ -1604,7 +1659,7 @@ main/ui/
   ui_kb.c/.h         keyboard layouts, action tables, handler, draw-task styling, field rules
   scr_home.c scr_hist.c scr_reader.c scr_mode.c scr_lang.c scr_settings.c scr_wifi.c scr_text.c
   scr_adjust.c scr_qr.c scr_models.c scr_voices.c scr_provider.c scr_diag.c scr_touch.c
-  scr_dialog.c scr_step.c scr_ambient.c
+  scr_dialog.c scr_step.c scr_ambient.c scr_lock.c (lock overlay, §3.16)
   i18n/ui_tr_ru.c ui_tr_en.c   (lv_translation_add_static packs; labels use lv_label_set_translation_tag)
   fonts/ui_16.c ui_20.c ui_28.c ui_48.c OFL.txt
 ```
@@ -1621,6 +1676,10 @@ main/ui/
 | `ui state <n>` / `ui expr <e>` | forces orb states and expressions for screenshots |
 | `ui fps on\|off` | toggles lv_sysmon |
 | `ui lang ru\|en` | switches the UI language |
+| `lock` / `unlock` / `ui goto lock` | lock screen (§3.16), as PWR does |
+| `ui lockanim lock\|unlock <ms>` / `ui lockanim off` | holds frame ms of the lock / unlock animation for screenshots; `off` finishes it |
+| `bat` / `bat sim <pct> [charging 0\|1]` / `bat sim off` | the battery model's state; the override for UI tests reaches the UI at once |
+| `btn boot double` | two simulated 80 ms BOOT taps 120 ms apart (the mode switch) |
 
 **CI string-fit test.** Every RU and EN string is measured with `lv_text_get_size()` against its slot, and the build fails on any overflow:
 
@@ -1634,6 +1693,9 @@ main/ui/
 | H hint line | 100 |
 | Q caption 1 / 2 | 220 / 150 |
 | key labels | key width − 8 |
+| Home battery (glyph + percent, `ui_16`) | 70 |
+| lock screen date / hint (`ui_16`) / battery line after the bolt (`ui_20`) | 220 / 140 |
+| O5 key guide lines (`ui_16`) | 240 / 170 |
 
 ---
 

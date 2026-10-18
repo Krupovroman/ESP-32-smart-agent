@@ -1,8 +1,8 @@
 // Sleep, ambient and screen off (docs/ui.md 5.8): idle for dim_s -> backlight 25 % and a sleepy face; 60 s more
 // -> Z ambient at 15 %; 5 min more -> backlight off. Any touch only wakes (a top-layer catcher swallows it),
-// BOOT and PWR wake through ui_boot_down / ui_pwr_short. Text entry, phone setup, the adjuster, the touch test,
-// the onboarding (with every screen opened from it) and the Wi-Fi connecting step never sleep, nor does a busy
-// turn.
+// BOOT and PWR wake through the app (UI_WAKE). Text entry, phone setup, the adjuster, the touch test, the
+// onboarding (with every screen opened from it) and the Wi-Fi connecting step never sleep, nor does a busy turn.
+// The lock screen (3.16) has its own short timers: dimmed after 10 s, off after 20 s, never ambient.
 #include "ui_internal.h"
 #include "ui_orb.h"
 #include "ui_scr.h"
@@ -16,6 +16,8 @@
 #define OFF_AFTER       300000      // after the ambient
 #define DIM_PCT         25
 #define AMBIENT_PCT     15
+#define LOCK_DIM_MS     10000       // lock screen: dimmed after this
+#define LOCK_OFF_MS     20000       // ... and off
 
 static atomic_int s_level;
 static lv_timer_t *s_tick;
@@ -65,6 +67,9 @@ static void catcher_cb(lv_event_t *e)
     }
     (void)e;
     ui_sleep_wake();
+    if (ui_keylocked()) {
+        ui_lockscr_request(UI_LOCK_NUDGE);      // a touch on the dark lock screen lights it and shows the hint
+    }
 }
 
 static void catcher_on(void)
@@ -116,12 +121,14 @@ static void enter(int level)
 
 void ui_sleep_wake(void)
 {
-    if (atomic_load(&s_level) == 0) {
+    int from = atomic_load(&s_level);
+    if (from == 0) {
         lv_display_trigger_activity(NULL);  // BOOT / app activity also restarts the dim timer
         return;
     }
     atomic_store(&s_level, 0);
     catcher_off();
+    ui_lockscr_woke(from);
     if (ui_nav_current() == UI_SCR_AMBIENT) {
         ui_nav_back();
     }
@@ -159,6 +166,15 @@ static void tick_cb(lv_timer_t *t)
 {
     (void)t;
     int level = atomic_load(&s_level);
+    if (ui_keylocked()) {
+        // whatever the screen below and dim_s: the lock screen dims after 10 s and goes dark after 20 s
+        uint32_t idle = lv_display_get_inactive_time(NULL);
+        int target = idle >= LOCK_OFF_MS ? 3 : idle >= LOCK_DIM_MS ? 1 : 0;
+        if (target > level) {
+            enter(target);
+        }
+        return;
+    }
     if (busy()) {
         // a turn (BOOT, an answer arriving) keeps the screen awake and wakes it
         lv_display_trigger_activity(NULL);

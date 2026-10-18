@@ -35,7 +35,7 @@ static const char *TAG = "ui";
 #define PUMP_BATCH      16
 
 ui_subj_t g_s_state, g_s_mode, g_s_text_only, g_s_speaker, g_s_fault, g_s_net, g_s_upload, g_s_hints, g_s_portal;
-ui_subj_t g_s_tr_dir, g_s_face;
+ui_subj_t g_s_tr_dir, g_s_face, g_s_battery;
 char g_lang_a[4] = "ru", g_lang_b[4] = "en";
 
 static QueueHandle_t s_q;
@@ -91,6 +91,7 @@ static const struct {
     [UI_SCR_DIALOG] = { "dialog", scr_dialog_build, UI_CTX_DIALOG },
     [UI_SCR_ONBOARD] = { "onboard", scr_onboard_build, UI_CTX_STEP },
     [UI_SCR_AMBIENT] = { "ambient", scr_ambient_build, UI_CTX_AMBIENT },
+    [UI_SCR_LOCK] = { "lock", NULL, UI_CTX_HOME },     // an overlay above the stack (scr_lock.c), never pushed
 };
 
 // ---- Posting (any task)
@@ -235,6 +236,10 @@ static lv_obj_t *nav_build(ui_screen_t id, uint32_t arg, lv_obj_t **scroller)
 
 void ui_nav_push(ui_screen_t id, uint32_t arg)
 {
+    if (id == UI_SCR_LOCK) {
+        ui_lockscr_request(UI_LOCK_ON);     // the lock covers whatever is open; the stack stays as it is
+        return;
+    }
     if ((unsigned)id >= UI_SCR__N || id == UI_SCR_HOME) {
         ui_nav_home();
         return;
@@ -255,7 +260,7 @@ void ui_nav_push(ui_screen_t id, uint32_t arg)
 
 void ui_nav_replace(ui_screen_t id, uint32_t arg)
 {
-    if (s_depth <= 1 || (unsigned)id >= UI_SCR__N || id == UI_SCR_HOME) {
+    if (s_depth <= 1 || (unsigned)id >= UI_SCR__N || id == UI_SCR_HOME || id == UI_SCR_LOCK) {
         ui_nav_push(id, arg);
         return;
     }
@@ -322,7 +327,9 @@ void ui_nav_home(void)
 static void nav_goto(int32_t id, const char *arg)
 {
     uint32_t a = arg ? (uint32_t)strtoul(arg, NULL, 10) : 0;
-    if (id == UI_SCR_HOME) {
+    if (id == UI_SCR_LOCK) {
+        ui_nav_push(UI_SCR_LOCK, 0);    // over the current screen, which the unlock reveals again
+    } else if (id == UI_SCR_HOME) {
         ui_nav_home();
     } else if ((unsigned)id < UI_SCR__N && (id != (int32_t)ui_nav_current() || arg)) {
         ui_nav_home();
@@ -394,7 +401,8 @@ bool ui_open_card(int32_t card)
 
 void ui_toast(const char *text)
 {
-    if (ui_nav_current() == UI_SCR_HOME) {
+    // over the lock screen the top-layer stadium shows it (Home's status slot is covered)
+    if (ui_nav_current() == UI_SCR_HOME && !ui_lockscr_active()) {
         scr_home_toast(text);
     } else {
         ui_chrome_toast(text);
@@ -492,6 +500,7 @@ void ui_apply_lang(int lang)
     // strings are baked into the widgets: drop the stack now and rebuild H (the chat model survives) from a
     // timer, because this may run inside an event of a screen that is still alive
     ui_str_set_lang(lang);
+    ui_lockscr_lang();
     ui_nav_home();
     lv_timer_t *t = lv_timer_create(rebuild_home, 0, NULL);
     lv_timer_set_repeat_count(t, 1);
@@ -543,6 +552,8 @@ static void dispatch(const ui_msg_t *m)
     case UI_SCREEN_OFF: ui_sleep_off(); break;
     case UI_WORK_DONE: ui_work_dispatch(m->s); break;
     case UI_SET_TURN: cm_set_tag((uint32_t)m->i); break;
+    case UI_SET_BATTERY: ui_set(g_s_battery, LV_CLAMP(0, m->i, 0x3FF)); break;
+    case UI_LOCK: ui_lockscr_request(m->i); break;
     default: break;
     }
 }
@@ -585,6 +596,11 @@ ui_ctx_t ui_context(void)
 bool ui_boot_down(void)
 {
     ui_ctx_t c = ui_context();
+    if (ui_keylocked()) {
+        // locked: BOOT talks to no one; the lock screen lights, shakes its padlock and says "Нажмите PWR"
+        ui_post(&(ui_msg_t){ .type = UI_LOCK, .i = UI_LOCK_NUDGE });
+        return false;
+    }
     if (ui_asleep()) {
         // BOOT wakes to H and records at once (5.8); the wake leaves the ambient screen
         ui_post(&(ui_msg_t){ .type = UI_WAKE });
@@ -605,17 +621,15 @@ bool ui_boot_down(void)
     return true;
 }
 
-bool ui_pwr_short(void)
+void ui_pwr_short(void)
 {
-    if (ui_asleep()) {
-        ui_post(&(ui_msg_t){ .type = UI_WAKE });     // PWR only wakes
-        return true;
-    }
-    if (ui_context() == UI_CTX_HOME) {
-        return false;
-    }
-    ui_post(&(ui_msg_t){ .type = UI_BACK });
-    return true;
+    // decided in taskLVGL, in queue order behind the wake the press posted
+    ui_post(&(ui_msg_t){ .type = UI_LOCK, .i = UI_LOCK_TOGGLE });
+}
+
+void ui_keylock(bool on)
+{
+    ui_post(&(ui_msg_t){ .type = UI_LOCK, .i = on ? UI_LOCK_ON : UI_LOCK_OFF });
 }
 
 void ui_screen_off(void)
@@ -721,6 +735,7 @@ esp_err_t ui_init(lv_display_t *disp)
     g_s_portal = ui_subj_int(0, 0, 255);
     g_s_tr_dir = ui_subj_int(0, 0, 2);
     g_s_face = ui_subj_int(face ? 1 : 0, 0, 1);  // "Лицо шара", saved by S (default Вкл, ui.md open question 3)
+    g_s_battery = ui_subj_int(UI_BAT_NONE, 0, 0x3FF);   // the app sends the first reading once it runs
 
     lv_obj_t *home = scr_home_create();
     s_nav[0] = (nav_t){ .scr = home, .scroller = NULL, .id = UI_SCR_HOME };
@@ -945,8 +960,9 @@ static void audit_visit(lv_obj_t *obj, void *ctx)
     // transparent hit zones may extend past the circle (0.4); list rows fade out towards the rim on purpose
     // (3.7: fully opaque only within 79 px of the centre line)
     bool fading = ui_list_is_row(obj) && lv_obj_get_style_opa(obj, LV_PART_MAIN) < LV_OPA_COVER;
-    bool exempt = lv_obj_check_type(obj, &lv_arclabel_class) || obj == ui_rim_obj() || !draws_something(obj) ||
-                  fading;
+    // the lock overlay's backdrop is black out to the panel edge by design (its content is checked on its own)
+    bool exempt = lv_obj_check_type(obj, &lv_arclabel_class) || obj == ui_rim_obj() || obj == ui_lockscr_obj() ||
+                  !draws_something(obj) || fading;
     if (!exempt && ui_obj_visible_area(obj, &a)) {
         float r = ui_obj_rmax(obj, &a);
         if (!ui_geom_fits(r)) {

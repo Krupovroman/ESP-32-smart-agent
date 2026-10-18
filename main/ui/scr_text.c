@@ -1,5 +1,6 @@
 // K, text entry T_TEXT (docs/ui.md 3.8, 4.6): prompt label, cancel circle, one-line field, reveal / "Aa" circle
-// and the round keyboard. BOOT is ignored here (ui_boot_down); PWR and the cancel circle leave with the draft.
+// and the round keyboard. BOOT is ignored here (ui_boot_down); the cancel circle leaves with the draft (PWR locks,
+// and the unlock comes back to the keyboard).
 #include "ui_internal.h"
 #include "ui_scr.h"
 #include "ui_str.h"
@@ -144,7 +145,7 @@ static void delete_cb(lv_event_t *e)
     if (lv_event_get_current_target(e) != s_scr) {
         return;
     }
-    // every other way out (PWR, BOOT jump, UI_GOTO) is a cancel that keeps the draft for the caller
+    // every other way out (UI_GOTO, a language switch) is a cancel that keeps the draft for the caller
     if (!s_finished) {
         s_finished = true;
         if (s_req.done) {

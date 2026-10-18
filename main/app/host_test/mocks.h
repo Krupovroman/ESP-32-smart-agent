@@ -17,8 +17,11 @@ typedef struct {
 extern ui_rec_t g_ui[1024];
 extern int g_nui;
 extern int g_ui_ctx;            // ui_context()
-extern bool g_boot_ok;          // ui_boot_down()
+extern bool g_boot_ok;          // ui_boot_down() (false as well while g_locked)
 extern int g_pwr_short, g_pwr_down, g_pwr_up;
+// Lock screen as the UI keeps it: ui_pwr_short() / ui_keylock() flip it and report UI_IN_LOCK like the real UI
+extern bool g_locked;
+extern int g_boot_refused;      // BOOT presses ui_boot_down() refused because of the lock
 extern uint32_t g_inactive_ms;  // lv_display_get_inactive_time()
 extern bool g_touch_down;       // the pointer device reads pressed
 extern int g_wait_release;
@@ -87,7 +90,10 @@ const char *ev_last(const char *name);
 extern int g_backlight;
 extern int g_power_off, g_latch_on;
 extern bool g_boot_down, g_pwr_held;
-extern int g_bat_mv;
+extern int g_bat_mv;            // board_battery_state(): mv, pct from the mock curve
+extern bool g_bat_chg;          // ... charging
+extern int g_bat_samples, g_bat_settled;    // board_battery_sample() calls, and those with settled = true
+extern bool g_bat_last_settled;
 extern int g_net_state;
 extern bool g_portal;
 

@@ -81,6 +81,10 @@ typedef struct {
     uint32_t pending_preroll;       // pre-roll of that recording
     bool boot_ignored;              // the UI context ignored BOOT: swallow its release as well
     bool portal_wait;               // BOOT on Q: records once the portal has stopped (ui.md 2.3)
+    // BOOT double tap = mode switch (ui.md 2.3): a short tap's recording latches only once the window has passed
+    uint32_t boot_tap_t;            // release of a BOOT tap a second press may still turn into a double, 0 = none
+    bool latch_wait;                // ... that tap's recording, not latched yet
+    bool boot_defer;                // ... that press found the app not ready: its error waits for the window
     // recording
     bool latched, rec_vad;
     int8_t rec_side;                // forced translator source of this recording, UI_SIDE_AUTO = detect
@@ -387,8 +391,13 @@ void app_status(app_status_t *out)
     taskEXIT_CRITICAL(&s_mux);
     app_screen_t sc = app_io_screen();
     out->screen = sc == APP_SCREEN_ON ? "on" : sc == APP_SCREEN_DIM ? "dim" : "off";
-    out->bat_mv = app_io_bat_mv();
-    out->bat_pct = board_battery_pct(out->bat_mv);
+    board_bat_t b;
+    board_battery_state(&b);
+    out->bat_mv = b.mv;
+    out->bat_pct = b.pct;
+    out->bat_charging = b.charging;
+    out->bat_full = b.full;
+    out->locked = ui_keylocked();
 }
 
 app_state_t app_state(void)
@@ -1207,6 +1216,8 @@ static bool cancel_any(bool notify)
 {
     bool waited = s_a.portal_wait;  // a BOOT press waiting for the portal to stop
     s_a.pending = s_a.portal_wait = false;
+    s_a.latch_wait = s_a.boot_defer = false;    // nothing left for a second BOOT tap to act on
+    s_a.boot_tap_t = 0;
     switch (s_a.st) {
     case APP_LISTENING:
         discard_recording(notify);
@@ -1244,12 +1255,51 @@ void app_abort_all(void)
 
 void app_pwr_short(void)
 {
-    if (ui_context() != UI_CTX_HOME) {
-        ui_pwr_short();             // back one level (ui.md 2.3)
-        return;
+    // ui.md 2.3: lock / unlock on every screen; the UI reports a lock (UI_IN_LOCK) and the turn ends there.
+    // Back is the title zone and the right swipe now.
+    ui_pwr_short();
+}
+
+static void set_mode(int m, bool save_now);
+
+static void latch_now(void)
+{
+    s_a.latched = true;     // tap: keep recording until the next press, speech + silence, or 30 s
+    devcon_event("rec", "\"phase\":\"latched\",\"turn\":%u", (unsigned)s_a.turn);
+    ui_state(UI_ST_REC_LATCHED);
+}
+
+// BOOT's second press within APP_DOUBLE_MS of a tap: the tap's recording goes without a word, the mode switches
+// (the UI morphs, A21) and a toast names the new mode
+static void boot_double(void)
+{
+    s_a.boot_tap_t = 0;
+    if (s_a.latch_wait && s_a.st == APP_LISTENING) {
+        discard_recording(false);
     }
-    if (!cancel_any(true)) {
-        app_io_screen_off();        // H idle: screen off
+    s_a.latch_wait = s_a.boot_defer = false;
+    int m = !s_a.mode;
+    devcon_event("boot_double", "\"mode\":\"%s\"", m ? "translator" : "assistant");
+    set_mode(m, false);
+    ui_toast_id(m ? S_MODE_TRANSLATOR : S_MODE_ASSISTANT);
+}
+
+// The tap window is over: the tap was a single one
+static void boot_window_end(void)
+{
+    s_a.boot_tap_t = 0;
+    if (s_a.latch_wait) {
+        s_a.latch_wait = false;
+        if (s_a.st == APP_LISTENING && !s_a.latched) {
+            latch_now();
+        }
+    }
+    if (s_a.boot_defer && !s_a.held) {
+        s_a.boot_defer = false;
+        ready_t r = ready();
+        if (r != RDY_OK) {
+            show_not_ready(r);
+        }
     }
 }
 
@@ -1262,13 +1312,23 @@ static app_src_t src_family(app_src_t s)
 void app_ptt_down(int8_t side, app_src_t src)
 {
     bool woke = app_io_activity();
-    if (woke && (src == APP_SRC_ORB || src == APP_SRC_CHIP)) {
-        return;                     // the touch that wakes the screen is swallowed
+    if ((woke || ui_keylocked()) && (src == APP_SRC_ORB || src == APP_SRC_CHIP)) {
+        // the touch that wakes the screen is swallowed; locked, a chip held from before the lock must not record
+        return;
     }
     bool from_qr = false;
+    if (s_a.boot_tap_t && (src != APP_SRC_BOOT || app_now_ms() - s_a.boot_tap_t > APP_DOUBLE_MS)) {
+        boot_window_end();          // another source, or a second press too late: the tap was a single one
+    }
     if (src == APP_SRC_BOOT) {
+        if (s_a.boot_tap_t) {
+            boot_double();          // its release finds nothing held and does nothing
+            publish();
+            return;
+        }
         from_qr = ui_context() == UI_CTX_QR || s_a.portal_wait;   // (a second press while waiting too)
-        s_a.boot_ignored = !ui_boot_down();     // keyboard, dialog or onboarding: BOOT does nothing there
+        // keyboard, dialog or onboarding: BOOT does nothing there; locked: the lock screen shakes
+        s_a.boot_ignored = !ui_boot_down();
         if (s_a.boot_ignored) {
             return;
         }
@@ -1291,6 +1351,11 @@ void app_ptt_down(int8_t side, app_src_t src)
             // the recording starts when it is down (fsm_tick), with the audio since the press as pre-roll
             s_a.portal_wait = true;
             devcon_event("rec", "\"phase\":\"wait_portal\"");
+            break;
+        }
+        if (src == APP_SRC_BOOT && ready() != RDY_OK) {
+            // this press may begin a double tap (mode switch): "not ready" waits until it cannot (fsm_tick)
+            s_a.boot_defer = true;
             break;
         }
         // 250 ms before the press; a chip reports its press only after the 400 ms hold: 500 ms
@@ -1338,15 +1403,25 @@ void app_ptt_up(int32_t held_ms, app_src_t src)
     }
     s_a.held = false;
     uint32_t held = held_ms >= 0 ? (uint32_t)held_ms : app_now_ms() - s_a.press_t;
+    bool boot_tap = src == APP_SRC_BOOT && held < APP_TAP_MS;
     if (s_a.ignore_up || s_a.pending) {
         s_a.ignore_up = s_a.pending = false;
     } else if (s_a.st == APP_LISTENING && !s_a.latched) {
-        if (held < APP_TAP_MS) {
-            s_a.latched = true;     // tap: keep recording until the next press, speech + silence, or 30 s
-            devcon_event("rec", "\"phase\":\"latched\",\"turn\":%u", (unsigned)s_a.turn);
-            ui_state(UI_ST_REC_LATCHED);
+        if (boot_tap) {
+            // BOOT: the recording runs on and latches once a second press can no longer make a double tap
+            s_a.latch_wait = true;
+            s_a.boot_tap_t = app_now_ms();
+        } else if (held < APP_TAP_MS) {
+            latch_now();
         } else {
             send_recording("release");
+        }
+    }
+    if (s_a.boot_defer) {
+        if (boot_tap) {
+            s_a.boot_tap_t = app_now_ms();      // the error after the window, unless a second press comes
+        } else {
+            boot_window_end();                  // a hold: not ready, at once
         }
     }
     publish();
@@ -1505,6 +1580,18 @@ static void on_ui(ui_input_t ev, int32_t arg)
         publish();
         break;
     case UI_IN_SLEEP: app_io_ui_sleep((int)arg); break;
+    case UI_IN_LOCK:
+        if (arg) {
+            // ui.md 2.3: locking ends whatever runs (recording, request, speech) without a message, and no
+            // press or BOOT tap carries over into the locked state
+            app_abort_all();
+            s_a.held = s_a.pending = s_a.ignore_up = false;
+            s_a.latch_wait = s_a.boot_defer = false;
+            s_a.boot_tap_t = 0;
+        }
+        devcon_event("lock", "\"on\":%d", arg ? 1 : 0);
+        publish();
+        break;
     case UI_IN_HINTS:
         // D -> "Показать подсказки": the app's counter is the one that counts down (ui.md 5.9)
         s_a.hints = arg < 0 ? 0 : arg > 3 ? 3 : (int)arg;
@@ -1619,6 +1706,7 @@ static void handle(app_evt_t *e)
         break;
     case EV_WAKE: app_io_activity(); break;
     case EV_SYNC: break;
+    case EV_BATTERY: app_io_battery(false); break;
     default: break;
     }
 }
@@ -1630,6 +1718,19 @@ static void fsm_tick(uint32_t now)
         app_ptt_up(-1, APP_SRC_BOOT);   // the release event was lost (queue full): the key is up
     } else if (s_a.held && s_a.st != APP_LISTENING && now - s_a.press_t > 120000) {
         s_a.held = s_a.pending = s_a.ignore_up = false;    // a lost touch release must not block talking
+    }
+    if (s_a.boot_defer && s_a.held && now - s_a.press_t >= APP_TAP_MS) {
+        // BOOT held while not ready: no double tap any more; the error now (or the recording, ready meanwhile)
+        s_a.boot_defer = false;
+        ready_t r = ready();
+        if (r != RDY_OK) {
+            show_not_ready(r);
+        } else if (s_a.st == APP_IDLE || s_a.st == APP_ERROR) {
+            start_recording(s_a.press_side, 500);
+        }
+    }
+    if (s_a.boot_tap_t && now - s_a.boot_tap_t > APP_DOUBLE_MS) {
+        boot_window_end();          // no second press: a single tap (latched recording, or the deferred error)
     }
     if (s_a.pending && s_a.held && now - s_a.press_t >= APP_TAP_MS) {
         // held while busy: abort and record (barge-in); after speech this records with no pre-roll
@@ -1714,7 +1815,9 @@ static void app_task(void *arg)
     (void)arg;
     uint32_t last_tick = 0;
     for (;;) {
-        uint32_t tick = s_a.st == APP_LISTENING || s_a.pending || s_a.portal_wait ? TICK_FAST_MS : TICK_MS;
+        uint32_t tick = s_a.st == APP_LISTENING || s_a.pending || s_a.portal_wait || s_a.boot_defer || s_a.boot_tap_t
+                            ? TICK_FAST_MS
+                            : TICK_MS;
         app_evt_t e;
         if (xQueueReceive(s_q, &e, pdMS_TO_TICKS(tick)) == pdTRUE) {
             handle(&e);
