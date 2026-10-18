@@ -519,10 +519,11 @@ static void scroll_reveal(lv_obj_t *w)
     lv_obj_scroll_to_y(s_chat, y, LV_ANIM_ON);
 }
 
-// After new content: translator bubbles and cards keep their top in view, everything else follows the bottom
+// After new content: replies, translator bubbles and cards keep their top in view (a long web answer read
+// from its first line), the user's own bubbles follow the bottom
 static void scroll_for(lv_obj_t *w, const cm_entry_t *e)
 {
-    if (e->kind == CM_TURN || e->kind == CM_CARD) {
+    if (e->kind == CM_BOT || e->kind == CM_TURN || e->kind == CM_CARD) {
         scroll_reveal(w);
     } else {
         scroll_bottom();
