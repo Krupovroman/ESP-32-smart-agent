@@ -118,9 +118,24 @@ static void screen_set(app_screen_t sc)
     }
 }
 
+// Used again after a power off on USB (a real button or touch): stay on when unplugged
+static void relatch(void)
+{
+    if (s_latch_off) {
+        board_power_latch_on();
+        s_latch_off = s_off_wait_up = false;
+        s_off_check = s_note_until = 0;
+        devcon_event("power_latch", "\"on\":1");
+    }
+}
+
 void app_io_ui_sleep(int level)
 {
     app_screen_t sc = level <= 0 ? APP_SCREEN_ON : level >= 3 ? APP_SCREEN_OFF : APP_SCREEN_DIM;
+    if (level <= 0) {
+        // after a power off the UI sleeps at level 3 until a touch wakes it (the USB note does not)
+        relatch();
+    }
     if (atomic_exchange(&s_screen, (int)sc) != (int)sc) {
         devcon_event("screen", "\"state\":\"%s\",\"level\":%d", screen_name(sc), level);
     }
@@ -130,11 +145,7 @@ bool app_io_activity(void)
 {
     uint32_t now = app_now_ms();
     s_last_act = now;
-    if (s_latch_off) {
-        board_power_latch_on();     // used again after a power off on USB: stay on when unplugged
-        s_latch_off = s_off_wait_up = false;
-        s_off_check = s_note_until = 0;
-    }
+    relatch();
     if (app_io_screen() == APP_SCREEN_ON) {
         if (now - s_last_wake_post >= 1000) {   // restarts the UI's dim timer, at most once a second
             s_last_wake_post = now;
@@ -158,7 +169,8 @@ void app_io_power_off(void)
     app_abort_all();
     board_power_off();              // backlight 0, latch released: on battery the board switches off here
     s_latch_off = true;
-    atomic_store(&s_screen, APP_SCREEN_OFF);
+    // the UI goes to screen off (level 3, wake catcher) and owns the backlight again; only its wake re-latches
+    screen_set(APP_SCREEN_OFF);
     // on battery the held key powers the board until it is released: "still running" means USB only after that
     s_off_wait_up = true;
     s_off_check = s_note_until = 0;
@@ -361,13 +373,17 @@ static void poll_ambient(void)
 
 static void poll_touch(void)
 {
-    // LVGL's inactivity timer sees the real and the injected pointer
-    uint32_t idle = UINT32_MAX;
+    // a pointer (the panel or the console's injected one) is down: real input. LVGL's inactivity time is no
+    // source: the UI resets it itself (wake, busy turns, screens that never sleep), and that would re-latch
+    // the power after a power off
+    bool down = false;
     if (ui_lock(20)) {
-        idle = lv_display_get_inactive_time(NULL);
+        for (lv_indev_t *in = lv_indev_get_next(NULL); in; in = lv_indev_get_next(in)) {
+            down |= lv_indev_get_type(in) == LV_INDEV_TYPE_POINTER && lv_indev_get_state(in) == LV_INDEV_STATE_PRESSED;
+        }
         ui_unlock();
     }
-    if (idle < TOUCH_POLL_MS + 50) {
+    if (down) {
         app_io_activity();
     }
 }
@@ -382,15 +398,16 @@ static void dim_tick(uint32_t now)
         s_off_check = now + USB_CHECK_MS;
     }
     if (s_off_check && (int32_t)(now - s_off_check) >= 0) {
-        // the latch was released and the board still runs: it is powered by USB (ui.md 5.8)
+        // the latch was released and the board still runs: it is powered by USB (ui.md 5.8). The UI stays at
+        // screen off (a touch on the note is then a real wake); only the backlight comes up to show it
         s_off_check = 0;
         s_note_until = now + USB_NOTE_MS;
-        screen_set(APP_SCREEN_ON);
         ui_post(&(ui_msg_t){ .type = UI_TOAST, .i = S_USB_POWER });
+        board_backlight_set((uint8_t)s_bright);
     }
     if (s_note_until && (int32_t)(now - s_note_until) >= 0) {
         s_note_until = 0;
-        screen_set(APP_SCREEN_OFF);
+        board_backlight_set(0);
     }
     // dim / ambient / off after dim_s are run by the UI's own idle timer (ui_sleep.c)
 }

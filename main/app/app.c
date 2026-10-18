@@ -1319,7 +1319,9 @@ static void handle(app_evt_t *e)
         break;
     case EV_BUTTON: app_io_button((board_btn_t)e->i, (board_btn_ev_t)e->j, (uint32_t)e->k); break;
     case EV_UI:
-        app_io_activity();
+        if (e->i != UI_IN_SLEEP) {
+            app_io_activity();      // the UI's sleep report is a status, not input: it must never wake it
+        }
         on_ui((ui_input_t)e->i, e->j);
         break;
     case EV_WAKE: app_io_activity(); break;
@@ -1455,6 +1457,14 @@ static void ui_input_cb(ui_input_t ev, int32_t i, void *ctx)
 {
     (void)ctx;
     app_evt_t e = { 0 };
+    if (ev == UI_IN_SLEEP) {
+        // the UI owns sleep (ui_sleep.c): its level report only updates the app's mirror, never wakes
+        e.type = EV_UI;
+        e.i = ev;
+        e.j = i;
+        app_post(&e, 0);
+        return;
+    }
     if (app_io_screen() != APP_SCREEN_ON) {
         // ui.md 2.3: the first touch on a dimmed or dark screen only wakes it
         e.type = EV_WAKE;
