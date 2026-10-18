@@ -27,6 +27,11 @@ bool audio_out_busy(void);
 void audio_out_set_volume(uint8_t pct);
 uint8_t audio_out_get_volume(void);
 
+// Speech boost in dB (0-18) applied before the volume, with a -1 dBFS peak limiter, so quiet
+// TTS voices get louder on the small speaker without clipping.
+void audio_out_set_boost_db(uint8_t db);
+uint8_t audio_out_get_boost_db(void);
+
 // Queues a sine tone (blocking until queued).
 esp_err_t audio_out_tone(uint32_t hz, uint32_t ms, uint8_t amplitude_pct);
 

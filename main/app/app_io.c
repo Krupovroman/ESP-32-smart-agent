@@ -254,6 +254,9 @@ void app_io_setting(const char *key)
     if (all || !strcmp(key, "volume")) {
         audio_out_set_volume((uint8_t)settings_get_int("volume"));
     }
+    if (all || !strcmp(key, "spk_boost")) {
+        audio_out_set_boost_db((uint8_t)settings_get_int("spk_boost"));
+    }
     if (all || !strcmp(key, "bright")) {
         s_bright = settings_get_int("bright");
         backlight_apply();

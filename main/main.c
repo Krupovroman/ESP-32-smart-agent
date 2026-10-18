@@ -68,6 +68,7 @@ void app_main(void)
         }
         // no sound at boot: the volume only scales what a turn plays (no startup earcon)
         audio_out_set_volume((uint8_t)settings_get_int("volume"));
+        audio_out_set_boost_db((uint8_t)settings_get_int("spk_boost"));
         audio_in_set_format(settings_get_int("mic_slot") == 0, settings_get_int("mic_shift"));
         devconsole_heap_stage("after_audio");
     }

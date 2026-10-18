@@ -30,10 +30,26 @@ static volatile bool s_playing;
 static uint64_t s_bytes_played;
 static uint32_t s_write_errors;
 
+// Speech boost: TTS voices peak near full scale but average about -20 dBFS (crest ~19 dB), so on the
+// small speaker they sound far quieter than a tone. A fixed make-up gain followed by an instant-attack
+// peak limiter raises the average by up to the boost while the output never exceeds LIMIT_FS.
+#define LIMIT_FS    0.89f       // -1 dBFS ceiling after the boost
+#define RELEASE_S   0.04f       // limiter release (40 ms: +8 dB average on MAI speech at a 12 dB boost)
+static volatile uint8_t s_boost_db = 12;
+static volatile float s_boost = 3.981f;
+static float s_env;             // limiter envelope (play task only)
+static float s_release = 0.99896f;
+
 static void update_gain(void)
 {
     uint32_t v = s_volume;
-    s_gain_q16 = (int32_t)(v * v * 65536 / 10000);
+    // 100 % = 0.7 of full scale: with the speech boost, full scale was too loud on the speaker
+    s_gain_q16 = (int32_t)(v * v * (uint32_t)(0.7f * 65536) / 10000);
+}
+
+static void update_release(uint32_t rate)
+{
+    s_release = expf(-1.0f / (RELEASE_S * (float)rate));
 }
 
 static void play_task(void *arg)
@@ -49,6 +65,7 @@ static void play_task(void *arg)
             i2s_channel_reconfig_std_clock(s_tx, &clk);
             i2s_channel_enable(s_tx);
             s_rate = rate;
+            update_release(rate);
         }
         if (s_flush) {
             // Drain as the (only) reader instead of xStreamBufferReset(): a reset that lands while
@@ -70,15 +87,22 @@ static void play_task(void *arg)
         s_playing = true;
         size_t n = got / frame_bytes;
         int32_t gain = s_gain_q16;
+        float boost = s_boost, env = s_env, rel = s_release;
         uint64_t sum_sq = 0;
         for (size_t i = 0; i < n; i++) {
             int32_t s = s_channels == 2 ? ((int32_t)in[2 * i] + in[2 * i + 1]) / 2 : in[i];
-            int64_t v = (int64_t)s * gain;            // s16 * Q16 = s32 range
+            float x = (float)s * (1.0f / 32768.0f);
+            float a = fabsf(x);
+            env = a > env ? a : env * rel;            // instant attack, exponential release
+            float g = env * boost > LIMIT_FS ? LIMIT_FS / env : boost;
+            int32_t y = (int32_t)(x * g * 32767.0f);  // |y| <= LIMIT_FS of full scale
+            int64_t v = (int64_t)y * gain;            // s16 * Q16 = s32 range (volume)
             if (v > INT32_MAX) v = INT32_MAX;
             if (v < INT32_MIN) v = INT32_MIN;
             out[i] = (int32_t)v;
-            sum_sq += (uint64_t)((int64_t)s * s);
+            sum_sq += (uint64_t)((int64_t)y * y);
         }
+        s_env = env;
         size_t written = 0;
         if (i2s_channel_write(s_tx, out, n * sizeof(int32_t), &written, pdMS_TO_TICKS(200)) != ESP_OK) {
             s_write_errors++;
@@ -94,6 +118,7 @@ static void play_task(void *arg)
 esp_err_t audio_out_init(void)
 {
     update_gain();
+    update_release(s_rate);
     s_ring = xStreamBufferCreateWithCaps(RING_BYTES, 1, MALLOC_CAP_SPIRAM);
     ESP_RETURN_ON_FALSE(s_ring, ESP_ERR_NO_MEM, TAG, "ring");
 
@@ -163,6 +188,17 @@ void audio_out_set_volume(uint8_t pct)
 }
 
 uint8_t audio_out_get_volume(void) { return s_volume; }
+
+void audio_out_set_boost_db(uint8_t db)
+{
+    if (db > 18) {
+        db = 18;
+    }
+    s_boost_db = db;
+    s_boost = powf(10.0f, (float)db / 20.0f);
+}
+
+uint8_t audio_out_get_boost_db(void) { return s_boost_db; }
 
 esp_err_t audio_out_tone(uint32_t hz, uint32_t ms, uint8_t amplitude_pct)
 {
