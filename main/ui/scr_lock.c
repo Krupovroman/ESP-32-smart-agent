@@ -6,6 +6,7 @@
 //   overshoot and clicks, a soft ring pulses out, then the padlock glides up above the clock as the content fades in.
 //   Unlock (560 ms): the shackle springs up, the padlock grows and fades with the content, the iris opens on the
 //   screen that was locked.
+//   PWR again while one of them runs plays the running timeline back from where it stands (no jump).
 // Only what changes is invalidated: the band the iris or the pulse moved over, in 30 deg pieces (never the 360 px box
 // of a ring), the padlock's old and new box, and the labels (6.1).
 #include "ui_internal.h"
@@ -75,7 +76,9 @@ typedef struct {
 static atomic_bool s_locked;
 static phase_t s_phase;
 static lv_obj_t *s_ov, *s_clock, *s_date, *s_hint, *s_bat;
-static int32_t s_tvar, s_t;     // timeline variable / position of the running phase
+static int32_t s_tvar, s_t;     // timeline variable / position on the shown timeline
+static bool s_tl_unlock;        // the frames come from the unlock timeline (A36), else the lock one (A35); a reversal
+                                // plays the other phase's timeline backwards
 static bool s_frozen;           // console: the frame stays until the next lock request
 static int32_t s_iris = IRIS_R;
 static padlock_t s_pl;
@@ -91,7 +94,6 @@ static int32_t s_hl_a0, s_hl_a1;    // its drawn span
 static lv_timer_t *s_hl_timer, *s_clock_timer;
 static int s_last_min = -1;
 static uint32_t s_wake_t;       // the lock screen came back from "off" at this tick, 0 = not lately
-static bool s_ul_iris_only;     // this unlock began while the iris was still closing: no padlock, no content
 
 bool ui_keylocked(void)
 {
@@ -462,8 +464,8 @@ static void hl_cb(lv_timer_t *t)
             inval_arc(UI_CX, UI_CY, RING_R - RING_W, RING_R, 270 + s_hl_a0 - 6, 270 + s_hl_a1 + 6);
             s_hl = -1;
         }
-        if (!hl_wanted() && s_hl_timer) {
-            lv_timer_pause(s_hl_timer);
+        if (s_hl_timer) {
+            lv_timer_pause(s_hl_timer);     // hl_update() resumes it: the wake, a battery change, the lock's end
         }
         return;
     }
@@ -711,7 +713,8 @@ static void frame_lock(int32_t t)
     } else {
         set_padlock(NULL);
     }
-    if (t >= LK_PULSE_T && t < LK_PULSE_T + LK_PULSE_MS) {
+    // the click's pulse only on the way in: played back it would shrink and vanish at r 40
+    if (s_phase == PH_LOCKING && t >= LK_PULSE_T && t < LK_PULSE_T + LK_PULSE_MS) {
         float u = (float)(t - LK_PULSE_T) / LK_PULSE_MS;
         set_pulse((int32_t)(40.0f + 52.0f * ease_out(u)), (uint8_t)(170.0f * (1.0f - u) * (1.0f - u)));
     } else {
@@ -731,10 +734,9 @@ static void frame_unlock(int32_t t)
         p.k = LK_K_REST + (0.95f - LK_K_REST) * u;
         p.a = (uint8_t)(255.0f * (1.0f - u));
     }
-    set_padlock(p.a > 0 && !s_ul_iris_only ? &p : NULL);
+    set_padlock(p.a > 0 ? &p : NULL);
     set_pulse(-1, 0);
-    set_content(s_ul_iris_only ? 0
-                : t < UL_FADE_T ? 255
+    set_content(t < UL_FADE_T ? 255
                 : t < UL_FADE_T + 180 ? (uint8_t)(255.0f * (1.0f - ease_in((float)(t - UL_FADE_T) / 180.0f)))
                                       : 0);
     set_iris(t < UL_IRIS_T ? 0 : (int32_t)((float)IRIS_R * ease_io(clampf((float)(t - UL_IRIS_T) / 260.0f)) + 0.5f));
@@ -744,23 +746,34 @@ static void frame_exec(void *var, int32_t v)
 {
     (void)var;
     s_t = v;
-    if (s_phase == PH_LOCKING) {
-        frame_lock(v);
-    } else if (s_phase == PH_UNLOCKING) {
+    if (s_tl_unlock) {
         frame_unlock(v);
+    } else {
+        frame_lock(v);
     }
+}
+
+// Where the shown timeline ends for the running phase: forwards on its own one, or back to the start of the other
+static int32_t phase_end(void)
+{
+    if (s_phase == PH_LOCKING) {
+        return s_tl_unlock ? 0 : LOCK_MS;
+    }
+    return s_tl_unlock ? UNLOCK_MS : 0;
 }
 
 static void phase_done(void)
 {
     if (s_phase == PH_LOCKING) {
-        frame_lock(LOCK_MS);
+        frame_exec(&s_tvar, phase_end());  // A35 at its end, or A36 back at its start: the same locked frame
+        s_tl_unlock = false;
         s_phase = PH_LOCKED;
         hl_update();
     } else if (s_phase == PH_UNLOCKING) {
-        frame_unlock(UNLOCK_MS);
+        frame_exec(&s_tvar, phase_end());
         overlay_delete();
         s_phase = PH_NONE;
+        s_tl_unlock = false;
         s_wake_t = 0;
         ui_rim_power_only(false);
     }
@@ -774,12 +787,14 @@ static void done_cb(lv_anim_t *a)
     }
 }
 
-static void run(int32_t from, int32_t to, uint32_t delay)
+// The shown timeline from `from` to the running phase's end (backwards when that is a reversal)
+static void run(int32_t from, uint32_t delay)
 {
+    int32_t to = phase_end();
     lv_anim_delete(&s_tvar, frame_exec);
     s_frozen = false;
     frame_exec(&s_tvar, from);
-    if (from >= to) {
+    if (from == to) {
         phase_done();
         return;
     }
@@ -788,7 +803,7 @@ static void run(int32_t from, int32_t to, uint32_t delay)
     lv_anim_set_var(&a, &s_tvar);
     lv_anim_set_exec_cb(&a, frame_exec);
     lv_anim_set_values(&a, from, to);
-    lv_anim_set_duration(&a, (uint32_t)(to - from));
+    lv_anim_set_duration(&a, (uint32_t)LV_ABS(to - from));
     lv_anim_set_delay(&a, delay);
     lv_anim_set_path_cb(&a, lv_anim_path_linear);   // the frames ease their own parts
     lv_anim_set_completed_cb(&a, done_cb);
@@ -807,19 +822,21 @@ static void lock_start(void)
         }
         return;
     }
-    int32_t from = 0;
-    s_ul_iris_only = false;
-    if (s_phase == PH_UNLOCKING) {
-        // PWR again while it opens: close from where the iris stands, or from the shut backdrop
-        from = s_t >= UL_IRIS_T ? (int32_t)((IRIS_R - s_iris) * LK_IRIS_MS / IRIS_R) : LK_IRIS_MS;
-    } else {
+    int32_t from = s_t;
+    if (s_phase == PH_NONE) {
         overlay_create();
+        s_tl_unlock = false;
+        from = 0;
     }
+    // else PWR again while it opens: the running timeline plays back from the frame it shows (the iris closes from
+    // where it stands, the padlock and the content come back), so nothing jumps
+    s_wake_t = 0;
+    lv_display_trigger_activity(NULL);      // the lock screen's 10 s / 20 s count from the lock (console too)
     s_phase = PH_LOCKING;
     atomic_store(&s_locked, true);
     ui_rim_power_only(true);
     ui_emit(UI_IN_LOCK, 1);     // the app ends what runs (recording, request, speech)
-    run(from, LOCK_MS, 0);
+    run(from, 0);
 }
 
 static void unlock_start(void)
@@ -834,21 +851,23 @@ static void unlock_start(void)
         }
         return;
     }
-    int32_t from = 0;
-    s_ul_iris_only = s_phase == PH_LOCKING && s_t < LK_IRIS_MS;
-    if (s_ul_iris_only) {
-        from = UL_IRIS_T + s_iris * (UNLOCK_MS - UL_IRIS_T) / IRIS_R;     // still closing: it opens from there
-    }
+    int32_t from = s_t;
     uint32_t delay = 0;
-    if (s_wake_t && lv_tick_elaps(s_wake_t) < WAKE_SHOW_MS) {
-        // PWR on the dark lock screen (5.8): it lights first, then the unlock runs (one press, about 1 s in all)
-        delay = WAKE_SHOW_MS - lv_tick_elaps(s_wake_t);
+    if (s_phase == PH_LOCKED) {
+        s_tl_unlock = true;
+        from = 0;
+        if (s_wake_t && lv_tick_elaps(s_wake_t) < WAKE_SHOW_MS) {
+            // PWR on the dark lock screen (5.8): it lights first, then the unlock runs (one press, about 1 s in all)
+            delay = WAKE_SHOW_MS - lv_tick_elaps(s_wake_t);
+        }
     }
+    // else PWR again while it locks: the running timeline plays back from the frame it shows
     s_wake_t = 0;
+    lv_display_trigger_activity(NULL);      // the screen below must not dim at once after a long lock
     s_phase = PH_UNLOCKING;
     atomic_store(&s_locked, false);
     ui_emit(UI_IN_LOCK, 0);
-    run(from, UNLOCK_MS, delay);
+    run(from, delay);
 }
 
 void ui_lockscr_request(int32_t req)
@@ -891,8 +910,8 @@ bool ui_lockscr_freeze(bool unlock, int32_t ms)
         unlock_start();
     }
     phase_t want = unlock ? PH_UNLOCKING : PH_LOCKING;
-    if (s_phase != want) {
-        return false;
+    if (s_phase != want || s_tl_unlock != unlock) {
+        return false;       // e.g. a reversal is running: its frames are the other timeline's
     }
     lv_anim_delete(&s_tvar, frame_exec);
     s_frozen = true;
