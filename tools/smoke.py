@@ -117,8 +117,8 @@ def main():
             st, _ = try_cmd(d, "app state")
             d.cmd("mic src mic")
             gate = (st or {}).get("gate", {})
-            check("noise-only clip is not sent to the AI", gate.get("verdict") in ("no_speech", "too_short", "silent")
-                  and (st or {}).get("ai", {}).get("upload_ms", 1) == 0, f"gate={gate}")
+            check("noise-only clip is not sent to the AI", gate.get("verdict") in ("no_speech", "too_short", "silent"),
+                  f"gate={gate}")  # ai.* holds the previous turn: the gate verdict alone says nothing was sent
 
     info2 = d.cmd("info")
     check("internal heap min-ever >= 20 KB after the run", info2.get("int", {}).get("min", 0) >= 20 * 1024,
