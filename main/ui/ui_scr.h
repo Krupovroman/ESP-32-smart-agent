@@ -98,6 +98,8 @@ void ui_url_host(const char *url, char *out, size_t len);
 int ui_lang_count(void);
 const char *ui_lang_code(int i);
 const char *ui_lang_name(const char *code);
+// Replaces codes outside the table (char[4] each) with en, or ru when the other slot is en; true when changed.
+bool ui_lang_fix(char *a, char *b);
 // The pair for a subtitle: "Русский — Английский", or "RU — EN" when the names do not fit 184 px.
 void ui_lang_pair(char *out, size_t len);
 // Applies a new translator pair (UI copy, pill and chips, settings, UI_IN_LANGS).

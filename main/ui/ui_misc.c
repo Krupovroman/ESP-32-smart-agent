@@ -47,15 +47,16 @@ void ui_url_host(const char *url, char *out, size_t len)
     ui_str_copy(out, len, tmp);
 }
 
-// Protocol 4.2: code, Russian UI name, English UI name
+// Protocol 4.2: code, Russian UI name, English UI name. Only scripts ui_16/20/28 can draw (Latin, Latin
+// Extended-A, Cyrillic: ui.md 1.3): zh/ja/ko/ar stay out until a font or a romanised line covers them, because the
+// sanitiser would erase their transcripts and translations
 static const struct {
     const char *code, *ru, *en;
 } s_langs[] = {
     { "ru", "Русский", "Russian" }, { "en", "Английский", "English" }, { "de", "Немецкий", "German" },
     { "fr", "Французский", "French" }, { "es", "Испанский", "Spanish" }, { "it", "Итальянский", "Italian" },
     { "pt", "Португальский", "Portuguese" }, { "pl", "Польский", "Polish" }, { "tr", "Турецкий", "Turkish" },
-    { "uk", "Украинский", "Ukrainian" }, { "zh", "Китайский", "Chinese" }, { "ja", "Японский", "Japanese" },
-    { "ko", "Корейский", "Korean" }, { "ar", "Арабский", "Arabic" },
+    { "uk", "Украинский", "Ukrainian" },
 };
 
 int ui_lang_count(void)
@@ -66,6 +67,31 @@ int ui_lang_count(void)
 const char *ui_lang_code(int i)
 {
     return i >= 0 && i < ui_lang_count() ? s_langs[i].code : "";
+}
+
+static bool lang_offered(const char *code)
+{
+    for (int i = 0; i < ui_lang_count(); i++) {
+        if (code && !strcmp(code, s_langs[i].code)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ui_lang_fix(char *a, char *b)
+{
+    // a stored code the table no longer offers falls back to en (ru when the other slot already is en)
+    bool changed = false;
+    if (!lang_offered(a)) {
+        snprintf(a, 4, "%s", strcmp(b, "en") ? "en" : "ru");
+        changed = true;
+    }
+    if (!lang_offered(b) || !strcmp(a, b)) {
+        snprintf(b, 4, "%s", strcmp(a, "en") ? "en" : "ru");
+        changed = true;
+    }
+    return changed;
 }
 
 const char *ui_lang_name(const char *code)

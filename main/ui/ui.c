@@ -425,8 +425,16 @@ static void set_langs(const char *s)
     if (!bar || bar == s || !bar[1]) {
         return;
     }
-    snprintf(g_lang_a, sizeof(g_lang_a), "%.*s", (int)LV_MIN(bar - s, 3), s);
-    snprintf(g_lang_b, sizeof(g_lang_b), "%.3s", bar + 1);
+    char a[4], b[4];
+    snprintf(a, sizeof(a), "%.*s", (int)LV_MIN(bar - s, 3), s);
+    snprintf(b, sizeof(b), "%.3s", bar + 1);
+    if (ui_lang_fix(a, b)) {
+        // a language the fonts cannot draw (ux-01): store the fallback like a pick, so the app follows it
+        ui_set_langs(a, b);
+        return;
+    }
+    memcpy(g_lang_a, a, sizeof(g_lang_a));
+    memcpy(g_lang_b, b, sizeof(g_lang_b));
     scr_home_langs_changed();
 }
 
@@ -647,6 +655,12 @@ esp_err_t ui_init(lv_display_t *disp)
     settings_get_str("tr_lang_b", buf, sizeof(buf));
     if (buf[0]) {
         snprintf(g_lang_b, sizeof(g_lang_b), "%.3s", buf);
+    }
+    if (ui_lang_fix(g_lang_a, g_lang_b)) {
+        // a stored language the fonts cannot draw (ux-01): the app and the AI client read the settings too
+        ESP_LOGW(TAG, "translator pair not offered, now %s|%s", g_lang_a, g_lang_b);
+        settings_set_str("tr_lang_a", g_lang_a);
+        settings_set_str("tr_lang_b", g_lang_b);
     }
     int32_t mode = settings_get_int("mode");
     int32_t text_only = settings_get_int("text_only");
