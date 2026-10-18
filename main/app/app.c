@@ -1047,7 +1047,7 @@ static void replay(uint32_t tag)
     }
     if (app_cfg_int("volume", 60) == 0) {
         entry_event("replay", tag, "volume_0");
-        ui_toast_id(S_E_SPK);
+        ui_post_text(UI_TOAST, 0, loc("Громкость 0", "Volume 0"));     // a speaker is there, it is muted
         return;
     }
     entry_event("replay", tag, "speak");
@@ -1596,6 +1596,9 @@ static void handle(app_evt_t *e)
     case EV_SET_TEXT_ONLY:
         app_io_activity();
         set_text_only(e->i != 0, e->j != 0);
+        if (!e->i && app_cfg_int("volume", 60) == 0) {
+            ui_post_text(UI_TOAST, 0, loc("Громкость 0", "Volume 0"));  // voice on, yet nothing will be heard
+        }
         break;
     case EV_SET_DIR:
         s_a.tr_dir = e->i < 0 || e->i > 2 ? 0 : (int)e->i;
