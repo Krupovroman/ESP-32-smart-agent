@@ -1005,7 +1005,7 @@ The draft assumed 300 KB. That number is not reachable on this chip with this co
   - our code: ≈ 0.25 MB.
 
   That is 55 % or less of a 4 MB slot. `tools/build.ps1` fails above 85 %.
-- **Measured with the CJK fallback (feat-cjk):** the app is 2,002,912 B (48 % of the slot; Tiny TTF, stb_truetype and `ui_font.c` add 28 KB). The CJK font stays out of the app on purpose: the 5,066,752 B asset pack (§1.0) is written once to `storage` and never travels with an OTA image.
+- **Measured with the CJK fallback (feat-cjk):** the app is 2,003,072 B (48 % of the slot; Tiny TTF, stb_truetype and `ui_font.c` add 28 KB to main's 1,974,880 B). The CJK font stays out of the app on purpose: the 5,066,752 B asset pack (§1.0) is written once to `storage` and never travels with an OTA image.
 - **Upload size.** A 30 s clip is 960,044 B of WAV and 1,280,060 base64 characters. A 10 s clip is 426,728 characters.
   - At 400 KB/s TLS upload *(measure M4)*, 10 s of speech uploads in ≈ 1.1 s.
   - AAC through `esp_audio_codec` (`format:"aac"`) is a v2 option if the upload dominates latency.
