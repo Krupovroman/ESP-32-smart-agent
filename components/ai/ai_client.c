@@ -980,6 +980,12 @@ static bool job_waiting(void)
     return uxQueueMessagesWaiting(s_q) > 0;
 }
 
+bool ai_job_waiting(void *ctx)
+{
+    (void)ctx;
+    return job_waiting();
+}
+
 static void run_prewarm(void)
 {
     char base[136];

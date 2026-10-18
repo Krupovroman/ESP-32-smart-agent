@@ -50,6 +50,8 @@ esp_err_t ai_run_sync(esp_err_t (*fn)(void *ctx), void *ctx);
 bool ai_turn_cancelled(uint32_t turn);
 // Abort callback for or_req_t: ctx points at a uint32_t turn.
 bool ai_abort_turn(void *ctx);
+// or_abort_fn (ctx unused): true while a job (a turn) waits in the ai queue behind this one.
+bool ai_job_waiting(void *ctx);
 // Unused stack bytes (high-water mark) of the ai and tts tasks, 0 before they start.
 uint32_t ai_task_stack_free(void);
 uint32_t tts_task_stack_free(void);

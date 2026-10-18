@@ -152,6 +152,14 @@ esp_err_t ai_get_json(const char *base_url, const char *path, size_t cap, bool o
     or_retry_init(&rs, true);
     esp_err_t ret = ESP_FAIL;
     for (;;) {
+        // Background GETs (pickers, key info, checks) give way to a turn queued behind them: they
+        // stop before an attempt and during the retry waits. An attempt in flight runs to its own
+        // deadline, since aborting it would drop the kept-alive socket the turn is about to reuse.
+        if (ai_job_waiting(NULL)) {
+            or_err_local(e, "AB");
+            ret = ESP_ERR_TIMEOUT;
+            break;
+        }
         or_resp_t r;
         char *b = NULL;
         esp_err_t x = or_exchange(&q, &r, &b, cap, NULL);
@@ -170,7 +178,11 @@ esp_err_t ai_get_json(const char *base_url, const char *path, size_t cap, bool o
             break;
         }
         ESP_LOGI(TAG, "GET %s: %s, retry in %" PRIu32 " ms", path, e->id, delay);
-        ai_sleep_ms(delay, NULL, NULL);
+        if (!ai_sleep_ms(delay, ai_job_waiting, NULL)) {
+            or_err_local(e, "AB");
+            ret = ESP_ERR_TIMEOUT;
+            break;
+        }
     }
     memset(key, 0, sizeof(key));
     return ret;
