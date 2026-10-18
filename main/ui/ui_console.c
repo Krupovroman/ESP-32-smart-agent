@@ -26,10 +26,10 @@ static const char *const s_state_names[UI_ST__N] = {
 };
 static const char *const s_mood_names[] = { "neutral", "happy", "sad", "surprised", "thinking" };
 static const char *const s_fault_names[UI_FAULT__N] = {
-    "none", "nowifi", "badkey", "nocredit", "lowcredit", "region", "model", "expiring", "mic",
+    "none", "nowifi", "badkey", "nocredit", "lowcredit", "region", "model", "expiring", "mic", "nokey",
 };
 static const char *const s_card_names[UI_CARD__N] = {
-    "generic", "nowifi", "badkey", "nocredit", "region", "model", "rate", "server", "tls", "mic", "nospeaker",
+    "generic", "nowifi", "badkey", "nocredit", "region", "model", "rate", "server", "tls", "mic", "nospeaker", "nokey",
 };
 static const char *const s_net_names[] = { "off", "connecting", "up", "failed" };
 
@@ -561,13 +561,13 @@ static int cmd_ui(int argc, char **argv)
     }
     if (!strcmp(sub, "error")) {
         if ((v = lookup(arg, s_card_names, UI_CARD__N)) < 0) {
-            return dc_fail("cards: generic nowifi badkey nocredit region model rate server tls mic nospeaker");
+            return dc_fail("cards: generic nowifi badkey nocredit region model rate server tls mic nospeaker nokey");
         }
         return post(UI_ERROR, v, join(argc, argv, 3));
     }
     if (!strcmp(sub, "fault")) {
         if ((v = lookup(arg, s_fault_names, UI_FAULT__N)) < 0) {
-            return dc_fail("faults: none nowifi badkey nocredit lowcredit region model expiring mic");
+            return dc_fail("faults: none nowifi badkey nocredit lowcredit region model expiring mic nokey");
         }
         return post(UI_SET_FAULT, v, NULL);
     }

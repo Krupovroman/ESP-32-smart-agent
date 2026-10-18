@@ -226,7 +226,7 @@ static void pill_refresh(void)
     bool fault = f != UI_FAULT_NONE;
     if (fault) {
         static const ui_sid_t ids[UI_FAULT__N] = { S__N, S_F_NO_WIFI, S_F_BAD_KEY, S_F_NO_CREDIT, S_F_LOW_CREDIT,
-                                                   S_F_REGION, S_F_MODEL, S_F_MODEL_EXP, S_F_MIC };
+                                                   S_F_REGION, S_F_MODEL, S_F_MODEL_EXP, S_F_MIC, S_F_NO_KEY };
         bool warn = f == UI_FAULT_NO_CREDIT || f == UI_FAULT_LOW_CREDIT || f == UI_FAULT_MODEL_EXPIRING;
         const ui_accent_t *acc = ui_accent(warn ? UI_ACC_WARNING : UI_ACC_ERROR);
         snprintf(buf, sizeof(buf), "#%06lX %s " TXT_RSAQUO "#", (unsigned long)acc->top, ui_s(ids[f]));
@@ -705,7 +705,8 @@ static void error_begin(void)
     lv_timer_resume(s_err_timer);
     const cm_entry_t *c = cm_last_of(mode(), CM_CARD);
     static const ui_sid_t shorts[UI_CARD__N] = { S_E_GENERIC, S_F_NO_WIFI, S_F_BAD_KEY, S_F_NO_CREDIT, S_F_REGION,
-                                                 S_F_MODEL, S_E_RATE, S_E_SERVER, S_E_TLS, S_E_MIC, S_E_SPK };
+                                                 S_F_MODEL, S_E_RATE, S_E_SERVER, S_E_TLS, S_E_MIC, S_E_SPK,
+                                                 S_F_NO_KEY };
     transient(ui_s(c && c->card < UI_CARD__N ? shorts[c->card] : S_E_GENERIC), 2400, true);
 }
 

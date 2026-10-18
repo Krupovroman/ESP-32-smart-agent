@@ -338,6 +338,7 @@ void ui_open(ui_open_t what)
         // the screen that fixes the persistent fault (3.14): W | P | AI, credit details, diagnostics
         switch (ui_get(g_s_fault)) {
         case UI_FAULT_BAD_KEY:
+        case UI_FAULT_NO_KEY:
         case UI_FAULT_REGION: ui_nav_push(UI_SCR_PROVIDER, 0); break;
         case UI_FAULT_NO_CREDIT:
         case UI_FAULT_LOW_CREDIT: ui_nav_push(UI_SCR_KEYINFO, 0); break;
@@ -356,6 +357,7 @@ bool ui_open_card(int32_t card)
     switch (card) {
     case UI_CARD_NO_WIFI: ui_nav_push(UI_SCR_WIFI, 0); return true;
     case UI_CARD_BAD_KEY:
+    case UI_CARD_NO_KEY:
     case UI_CARD_REGION: ui_nav_push(UI_SCR_PROVIDER, 0); return true;
     case UI_CARD_NO_CREDIT: ui_nav_push(UI_SCR_KEYINFO, 0); return true;
     case UI_CARD_MODEL: ui_nav_push(UI_SCR_MODELS, 0); return true;

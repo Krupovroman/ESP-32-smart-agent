@@ -525,6 +525,7 @@ static const card_def_t s_cards[UI_CARD__N] = {
     [UI_CARD_TLS] = { S_C_TLS_T, S__N, S_C_RETRY_A, UI_ACC_ERROR },
     [UI_CARD_MIC] = { S_C_MIC_T, S__N, S_C_DIAG_A, UI_ACC_ERROR },
     [UI_CARD_NO_SPEAKER] = { S_C_SPK_T, S_C_SPK_B, S_C_SPK_A, UI_ACC_WARNING },
+    [UI_CARD_NO_KEY] = { S_C_NOKEY_T, S__N, S_C_NOKEY_A, UI_ACC_ERROR },
 };
 
 static void build_card(lv_obj_t *w, const cm_entry_t *e)

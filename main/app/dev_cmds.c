@@ -25,7 +25,7 @@
 #define SIM_GAP_MS  60          // simulated key edges: longer than the 30 ms debounce
 
 static const char *const s_fault_names[] = {
-    "none", "nowifi", "badkey", "nocredit", "lowcredit", "region", "model", "expiring", "mic",
+    "none", "nowifi", "badkey", "nocredit", "lowcredit", "region", "model", "expiring", "mic", "nokey",
 };
 
 static int need_app(void)

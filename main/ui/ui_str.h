@@ -21,6 +21,7 @@ typedef enum {
     S_TOUCH_FMT, S_TOUCH_HELP,
     // persistent faults in the pill (3.14, 5.6)
     S_F_NO_WIFI, S_F_BAD_KEY, S_F_NO_CREDIT, S_F_LOW_CREDIT, S_F_REGION, S_F_MODEL, S_F_MODEL_EXP, S_F_MIC,
+    S_F_NO_KEY,
     // error cards: title, body, action (5.6)
     S_C_WIFI_T, S_C_WIFI_B, S_C_WIFI_A,
     S_C_KEY_T, S_C_KEY_A,
@@ -32,6 +33,7 @@ typedef enum {
     S_C_TLS_T, S_C_DIAG_A,
     S_C_MIC_T,
     S_C_SPK_T, S_C_SPK_B, S_C_SPK_A,
+    S_C_NOKEY_T, S_C_NOKEY_A,
     S_C_ERROR_T,
     // short errors for the status line
     S_E_GENERIC, S_E_SERVER, S_E_RATE, S_E_TLS, S_E_MIC, S_E_SPK,

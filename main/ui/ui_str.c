@@ -66,6 +66,7 @@ static const str_def_t s_tab[S__N] = {
     E(S_F_MODEL, "Нет модели", "No model", SLOT_FAULT),
     E(S_F_MODEL_EXP, "Модель истекает", "Model expiring", SLOT_FAULT),
     E(S_F_MIC, "Микрофон", "Microphone", SLOT_FAULT),
+    E(S_F_NO_KEY, "Нет ключа", "No key", SLOT_FAULT),       // also the card's short status text
 
     E(S_C_WIFI_T, "Нет подключения к Wi-Fi", "Not connected to Wi-Fi", SLOT_NONE),
     E(S_C_WIFI_B, "Подключаюсь снова" TXT_ELLIPSIS, "Reconnecting" TXT_ELLIPSIS, SLOT_NONE),
@@ -90,6 +91,8 @@ static const str_def_t s_tab[S__N] = {
     E(S_C_SPK_T, "Динамик не подключён", "No speaker connected", SLOT_NONE),
     E(S_C_SPK_B, "Отвечаю текстом", "Replying in text", SLOT_NONE),
     E(S_C_SPK_A, "Проверить звук", "Test sound", SLOT_BTN),
+    E(S_C_NOKEY_T, "Нет ключа API", "No API key", SLOT_NONE),
+    E(S_C_NOKEY_A, "Ввести ключ", "Enter key", SLOT_BTN),
     E(S_C_ERROR_T, "Ошибка", "Error", SLOT_NONE),
 
     // short error for the coral status line while the orb shows ERROR (card titles wrap, these must not)

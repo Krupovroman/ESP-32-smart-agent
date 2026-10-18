@@ -469,7 +469,7 @@ static const err_map_t ERR_MAP[] = {
     { "500", UI_CARD_SERVER, -1, true }, { "502", UI_CARD_SERVER, -1, true }, { "503", UI_CARD_SERVER, -1, true },
     { "504", UI_CARD_SERVER, -1, true }, { "529", UI_CARD_SERVER, -1, true },
     { "401", UI_CARD_BAD_KEY, UI_FAULT_BAD_KEY, true },
-    { "K0", UI_CARD_GENERIC, UI_FAULT_BAD_KEY, true },
+    { "K0", UI_CARD_NO_KEY, UI_FAULT_NO_KEY, false },
     { "402", UI_CARD_NO_CREDIT, UI_FAULT_NO_CREDIT, false },
     { "402k", UI_CARD_NO_CREDIT, UI_FAULT_NO_CREDIT, true },
     { "403b", UI_CARD_NO_CREDIT, UI_FAULT_NO_CREDIT, true },
@@ -1447,7 +1447,7 @@ static void on_setting(const char *key)
             set_text_only(v, false);
         }
     }
-    if ((all || !strcmp(key, "ai_key")) && s_a.fault == UI_FAULT_BAD_KEY) {
+    if ((all || !strcmp(key, "ai_key")) && (s_a.fault == UI_FAULT_BAD_KEY || s_a.fault == UI_FAULT_NO_KEY)) {
         clear_fault();
     }
     if ((all || !strcmp(key, "ai_model")) && (s_a.fault == UI_FAULT_MODEL || s_a.fault == UI_FAULT_REGION)) {
