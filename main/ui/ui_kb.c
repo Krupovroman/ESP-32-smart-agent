@@ -294,6 +294,7 @@ static const field_rule_t s_rules[UI_FIELD__N] = {
     [UI_FIELD_KEY] = { 200, 1, true, true, true },
     [UI_FIELD_URL] = { 128, 9, true, false, true },
     [UI_FIELD_MODEL] = { 96, 1, true, false, true },
+    [UI_FIELD_WIFI_PASS_OPT] = { 63, 8, true, true, true },
 };
 
 static const field_rule_t *rule(ui_field_t f)
@@ -344,6 +345,9 @@ bool ui_field_ok(ui_field_t f, bool hex, const char *text)
             }
         }
         return false;
+    }
+    if (f == UI_FIELD_WIFI_PASS_OPT && n == 0) {
+        return true;    // no password: join it as an open network (4.6 "or the network is open")
     }
     return n >= rule(f)->min_len;
 }

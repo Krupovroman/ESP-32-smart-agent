@@ -168,6 +168,10 @@ void ui_set_input_cb(ui_input_cb_t cb, void *ctx)
 {
     s_in_ctx = ctx;
     s_in_cb = cb;
+    if (cb && !settings_get_int("speaker")) {
+        // the app keeps "no speaker" in RAM: hand it the stored choice once (the callback only posts)
+        cb(UI_IN_SPEAKER, 0, ctx);
+    }
 }
 
 bool ui_emit(ui_input_t ev, int32_t i)
@@ -326,6 +330,26 @@ static void nav_goto(int32_t id, const char *arg)
     }
 }
 
+int32_t ui_fault_shown(void)
+{
+    int32_t f = ui_get(g_s_fault);
+    int32_t n = ui_get(g_s_net);
+    bool offline = n == UI_NET_OFF || n == UI_NET_FAILED || ui_get(g_s_state) == UI_ST_OFFLINE;
+    return f == UI_FAULT_NONE && offline ? UI_FAULT_NO_WIFI : f;
+}
+
+const char *ui_fault_text(int32_t f)
+{
+    static const ui_sid_t ids[UI_FAULT__N] = { S__N, S_F_NO_WIFI, S_F_BAD_KEY, S_F_NO_CREDIT, S_F_LOW_CREDIT,
+                                               S_F_REGION, S_F_MODEL, S_F_MODEL_EXP, S_F_MIC, S_F_NO_KEY };
+    return f > UI_FAULT_NONE && f < UI_FAULT__N ? ui_s(ids[f]) : "";
+}
+
+bool ui_fault_warning(int32_t f)
+{
+    return f == UI_FAULT_NO_CREDIT || f == UI_FAULT_LOW_CREDIT || f == UI_FAULT_MODEL_EXPIRING;
+}
+
 void ui_open(ui_open_t what)
 {
     switch (what) {
@@ -344,7 +368,7 @@ void ui_open(ui_open_t what)
         case UI_FAULT_LOW_CREDIT: ui_nav_push(UI_SCR_KEYINFO, 0); break;
         case UI_FAULT_MODEL:
         case UI_FAULT_MODEL_EXPIRING: ui_nav_push(UI_SCR_MODELS, 0); break;
-        case UI_FAULT_MIC: ui_nav_push(UI_SCR_ABOUT, 0); break;
+        case UI_FAULT_MIC: ui_nav_push(UI_SCR_ABOUT, UI_ABOUT_MIC); break;
         default: ui_nav_push(UI_SCR_WIFI, 0); break;
         }
         break;
@@ -361,8 +385,9 @@ bool ui_open_card(int32_t card)
     case UI_CARD_REGION: ui_nav_push(UI_SCR_PROVIDER, 0); return true;
     case UI_CARD_NO_CREDIT: ui_nav_push(UI_SCR_KEYINFO, 0); return true;
     case UI_CARD_MODEL: ui_nav_push(UI_SCR_MODELS, 0); return true;
-    case UI_CARD_MIC:
-    case UI_CARD_NO_SPEAKER: ui_nav_push(UI_SCR_ABOUT, 0); return true;
+    // D, centred on its microphone level / speaker test and "Динамик" switch
+    case UI_CARD_MIC: ui_nav_push(UI_SCR_ABOUT, UI_ABOUT_MIC); return true;
+    case UI_CARD_NO_SPEAKER: ui_nav_push(UI_SCR_ABOUT, UI_ABOUT_SOUND); return true;
     default: return false;      // retry cards: the app re-sends the cached clip
     }
 }
@@ -427,8 +452,21 @@ static void set_langs(const char *s)
     if (!bar || bar == s || !bar[1]) {
         return;
     }
-    snprintf(g_lang_a, sizeof(g_lang_a), "%.*s", (int)LV_MIN(bar - s, 3), s);
-    snprintf(g_lang_b, sizeof(g_lang_b), "%.3s", bar + 1);
+    if (ui_save_pending("tr_lang_a") || ui_save_pending("tr_lang_b")) {
+        // the app mirrors every stored key, so the UI's own two-key write first comes back half old (a swap even
+        // as "fr|fr"): the UI copy is the newest until that write is done
+        return;
+    }
+    char a[4], b[4];
+    snprintf(a, sizeof(a), "%.*s", (int)LV_MIN(bar - s, 3), s);
+    snprintf(b, sizeof(b), "%.3s", bar + 1);
+    if (ui_lang_fix(a, b)) {
+        // a language the fonts cannot draw (ux-01): store the fallback like a pick, so the app follows it
+        ui_set_langs(a, b);
+        return;
+    }
+    memcpy(g_lang_a, a, sizeof(g_lang_a));
+    memcpy(g_lang_b, b, sizeof(g_lang_b));
     scr_home_langs_changed();
 }
 
@@ -651,8 +689,16 @@ esp_err_t ui_init(lv_display_t *disp)
     if (buf[0]) {
         snprintf(g_lang_b, sizeof(g_lang_b), "%.3s", buf);
     }
+    if (ui_lang_fix(g_lang_a, g_lang_b)) {
+        // a stored language the fonts cannot draw (ux-01): the app and the AI client read the settings too
+        ESP_LOGW(TAG, "translator pair not offered, now %s|%s", g_lang_a, g_lang_b);
+        settings_set_str("tr_lang_a", g_lang_a);
+        settings_set_str("tr_lang_b", g_lang_b);
+    }
     int32_t mode = settings_get_int("mode");
     int32_t text_only = settings_get_int("text_only");
+    int32_t speaker = settings_get_int("speaker");
+    int32_t face = settings_get_int("face");
 
     if (!lvgl_port_lock(0)) {
         return ESP_ERR_TIMEOUT;
@@ -666,16 +712,15 @@ esp_err_t ui_init(lv_display_t *disp)
     g_s_state = ui_subj_int(UI_ST_IDLE, 0, UI_ST__N - 1);
     g_s_mode = ui_subj_int(mode ? 1 : 0, 0, 1);
     g_s_text_only = ui_subj_int(text_only ? 1 : 0, 0, 1);
-    // speakers are now connected on the bench board; the app posts UI_SET_SPEAKER 0 once a stored
-    // "no speaker" flag exists (onboarding O4 / S -> Динамик)
-    g_s_speaker = ui_subj_int(1, 0, 1);
+    // "speaker" is saved by O4 / S -> Динамик / D (ui_set_speaker); the app gets it in ui_set_input_cb
+    g_s_speaker = ui_subj_int(speaker ? 1 : 0, 0, 1);
     g_s_fault = ui_subj_int(UI_FAULT_NONE, 0, UI_FAULT__N - 1);
     g_s_net = ui_subj_int(UI_NET_CONNECTING, 0, UI_NET_FAILED);
     g_s_upload = ui_subj_int(0, 0, 100);
     g_s_hints = ui_subj_int(3, 0, 3);
     g_s_portal = ui_subj_int(0, 0, 255);
     g_s_tr_dir = ui_subj_int(0, 0, 2);
-    g_s_face = ui_subj_int(1, 0, 1);            // "Лицо шара: Вкл" by default (ui.md open question 3)
+    g_s_face = ui_subj_int(face ? 1 : 0, 0, 1);  // "Лицо шара", saved by S (default Вкл, ui.md open question 3)
 
     lv_obj_t *home = scr_home_create();
     s_nav[0] = (nav_t){ .scr = home, .scroller = NULL, .id = UI_SCR_HOME };

@@ -58,7 +58,7 @@ static void toggle_voice(lv_obj_t *row)
 
 // ---- M
 
-static lv_obj_t *s_m_scr, *s_m_langs, *s_m_dir, *s_m_volume, *s_m_voice;
+static lv_obj_t *s_m_scr, *s_m_fault, *s_m_langs, *s_m_dir, *s_m_volume, *s_m_voice;
 static char *s_draft;           // typed question kept after a cancel (4.6)
 
 static void set_mode(int m)
@@ -112,6 +112,7 @@ static void m_cb(lv_event_t *e)
     case 7: ui_nav_push(UI_SCR_ADJUST, 0); break;
     case 8: toggle_voice(row); break;
     case 9: ui_nav_push(UI_SCR_SETTINGS, 0); break;
+    case 10: ui_open(UI_OPEN_FAULT_FIX); break;     // back returns here
     default: break;
     }
 }
@@ -119,6 +120,19 @@ static void m_cb(lv_event_t *e)
 static void m_refresh(void)
 {
     char buf[64];
+    if (s_m_fault) {
+        // back from the fixing screen: a fault that is gone leaves M too
+        int32_t f = ui_fault_shown();
+        bool gone = f == UI_FAULT_NONE;
+        if (gone != lv_obj_has_flag(s_m_fault, LV_OBJ_FLAG_HIDDEN)) {
+            lv_obj_set_flag(s_m_fault, LV_OBJ_FLAG_HIDDEN, gone);
+            ui_list_refresh(lv_obj_get_parent(s_m_fault));
+        }
+        if (!gone) {
+            ui_row_set_title(s_m_fault, ui_fault_text(f));
+            ui_row_set_sub_accent(s_m_fault, ui_fault_warning(f) ? UI_ACC_WARNING : UI_ACC_ERROR);
+        }
+    }
     if (s_m_langs) {
         pair_text(buf, sizeof(buf));
         ui_row_set_sub(s_m_langs, buf);
@@ -139,7 +153,7 @@ static void m_loaded_cb(lv_event_t *e)
 static void m_delete_cb(lv_event_t *e)
 {
     if (lv_event_get_current_target(e) == s_m_scr) {
-        s_m_scr = s_m_langs = s_m_dir = s_m_volume = s_m_voice = NULL;
+        s_m_scr = s_m_fault = s_m_langs = s_m_dir = s_m_volume = s_m_voice = NULL;
     }
 }
 
@@ -152,6 +166,12 @@ lv_obj_t *scr_mode_build(uint32_t arg)
     lv_obj_add_event_cb(s_m_scr, m_delete_cb, LV_EVENT_DELETE, NULL);
     int mode = ui_get(g_s_mode);
     char buf[64];
+    // the pill leads here also with a fault: its fixing screen first, the rest of M stays reachable (3.14). No
+    // icon, so "Модель истекает" fits the 180 px title; m_refresh sets the text
+    s_m_fault = NULL;
+    if (ui_fault_shown() != UI_FAULT_NONE) {
+        s_m_fault = ui_list_row(list, "m_fault", NULL, "", ui_s(S_M_FIX), UI_ROW_CHEVRON, m_cb, (void *)10);
+    }
     lv_obj_t *r = ui_list_row(list, "m_assistant", SYM_COMMENT, ui_s(S_MODE_ASSISTANT), ui_s(S_M_ASSISTANT_SUB),
                               UI_ROW_CHECK, m_cb, (void *)0);
     ui_row_set_check(r, mode == 0);

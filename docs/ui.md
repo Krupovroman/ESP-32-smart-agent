@@ -311,7 +311,7 @@ Power ─► S0 ─┬─ first boot ─► O1 Language ─► O2 Network ─┬
    │ Assistant: left button = voice toggle, right button = S                                     │
    │ Translator: left chip A, right chip B: tap = LP for that slot, hold = talk in that language │
    │ tap a message ─► HIST (assistant) / RD (translator)                                         │
-   │ fault pill ─► the fixing screen (W | Q | P | AI)                                            │
+   │ fault pill ─► M, whose first row ─► the fixing screen (W | Q | P | AI | D)                  │
    │ S ─► A Volume | A Brightness | W ─► K ─► WC | Q | AI ─► K | V | P ─► PE ─► K | D ─► C       │
    │ idle 30 s ─► dim 25 % (face SLEEPY) · +60 s ─► Z · +5 min ─► X                              │
    └─────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -444,7 +444,9 @@ Message objects:
   - The envelope is drawn once in the bubble's `LV_EVENT_DRAW_MAIN`.
 - **Gaps:** 6 px between a user bubble and its reply; 14 px between turns.
 - **Divider:** after 15 min idle, a `ui_16` `text-3` divider "— новый разговор · 15:10 —" is inserted and the model context resets. Waking after ≥ 15 min returns H to the empty state.
-- **Limit:** ≤ 20 messages live on H. Storage keeps 40 per mode (PSRAM, persisted to the `storage` partition), shown in HIST.
+- **Limit:** ≤ 20 messages live on H. Storage keeps 40 per mode in PSRAM, shown in HIST.
+- **Chat history is RAM only, on purpose.** It is never written to flash (NVS or the `storage` partition), so a reboot or power cycle empties H, HIST and the RD history. This is a privacy choice, the same as the model context (protocol §4.3): transcripts and translations of other people's speech must not outlive the session on a device that is easy to pass around, and the flash is not encrypted. It also saves flash wear. "Новый разговор" and S → История → "Очистить" clear it earlier.
+- **Scrolling:** a new message scrolls the chat to the bottom. A translator bubble or a card taller than the unfaded window (y 104–228) is scrolled so that its top sits just below the top fade, and the user scrolls down for the rest. A manual drag stops auto-scroll until the next talk press.
 
 ### 3.4 Translator face (H′)
 
@@ -524,6 +526,7 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
 **List contents** (titles ≤ 15 characters):
 
 - **M "Режим":**
+  0. *(only while the pill shows a fault)* the fault ("Ключ не принят", "Исправить" in the fault colour ›): opens its fixing screen (§3.14); back returns to M
   1. Ассистент (radio, "Отвечает на вопросы")
   2. Переводчик (radio, "RU ⇄ EN")
   3. *(translator only)* Языки ("Русский ⇄ English" ›)
@@ -536,19 +539,21 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
   10. Настройки ›
 - **L:** "Мой язык ›", "Собеседник ›", "Направление ›" (Авто / A → B / B → A).
 - **LP:** radio list of native names: Русский, English, Deutsch, Français, Español, Italiano, Português, Polski, Türkçe, Nederlands, Čeština, Svenska, Українська, Қазақша.
+  - **Firmware today** offers the protocol §4.2 codes whose scripts the fonts draw: ru, en, de, fr, es, it, pt, pl, tr, uk (names in the UI language). zh, ja, ko and ar are left out until a font or the `display_text` romanisation covers them: the sanitiser drops every glyph `ui_20` lacks, so their transcripts and translations would be empty. A stored code outside the list (from an older firmware or `set tr_lang_b zh`) falls back to en (ru when the other slot already is en), and the fallback is written back to `tr_lang_a` / `tr_lang_b`.
   - The subtitle says "только текст" when the TTS has no voice for that language. MAI-Voice has 28 locales and no uk; kk is also text-only.
   - Picking the language already in the other slot swaps the two.
+  - A new pair takes effect at once: the UI writes `tr_lang_a` / `tr_lang_b` immediately (not through the 1.5 s debounce) before it tells the app, so a chip held right after the pick uses it.
 - **S "Настройки":**
   1. Wi-Fi (SSID / "Не подключено")
   2. Телефон ("Настройка по QR")
   3. Модель ИИ (short name)
   4. Голос (voice name)
   5. Ответ голосом (Вкл/Выкл)
-  6. Динамик (Подключён/Нет)
+  6. Динамик (Подключён/Нет; saved as `speaker`. Нет also turns voice replies off, Подключён turns them on)
   7. Громкость
   8. Яркость
   9. Экран и сон ("Затемнение 30 с"): sub-list with dim after 15/30/60 s, ambient after +30/60/120 s, off after 2/5/10 min
-  10. Лицо шара (Вкл/Выкл, default Вкл)
+  10. Лицо шара (Вкл/Выкл, default Вкл; saved as `face`)
   11. Звуки (Вкл/Выкл)
   12. Язык меню (Русский/English)
   13. Провайдер (host)
@@ -583,8 +588,10 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
 - **D "О системе":**
   - Info rows: firmware and slot (ota_0/1), ESP-IDF/LVGL versions, panel ID (reg 0x04), touch chip, MAC, IP, RSSI, uptime, free SRAM/PSRAM, last latency ("загрузка 0.9 с · ответ 1.6 с · голос 0.7 с"), last error.
   - Actions:
-    - Тест микрофона (live level row)
-    - Тест динамика
+    - Микрофон (live level row, "Уровень 42 %", 100 ms, falls back 50 %/s)
+    - Тест динамика (two short tones, 0.3 s, played only when tapped; "Громкость 0 %" toast at volume 0)
+    - Динамик (Подключён/Нет, the same switch as in S)
+    - The card actions "Проверить звук" and "Диагностика" and the "Микрофон ›" fault open D centred on these rows
     - Тест касания (D.touch)
     - Показать FPS
     - Показать подсказки (resets `s_hints` to 3)
@@ -699,7 +706,7 @@ The clock redraws once a minute. The dot breathes over an 8 s cycle (redrawing a
 
 **Pill.** A persistent fault replaces the pill text with the fault in its colour, e.g. "Нет Wi-Fi ›", "Ключ не принят ›", "Нет средств ›".
 - The pill grows to ≤ 160 wide (x 100–260): 166.6 OK.
-- While a fault is active, tapping the pill opens the fixing screen instead of M.
+- Tapping the pill always opens M, also with a fault. M then starts with a fault row that opens the fixing screen. The pill is the only way to M (mode, typed question, history), and in translator mode, where both side buttons are chips, also the only way to Settings, so a persistent fault must never block it.
 
 **Orb.** ERROR for 2.4 s, then OFFLINE (hollow) or IDLE.
 
@@ -1040,7 +1047,7 @@ Cost and memory:
 
 | Field | Start layout | Accepted / limits | Secret | OK enabled when |
 |---|---|---|---|---|
-| Wi-Fi password | EN (language key disabled) | printable ASCII 0x20–0x7E, 8–63 characters | yes (reveal) | len ≥ 8, or the network is open |
+| Wi-Fi password | EN (language key disabled) | printable ASCII 0x20–0x7E, 8–63 characters | yes (reveal) | len ≥ 8, or the network is open; after "Другая сеть…" (hidden SSID) also empty, which joins it as an open network |
 | SSID ("Другая сеть") | EN | ≤ 32 **bytes** (checked in UTF-8 bytes) | no | len ≥ 1 |
 | OpenRouter key | HEX ("Aa" → EN) | `0-9a-f`, 64 after the protected `sk-or-v1-` | no (shown so it can be checked; validated by `GET /api/v1/key` on OK) | exactly 64 hex |
 | Other key / base URL / model id | EN | printable ASCII, ≤ 200 | key: yes | len ≥ 1; URL must start with `http` |
@@ -1096,9 +1103,11 @@ Cost and memory:
   - The NVS write is debounced 2 s and done in IDLE.
   - Toast "Голос выкл." / "Голос вкл.". The face closes its eyes for 300 ms ("shh") or widens them.
   - In text-only mode the orb goes THINKING → ANSWER-READY (A14) → IDLE, and TTS is never requested.
-- **No speaker** (onboarding O4 or S → Динамик; the PCM5101 cannot sense one):
+- **No speaker** (onboarding O4, S → Динамик or D → Динамик; the PCM5101 cannot sense one):
+  - The choice is saved in the `speaker` setting and applied at boot (the UI hands a stored 0 to the app when the app registers).
+  - "Нет динамика" / Нет sets text-only; "Есть динамик" / Подключён turns voice replies on (`text_only` = 0), because `text_only` defaults to 1.
   - Replies are always text and the voice button shows F6A9 with a 6 px `warning` dot.
-  - Tapping it posts the card "Динамик не подключён. Отвечаю текстом" with the action "Проверить звук".
+  - Tapping it posts the card "Динамик не подключён. Отвечаю текстом" with the action "Проверить звук" → D (speaker test and the Динамик switch).
   - Translator replay is disabled. The RD view is the way to show translations.
 
 ### 5.3 What the orb shows (with face)
@@ -1224,7 +1233,7 @@ The SSE parser must ignore `: OPENROUTER PROCESSING` comment lines and treat `fi
 1. **O1, Language.** The mini orb opens its eyes and glances left and right. Title "Привет! · Hello!". Primary "Русский", secondary "English".
 2. **O2, Network.** "Подключим Wi-Fi". Primary "С телефона (QR)" → Q (Wi-Fi + key + model on one page). Secondary "Выбрать сеть здесь" → W → K → WC.
 3. **O3, Key.** Skipped if Q delivered it. Primary "С телефона (QR)", secondary "Ввести вручную" (K hex). Subtitle "Ключ: openrouter.ai/keys".
-4. **O4, Speaker.** "Проверим звук" plays three chimes. Primary "Слышу", secondary "Нет динамика"; the latter sets `s_speaker = 0` and text-only.
+4. **O4, Speaker.** "Проверим звук" plays three chimes. Primary "Слышу", secondary "Нет динамика"; the latter sets `s_speaker = 0` and text-only, the primary turns voice replies on (`text_only` = 0). Both are saved (`speaker`).
 5. **O5, First try.** Hero orb with the hint "Скажите «Привет»". This is a real round trip; any fault is shown with its fix (§5.6). On success: face HAPPY, "Готово" → H.
 
 ### 5.8 Sleep, ambient, power

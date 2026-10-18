@@ -25,6 +25,8 @@ void ui_save_int(const char *key, int32_t v);
 void ui_save_str(const char *key, const char *v);
 // Writes everything pending now (before a restart or reset).
 void ui_save_flush(void);
+// True while a write of key is queued or running (until its done callback).
+bool ui_save_pending(const char *key);
 // Setting value as the user will see it: the pending value when there is one, else settings_get_*().
 int32_t ui_cfg_int(const char *key);
 size_t ui_cfg_str(const char *key, char *buf, size_t len);

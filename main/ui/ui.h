@@ -100,7 +100,7 @@ typedef enum {
     UI_SCR_DIR,         // translator direction
     UI_SCR_ADJUST,      // A (arg 0 = volume, 1 = brightness)
     UI_SCR_DISPLAY,     // screen and sleep timers
-    UI_SCR_ABOUT,       // D: about / diagnostics
+    UI_SCR_ABOUT,       // D: about / diagnostics (arg 1 = centre the speaker test, 2 = the microphone level)
     UI_SCR_LICENSES,
     UI_SCR_DIALOG,      // C: confirm dialog
     UI_SCR_ONBOARD,     // O1-O5 first boot (arg = step 1..5)
@@ -125,8 +125,9 @@ typedef enum {
     UI_IN_SET_MODE,     // mode sheet: i = 0 assistant, 1 translator (the UI already switched and saves "mode")
     UI_IN_TEXT,         // typed question (M -> "Написать текстом"): i = byte length, text from ui_typed_text()
     UI_IN_TR_DIR,       // translator direction: i = 0 auto, 1 A -> B, 2 B -> A (RAM only)
-    UI_IN_LANGS,        // translator languages changed (tr_lang_a / tr_lang_b saved)
-    UI_IN_SPEAKER,      // Settings -> "Динамик": i = 1 connected, 0 none (RAM only)
+    UI_IN_LANGS,        // translator languages changed (tr_lang_a / tr_lang_b write already queued, not debounced)
+    UI_IN_SPEAKER,      // O4 / S / D -> "Динамик": i = 1 connected, 0 none (the UI saves "speaker"; a stored 0
+                        // is also sent once when the app registers its callback)
     UI_IN_SLEEP,        // i = 0 awake, 1 dimmed, 2 ambient, 3 screen off (the app may stop the mic at 3)
     UI_IN_HINTS,        // D -> "Показать подсказки": i = hints left (3); the app counts them down
 } ui_input_t;
@@ -138,7 +139,7 @@ typedef enum {
     UI_OPEN_WIFI,           // offline orb (W)
     UI_OPEN_LANG_A,         // chip A tapped (LP for slot A)
     UI_OPEN_LANG_B,         // chip B tapped (LP for slot B)
-    UI_OPEN_FAULT_FIX,      // fault pill: the screen that fixes g_s_fault (W | Q | P | AI)
+    UI_OPEN_FAULT_FIX,      // M's fault row: the screen that fixes g_s_fault (W | P | KEYINFO | AI | D)
 } ui_open_t;
 
 typedef void (*ui_input_cb_t)(ui_input_t ev, int32_t i, void *ctx);

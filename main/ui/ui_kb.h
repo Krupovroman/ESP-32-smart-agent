@@ -17,6 +17,7 @@ typedef enum {
     UI_FIELD_KEY,           // other API key: printable ASCII <= 200, secret
     UI_FIELD_URL,           // base URL: printable ASCII <= 128, must start with https://
     UI_FIELD_MODEL,         // model id: printable ASCII <= 96
+    UI_FIELD_WIFI_PASS_OPT, // as UI_FIELD_WIFI_PASS, or empty: a hidden network ("Другая сеть…") may be open
     UI_FIELD__N
 } ui_field_t;
 

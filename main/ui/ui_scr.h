@@ -36,6 +36,9 @@ lv_obj_t *scr_dialog_build(uint32_t arg);
 lv_obj_t *scr_onboard_build(uint32_t arg);
 lv_obj_t *scr_ambient_build(uint32_t arg);
 
+// D (UI_SCR_ABOUT) argument: the test row to centre ("Проверить звук", "Диагностика", the mic fault pill)
+enum { UI_ABOUT_TOP, UI_ABOUT_SOUND, UI_ABOUT_MIC };
+
 // ---- Text entry K (3.8). done runs in taskLVGL: ok with the text after OK (K is already closed, so done may open
 // the next screen), or !ok with the draft after the cancel button, PWR or any other way out.
 typedef void (*ui_text_done_t)(const char *text, bool ok, void *ctx);
@@ -98,9 +101,13 @@ void ui_url_host(const char *url, char *out, size_t len);
 int ui_lang_count(void);
 const char *ui_lang_code(int i);
 const char *ui_lang_name(const char *code);
+// Replaces codes outside the table (char[4] each) with en, or ru when the other slot is en; true when changed.
+bool ui_lang_fix(char *a, char *b);
 // The pair for a subtitle: "Русский — Английский", or "RU — EN" when the names do not fit 184 px.
 void ui_lang_pair(char *out, size_t len);
 // Applies a new translator pair (UI copy, pill and chips, settings, UI_IN_LANGS).
 void ui_set_langs(const char *a, const char *b);
+// "Динамик" (O4, S, D): subject, UI_IN_SPEAKER, "speaker" setting, and voice replies off / on with it.
+void ui_set_speaker(bool on);
 // The rim busy comet, reference-counted by owner (several screens may wait at once).
 void ui_busy(bool on);

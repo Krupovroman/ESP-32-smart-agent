@@ -23,7 +23,7 @@ typedef struct {
     uint32_t tag;           // app turn that created it (UI_SET_TURN), 0 = none
 } cm_entry_t;
 
-#define CM_MAX      40      // stored per mode (HIST); H shows the last 20
+#define CM_MAX      40      // kept per mode (HIST), RAM only on purpose (ui.md 3.3: privacy); H shows the last 20
 #define CM_LIVE_MAX 20
 
 // Allocates the PSRAM rings; call once.

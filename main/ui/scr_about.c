@@ -1,6 +1,7 @@
 // D "О системе" (docs/ui.md 3.7) and the licences list: firmware and slot, OTA / rollback state, versions,
-// panel id, network, uptime, free memory, last turn; touch test, hints, restart and factory reset. The values
-// are collected in the UI worker (OTA data and NVS reads, Wi-Fi driver calls).
+// panel id, network, uptime, free memory, last turn; microphone level, speaker test and the "Динамик" switch,
+// touch test, hints, restart and factory reset. The values are collected in the UI worker (OTA data and NVS
+// reads, Wi-Fi driver calls).
 #include "ui_internal.h"
 #include "ui_list.h"
 #include "ui_scr.h"
@@ -8,6 +9,8 @@
 #include "ui_sym.h"
 #include "ui_work.h"
 #include "ai_client.h"
+#include "audio_in.h"
+#include "audio_out.h"
 #include "display.h"
 #include "net.h"
 #include "ota.h"
@@ -36,8 +39,11 @@ typedef struct {
 
 enum { I_FW, I_STATE, I_VERSIONS, I_PANEL, I_MAC, I_IP, I_WIFI, I_UPTIME, I_MEM, I_LATENCY, I_ERROR, I__N };
 
-static lv_obj_t *s_scr, *s_info[I__N];
+static lv_obj_t *s_scr, *s_info[I__N], *s_mic, *s_speaker;
 static uint32_t s_gen;
+static lv_timer_t *s_mic_timer;     // 100 ms live level while D is the active screen
+static int s_mic_shown;
+static bool s_toning;               // a beep is queued or playing
 
 static void about_job(void *arg)
 {
@@ -96,6 +102,68 @@ static void about_done(void *arg)
     }
 }
 
+// ---- Sound tests (3.7 D): live microphone level, a beep only when tapped, the "Динамик" switch
+
+static void mic_show(int v)
+{
+    char buf[32];
+    s_mic_shown = v;
+    snprintf(buf, sizeof(buf), ui_s(S_A_MIC_FMT), v);
+    ui_row_set_sub(s_mic, buf);
+}
+
+static void mic_tick(lv_timer_t *t)
+{
+    (void)t;
+    if (!s_scr || lv_screen_active() != s_scr) {
+        return;     // under the touch test or the licences
+    }
+    // falls back by 50 %/s, so a spoken word stays readable
+    int v = LV_CLAMP(0, LV_MAX(audio_in_level(), s_mic_shown - 5), 100);
+    if (v != s_mic_shown) {
+        mic_show(v);
+    }
+}
+
+static void tone_job(void *arg)
+{
+    (void)arg;
+    // two rising tones, 0.3 s at the master volume (blocks until queued, so never in taskLVGL)
+    audio_out_tone(660, 120, 40);
+    audio_out_tone(880, 180, 40);
+}
+
+static void tone_done(void *arg)
+{
+    (void)arg;
+    s_toning = false;
+}
+
+static void speaker_test(void)
+{
+    int32_t st = ui_get(g_s_state);
+    if (s_toning) {
+        return;
+    }
+    if (st == UI_ST_REC || st == UI_ST_REC_LATCHED || st == UI_ST_UPLOAD || st == UI_ST_THINK ||
+        st == UI_ST_SPEAK) {
+        ui_toast(ui_s(S_NOT_YET));      // a turn owns the speaker and the microphone
+        return;
+    }
+    if (ui_cfg_int("volume") <= 0) {
+        char buf[48];
+        snprintf(buf, sizeof(buf), "%s 0 %%", ui_s(S_VOLUME));
+        ui_toast(buf);                  // silence would look like a missing speaker
+        return;
+    }
+    s_toning = ui_work(tone_job, tone_done, NULL);
+}
+
+static void speaker_refresh(void)
+{
+    ui_row_set_sub(s_speaker, ui_s(ui_get(g_s_speaker) ? S_S_SPK_YES : S_S_SPK_NO));
+}
+
 static void restart_job(void *arg)
 {
     (void)arg;
@@ -142,6 +210,11 @@ static void act_cb(lv_event_t *e)
         ui_dialog_open(&(ui_dialog_t){ .title = ui_s(S_A_RESET_Q), .body = ui_s(S_A_RESET_B),
                                        .confirm = ui_s(S_A_RESET_BTN), .danger = true, .on_confirm = reset_confirm });
         break;
+    case 5: speaker_test(); break;
+    case 6:
+        ui_set_speaker(!ui_get(g_s_speaker));   // saved; voice replies follow it (as S -> Динамик)
+        speaker_refresh();
+        break;
     default: break;
     }
 }
@@ -159,15 +232,18 @@ static void loaded_cb(lv_event_t *e)
 static void delete_cb(lv_event_t *e)
 {
     if (lv_event_get_current_target(e) == s_scr) {
-        s_scr = NULL;
+        s_scr = s_mic = s_speaker = NULL;
         s_gen++;
         memset(s_info, 0, sizeof(s_info));
+        if (s_mic_timer) {
+            lv_timer_delete(s_mic_timer);
+            s_mic_timer = NULL;
+        }
     }
 }
 
 lv_obj_t *scr_about_build(uint32_t arg)
 {
-    (void)arg;
     static const struct {
         const char *name;
         ui_sid_t cap;
@@ -199,6 +275,17 @@ lv_obj_t *scr_about_build(uint32_t arg)
                  d->panel_id[2], d->panel_id[3], d->panel_batch);
         ui_info_set(s_info[I_PANEL], buf);
     }
+    // sound: where "Проверить звук" / "Диагностика" land (arg), the beep only plays on a tap
+    s_mic = ui_list_row(list, "a_mic", SYM_MIC, ui_s(S_A_MIC), "", UI_ROW_NONE, NULL, NULL);
+    mic_show(0);
+    s_toning = false;       // a lost done callback must not block the beep for good
+    if (!s_mic_timer) {
+        s_mic_timer = lv_timer_create(mic_tick, 100, NULL);
+    }
+    lv_obj_t *spk = ui_list_row(list, "a_spk_test", SYM_PLAY, ui_s(S_A_SPK_TEST), ui_s(S_A_SPK_SUB), UI_ROW_NONE,
+                                act_cb, (void *)5);
+    s_speaker = ui_list_row(list, "a_speaker", SYM_VOLUME, ui_s(S_S_SPEAKER), "", UI_ROW_NONE, act_cb, (void *)6);
+    speaker_refresh();
     ui_list_row(list, "a_touch", SYM_MOBILE, ui_s(S_A_TOUCH), NULL, UI_ROW_CHEVRON, act_cb, (void *)0);
     ui_list_row(list, "a_hints", SYM_INFO, ui_s(S_A_HINTS), ui_s(S_A_HINTS_SUB), UI_ROW_NONE, act_cb, (void *)1);
     ui_list_row(list, "a_licenses", SYM_INFO, ui_s(S_T_LICENSES), NULL, UI_ROW_CHEVRON, act_cb, (void *)2);
@@ -206,6 +293,9 @@ lv_obj_t *scr_about_build(uint32_t arg)
     lv_obj_t *r = ui_list_row(list, "a_reset", SYM_TRASH, ui_s(S_A_RESET), NULL, UI_ROW_NONE, act_cb, (void *)4);
     ui_row_set_danger(r);
     ui_list_refresh(list);
+    if (arg == UI_ABOUT_SOUND || arg == UI_ABOUT_MIC) {
+        ui_list_focus(arg == UI_ABOUT_SOUND ? spk : s_mic);
+    }
     return s_scr;
 }
 

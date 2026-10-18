@@ -154,14 +154,7 @@ static void choose_lang(int lang)
 
 static void set_speaker(bool on)
 {
-    ui_set(g_s_speaker, on ? 1 : 0);
-    ui_emit(UI_IN_SPEAKER, on ? 1 : 0);
-    if (!on && !ui_get(g_s_text_only)) {
-        // no speaker: replies are text only (5.2)
-        ui_set(g_s_text_only, 1);
-        ui_emit(UI_IN_TEXT_ONLY, 1);
-        ui_save_int("text_only", 1);
-    }
+    ui_set_speaker(on);     // saved; "Есть динамик" also turns voice replies on, "Нет динамика" off (5.2)
     s_speaker_done = true;
     ui_nav_replace(UI_SCR_ONBOARD, 5);
 }

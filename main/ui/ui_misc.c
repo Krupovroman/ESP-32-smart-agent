@@ -47,15 +47,16 @@ void ui_url_host(const char *url, char *out, size_t len)
     ui_str_copy(out, len, tmp);
 }
 
-// Protocol 4.2: code, Russian UI name, English UI name
+// Protocol 4.2: code, Russian UI name, English UI name. Only scripts ui_16/20/28 can draw (Latin, Latin
+// Extended-A, Cyrillic: ui.md 1.3): zh/ja/ko/ar stay out until a font or a romanised line covers them, because the
+// sanitiser would erase their transcripts and translations
 static const struct {
     const char *code, *ru, *en;
 } s_langs[] = {
     { "ru", "Русский", "Russian" }, { "en", "Английский", "English" }, { "de", "Немецкий", "German" },
     { "fr", "Французский", "French" }, { "es", "Испанский", "Spanish" }, { "it", "Итальянский", "Italian" },
     { "pt", "Португальский", "Portuguese" }, { "pl", "Польский", "Polish" }, { "tr", "Турецкий", "Turkish" },
-    { "uk", "Украинский", "Ukrainian" }, { "zh", "Китайский", "Chinese" }, { "ja", "Японский", "Japanese" },
-    { "ko", "Корейский", "Korean" }, { "ar", "Арабский", "Arabic" },
+    { "uk", "Украинский", "Ukrainian" },
 };
 
 int ui_lang_count(void)
@@ -66,6 +67,31 @@ int ui_lang_count(void)
 const char *ui_lang_code(int i)
 {
     return i >= 0 && i < ui_lang_count() ? s_langs[i].code : "";
+}
+
+static bool lang_offered(const char *code)
+{
+    for (int i = 0; i < ui_lang_count(); i++) {
+        if (code && !strcmp(code, s_langs[i].code)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ui_lang_fix(char *a, char *b)
+{
+    // a stored code the table no longer offers falls back to en (ru when the other slot already is en)
+    bool changed = false;
+    if (!lang_offered(a)) {
+        snprintf(a, 4, "%s", strcmp(b, "en") ? "en" : "ru");
+        changed = true;
+    }
+    if (!lang_offered(b) || !strcmp(a, b)) {
+        snprintf(b, 4, "%s", strcmp(a, "en") ? "en" : "ru");
+        changed = true;
+    }
+    return changed;
 }
 
 const char *ui_lang_name(const char *code)
@@ -106,7 +132,25 @@ void ui_set_langs(const char *a, const char *b)
     scr_home_langs_changed();
     ui_save_str("tr_lang_a", g_lang_a);
     ui_save_str("tr_lang_b", g_lang_b);
+    // the app and the AI client read the pair from settings: write it now (queued ahead of anything the next turn
+    // does), not 1.5 s later or after a busy turn, so a chip held right after the pick already uses it
+    ui_save_flush();
     ui_emit(UI_IN_LANGS, 0);
+}
+
+void ui_set_speaker(bool on)
+{
+    ui_set(g_s_speaker, on ? 1 : 0);
+    ui_emit(UI_IN_SPEAKER, on ? 1 : 0);
+    ui_save_int("speaker", on ? 1 : 0);
+    // voice replies follow the answer (5.2): none = text only, and a speaker turns them on, because text_only
+    // defaults to 1 for boards without one
+    int32_t text_only = on ? 0 : 1;
+    if (ui_get(g_s_text_only) != text_only) {
+        ui_set(g_s_text_only, text_only);
+        ui_emit(UI_IN_TEXT_ONLY, text_only);
+        ui_save_int("text_only", text_only);
+    }
 }
 
 static int s_busy;

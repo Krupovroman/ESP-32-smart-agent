@@ -326,6 +326,11 @@ void ui_save_flush(void)
     flush_now();
 }
 
+bool ui_save_pending(const char *key)
+{
+    return pend_find(key) != NULL;
+}
+
 int32_t ui_cfg_int(const char *key)
 {
     pend_t *p = pend_find(key);

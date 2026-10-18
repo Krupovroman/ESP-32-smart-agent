@@ -116,26 +116,20 @@ static void row_cb(lv_event_t *e)
         refresh();
         break;
     }
-    case R_SPEAKER: {
-        int32_t to = !ui_get(g_s_speaker);
-        ui_set(g_s_speaker, to);
-        ui_emit(UI_IN_SPEAKER, to);
-        if (!to && !ui_get(g_s_text_only)) {
-            // no speaker: replies are text only (5.2), as onboarding O4 does
-            ui_set(g_s_text_only, 1);
-            ui_emit(UI_IN_TEXT_ONLY, 1);
-            ui_save_int("text_only", 1);
-        }
+    case R_SPEAKER:
+        ui_set_speaker(!ui_get(g_s_speaker));   // saved; voice replies follow it, as onboarding O4 does
         refresh();
         break;
-    }
     case R_VOLUME: ui_nav_push(UI_SCR_ADJUST, 0); break;
     case R_BRIGHT: ui_nav_push(UI_SCR_ADJUST, 1); break;
     case R_DISPLAY: ui_nav_push(UI_SCR_DISPLAY, 0); break;
-    case R_FACE:
-        ui_set(g_s_face, !ui_get(g_s_face));
+    case R_FACE: {
+        int32_t to = !ui_get(g_s_face);
+        ui_set(g_s_face, to);
+        ui_save_int("face", to);    // read back by ui_init
         refresh();
         break;
+    }
     case R_UILANG: {
         int to = !ui_str_lang();
         ui_save_str("ui_lang", to ? "en" : "ru");
