@@ -65,7 +65,8 @@ typedef enum {
     BOARD_BAT_SKIP,         // speaker playing or a turn's Wi-Fi lately: the cell sags, the reading is not taken (the
                             // model keeps its last good value; USB presence is still refreshed)
     BOARD_BAT_LOADED,       // a load ended lately: the cell still recovers; the reading sets the level only
-    BOARD_BAT_SETTLED,      // no load step for 60 s: the reading may also start the wall-charger trend
+    BOARD_BAT_SETTLED,      // no load step for 60 s: the reading counts for USB_DRAIN and FULL; after 2 min more of
+                            // them it may also start the wall-charger trend (a long session's recovery takes minutes)
 } board_bat_q_t;
 
 typedef struct {

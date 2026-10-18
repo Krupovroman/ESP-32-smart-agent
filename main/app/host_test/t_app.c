@@ -1101,6 +1101,17 @@ static void t_power(void)
     CHECK(g_bat_last_q == BOARD_BAT_SKIP);
     step(2 * BAT_POLL_MS);
     CHECK(g_bat_last_q == BOARD_BAT_LOADED);
+    // ... except near empty on battery: the low-battery toasts must not wait for the end of a long conversation
+    g_bat_mv = 3430;                    // 14 %
+    g_out_busy = true;
+    step(BAT_POLL_MS + 100);
+    CHECK(g_bat_last_q == BOARD_BAT_LOADED);
+    g_bat_chg = true;                   // on a charger the sag is not taken, whatever the level
+    step(BAT_POLL_MS + 100);
+    CHECK(g_bat_last_q == BOARD_BAT_SKIP);
+    g_out_busy = g_bat_chg = false;
+    g_bat_mv = 3900;
+    step(BAT_SKIP_AUDIO_MS + BAT_POLL_MS);
     // on USB but draining: the UI gets the DRAIN flag (not CHARGING), and the low-battery toasts stay armed
     int nt = ui_count(UI_TOAST);
     g_bat_mv = 3430;                    // 14 %

@@ -21,7 +21,9 @@ static const char *TAG = "battery";
 #define DIVIDER     3
 
 #define MEDIAN_N        5           // readings in the median (25 s at the app's 5 s period, longer when some are skipped)
-#define TREND_N         24          // 2 min of settled filtered readings
+#define TREND_N         24          // 2 min of calm filtered readings
+#define TREND_CALM_MS   120000      // calm = settled and this long after the last reading that was not (3 min after
+                                    // a load in all): a cell recovers upwards for minutes after a long session
 #define TREND_UP_MV     15          // a rise this big within 2 min below FULL_MV: a charger without a USB host
 #define TREND_FALL_MV   10          // a fall this big within 2 min ends it
 #define PEAK_DROP_MV    25          // ... and so does a settled reading this far below the highest one since (unplugged)
@@ -48,19 +50,25 @@ static const char *TAG = "battery";
 // mv - offset on external power (CHARGING, and USB_DRAIN too: its readings are taken between loads, when the port
 // charges again), else the display would drop 5-10 points (more in the flat 3.80-3.95 V part) on unplugging.
 // The offset is the step the plug-in itself made: the first readings on USB against the last settled level on
-// battery (at most 10 min old), measured again once the polarisation has built up (the first settled reading 60 s
-// after plugging in); it differs per port (a weak one barely raises the cell, a 1 A one more than a PC port).
-// Without such a reference (booted on USB, a wall charger found by its trend) CHG_OFS_MV is used: a PC port's
-// ~0.35 A net into the cell x ~0.15 ohm plus the polarisation, an estimate for this board (docs/hardware.md 10 says
-// how to check it). It tapers to 0 at 4.20 V, where the CV phase lets the current fall off.
+// battery (at most 10 min old, and taken once the last charge's polarisation had relaxed, RELAX_MS after
+// unplugging), measured again once the polarisation has built up (the first settled reading 60 s after plugging in,
+// or whatever was measured by 3 min: later readings would count the charge gained as offset); it differs per port
+// (a weak one barely raises the cell, a 1 A one more than a PC port). A wall charger is measured against the calm
+// reading its trend's rise started from (2 min before it was found, before the step). Plugged in again within RELAX_MS
+// of unplugging, the last session's offset is kept (the cell still reads high from it: no fresh reference).
+// Without a reference (booted on USB) CHG_OFS_MV is used: a PC port's ~0.35 A net into the cell x ~0.15 ohm plus
+// the polarisation, an estimate for this board (docs/hardware.md 10 says how to check it). The offset is not
+// tapered towards 4.20 V: in the CV phase the reading stops rising while the current falls, so the reading cannot
+// tell how far the taper should go, and the charger keeps feeding the board's own load there anyway; the CC phase
+// up to 4.20 V needs the whole offset (else the percent runs ahead and drops on unplugging). FULL shows 100.
 #define CHG_OFS_MV      60
-#define CHG_OFS_MAX_MV  120         // a 1 A charger: ~0.8 A x 0.15 ohm plus the polarisation
-#define CHG_OFS_FROM_MV 4100        // the full offset up to this reading, linearly less above it ...
-#define CHG_OFS_TOP_MV  4200        // ... and none from here
+#define CHG_OFS_MAX_MV  200         // a 1-1.5 A charger: ~1.2 A x 0.15 ohm plus the polarisation (the references are
+                                    // taken before the step, so a measured step only errs on the small side)
 #define OFS_SETTLE_MS   60000
+#define OFS_WINDOW_MS   180000      // ... measured only this long after plugging in (then kept as it is)
 #define OFS_REF_MAX_MS  600000
-#define PCT_AGAINST     5           // on battery the percent rises only by this much at once (a cell recovering
-                                    // from a load reads higher for a while)
+#define PCT_AGAINST     5           // on battery the percent rises only by this much at once and on a calm reading
+                                    // (a cell recovering from a load reads higher for a while)
 #define NOBAT_SPREAD_MV 250         // settled readings this far apart: no cell, a charger output swinging on its own
 #define NOBAT_CLEAR_MV  80          // ... back to a cell once they agree within this
 
@@ -80,6 +88,8 @@ static int s_raw[MEDIAN_N], s_raw_n, s_raw_i;
 static int s_hist[TREND_N], s_hist_n, s_hist_i;
 static bool s_trend, s_nobat;
 static int s_peak;
+static int s_trend_base = -1;       // the reading the trend's rise was measured from (-1 = none)
+static uint32_t s_busy_t;           // the last reading that was not SETTLED (skipped or loaded), 0 = none yet
 static win_t s_win[WIN_N];
 static int s_win_n, s_win_i;
 static int s_trough;                // lowest filtered reading since USB_DRAIN began
@@ -87,9 +97,12 @@ static int s_level_peak = -1;       // highest settled level (the window's "now"
 static uint32_t s_power_t;          // the current power state began (ms since boot)
 static int s_bat_ref = -1;          // last settled level on battery, and when
 static uint32_t s_bat_ref_t;
+static uint32_t s_unplug_t;         // the BATTERY state began after external power (0 = not since boot)
+static uint32_t s_plug_t;           // ... and it ended (plugged in, or a wall charger found)
 static int s_ofs_ref = -1;          // ... as the reference of this charging session's offset (-1 = none)
 static int s_ofs = CHG_OFS_MV;      // charging offset in use
 static bool s_ofs_final;            // measured after the polarisation built up
+static bool s_ofs_usb;              // ... on a USB host (else a wall charger)
 static bool s_started, s_usb_last;
 static unsigned s_skipped;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -196,9 +209,10 @@ static int median(int *spread)
 }
 
 // Charging without a USB host (a wall charger): the filtered voltage rising. A load step looks the same (the cell
-// recovers after a turn's speech, the backlight goes off), so only settled readings (the app idle and the screen
-// unchanged for a while, app_io.c) enter the 2 min history and may start it. Every reading may end it.
-static void trend(int mv, bool settled)
+// recovers after a turn's speech, for minutes after a long session, and when the backlight goes off), so only calm
+// readings (settled, app_io.c, and TREND_CALM_MS after the last one that was not) enter the 2 min history and may
+// start it. Every reading may end it.
+static void trend(int mv, bool settled, bool calm)
 {
     if (!settled) {
         if (s_trend && s_peak - mv >= PEAK_DROP_BUSY_MV) {
@@ -206,18 +220,21 @@ static void trend(int mv, bool settled)
         }
         return;
     }
-    // the settled reading 2 min (24 settled readings) ago is the one about to be overwritten
-    int old = s_hist_n == TREND_N ? s_hist[s_hist_i] : -1;
-    s_hist[s_hist_i] = mv;
-    s_hist_i = (s_hist_i + 1) % TREND_N;
-    if (s_hist_n < TREND_N) {
-        s_hist_n++;
-    }
-    if (old > 0 && !s_trend && mv - old >= TREND_UP_MV && mv < FULL_MV) {
-        s_trend = true;
-        s_peak = mv;
-    } else if (old > 0 && s_trend && old - mv >= TREND_FALL_MV) {
-        s_trend = false;
+    if (calm) {
+        // the calm reading 2 min (24 calm readings) ago is the one about to be overwritten
+        int old = s_hist_n == TREND_N ? s_hist[s_hist_i] : -1;
+        s_hist[s_hist_i] = mv;
+        s_hist_i = (s_hist_i + 1) % TREND_N;
+        if (s_hist_n < TREND_N) {
+            s_hist_n++;
+        }
+        if (old > 0 && !s_trend && mv - old >= TREND_UP_MV && mv < FULL_MV) {
+            s_trend = true;
+            s_peak = mv;
+            s_trend_base = old;         // the charging offset's reference (offset_track)
+        } else if (old > 0 && s_trend && old - mv >= TREND_FALL_MV) {
+            s_trend = false;
+        }
     }
     if (s_trend && mv > s_peak) {
         s_peak = mv;
@@ -284,38 +301,48 @@ static void regime_reset(void)
     win_clear();
 }
 
-static int chg_offset(int mv)
-{
-    if (mv <= CHG_OFS_FROM_MV) {
-        return s_ofs;
-    }
-    if (mv >= CHG_OFS_TOP_MV) {
-        return 0;
-    }
-    return s_ofs * (CHG_OFS_TOP_MV - mv) / (CHG_OFS_TOP_MV - CHG_OFS_FROM_MV);
-}
-
 // The charging offset of this session (see CHG_OFS_MV): after the power state is decided for a reading
 static void offset_track(uint32_t now, board_power_t was, board_power_t pw, int mv, bool fresh, bool settled)
 {
     if (pw == BOARD_PWR_BATTERY) {
-        if (fresh && settled && !s_nobat) {
+        if (was != BOARD_PWR_BATTERY) {
+            s_unplug_t = now ? now : 1;
+        }
+        // a reference once the last charge's polarisation has relaxed (right after unplugging the cell still reads
+        // high: a step measured from there would come out too small)
+        if (fresh && settled && !s_nobat && (!s_unplug_t || now - s_unplug_t >= RELAX_MS)) {
             s_bat_ref = mv;
             s_bat_ref_t = now;
         }
         return;
     }
     if (was == BOARD_PWR_BATTERY) {
-        // plugged in (or a wall charger found): the step is measured against the level just before
+        // plugged in (or a wall charger found)
+        if (s_ofs_final && s_ofs_usb == s_usb_last && s_unplug_t && now - s_unplug_t < RELAX_MS) {
+            return;     // back on the same kind of source before the cell relaxed: the last offset still holds
+        }
         s_ofs = CHG_OFS_MV;
         s_ofs_final = false;
-        s_ofs_ref = s_bat_ref > 0 && now - s_bat_ref_t <= OFS_REF_MAX_MS && s_usb_last ? s_bat_ref : -1;
+        s_ofs_usb = s_usb_last;
+        s_plug_t = now;
+        if (s_usb_last) {
+            // the step is measured against the level just before
+            s_ofs_ref = s_bat_ref > 0 && now - s_bat_ref_t <= OFS_REF_MAX_MS ? s_bat_ref : -1;
+        } else {
+            // a wall charger: against the calm reading its rise was measured from (before the step; when that is
+            // older, the drain since only makes the step come out smaller)
+            s_ofs_ref = s_trend_base;
+        }
     }
     if (pw == BOARD_PWR_CHARGING && fresh && s_ofs_ref > 0 && !s_ofs_final) {
+        if (now - s_plug_t > OFS_WINDOW_MS) {
+            s_ofs_final = true;     // no settled reading in time (the screen or turns kept loading the cell): later
+            return;                 // readings would count the charge since as offset
+        }
         int step = mv - s_ofs_ref;
         s_ofs = step < 0 ? 0 : step > CHG_OFS_MAX_MV ? CHG_OFS_MAX_MV : step;   // the ohmic step at once, the
                                                                                 // polarisation within a minute
-        s_ofs_final = settled && now - s_power_t >= OFS_SETTLE_MS;
+        s_ofs_final = settled && now - s_plug_t >= OFS_SETTLE_MS;
     }
 }
 
@@ -380,11 +407,15 @@ bool board_battery_sample(board_bat_q_t q)
     }
     s_started = true;
     s_usb_last = usb;
+    if (q != BOARD_BAT_SETTLED) {
+        s_busy_t = now ? now : 1;       // the calm clock of the wall-charger trend
+    }
     // s_model is written only here (this task): no lock needed to read it
     const board_bat_t *p = &s_model;
     board_bat_t m = *p;             // a skipped reading keeps the level
     m.usb = usb;
     bool fresh = false, settled = q == BOARD_BAT_SETTLED;
+    bool calm = settled && (!s_busy_t || now - s_busy_t >= TREND_CALM_MS);
     if (q == BOARD_BAT_SKIP && p->mv >= 0) {
         // the speaker or a turn's Wi-Fi draws more than the port gives: the cell sags for the moment, and the
         // reading would show a drop the settled cell does not have (the first reading is taken whatever the load,
@@ -406,7 +437,7 @@ bool board_battery_sample(board_bat_q_t q)
                 // on its own (no indicator rather than a false "charging")
                 s_nobat = spread > NOBAT_SPREAD_MV || (s_nobat && spread >= NOBAT_CLEAR_MV);
             }
-            trend(mv, settled && !s_nobat);
+            trend(mv, settled && !s_nobat, calm && !s_nobat);
             win_push(now, mv, settled);
             m.mv = mv;
             fresh = true;
@@ -437,16 +468,16 @@ bool board_battery_sample(board_bat_q_t q)
         m.pct = 100;
     } else if (fresh || p->pct < 0) {
         bool fed = m.power == BOARD_PWR_CHARGING || m.power == BOARD_PWR_USB_DRAIN;
-        int pct = board_battery_pct(fed ? m.mv - chg_offset(m.mv) : m.mv);
+        int pct = board_battery_pct(fed ? m.mv - s_ofs : m.mv);
         int was = p->pct;
         if (pct >= 0 && was >= 0) {
             if (m.power == BOARD_PWR_CHARGING) {
                 pct = pct < was ? was : pct;        // never goes down while charging (a fall shows as USB_DRAIN)
             } else if (m.power == BOARD_PWR_USB_DRAIN || now - s_power_t < RELAX_MS) {
                 pct = pct > was ? was : pct;        // nor up while the port cannot keep up, or right after unplugging
-            } else if (pct > was && pct - was < PCT_AGAINST) {
-                pct = was;                          // on battery: a recovering cell
-            }
+            } else if (pct > was && (pct - was < PCT_AGAINST || !calm)) {
+                pct = was;                          // on battery: a recovering cell (for minutes after a session),
+            }                                       // or a wall charger the trend has not seen yet
         }
         m.pct = pct;
     }

@@ -80,12 +80,15 @@ EXIOn = TCA9554 port P(n-1). Output register defaults to 0xFF.
     4083 → 4086 mV over 40 s (slowly charging); with the speaker loud (speech boost, volume 100) the board takes more
     than the port gives and the cell sags and drains. The firmware sees external power from the USB host
     (`usb_serial_jtag_is_connected()`, start-of-frame packets; a plain wall charger sends none) or from the voltage
-    rising at rest (+15 mV in 2 min below 4.15 V), and decides charging / full / USB-but-draining from the settled
-    voltage's direction (docs/ui.md 3.16): readings are not taken while the speaker plays (and 15 s after), during a
-    turn (and 20 s after) or right after a backlight step; USB_DRAIN = the settled level 20 mV below 3 min ago (or
-    30 mV below its peak since charging began). While charging the cell reads higher than at rest (charge current x
-    internal resistance + polarisation): the model takes the plug-in step as that offset (60 mV when it has no
-    reference, e.g. booted on USB) and removes it before the discharge curve. To check the offset on a port: `bat`
-    on battery after 2 min idle (`mv`), plug in, `bat` after 2 min (`ofs` = the measured step), charge 10 min, unplug,
-    `bat` after 3 min: the percent should not have jumped. What the divider reads with USB and no cell is not
-    measured yet (the model hides the indicator if the readings swing > 250 mV).
+    rising at rest (+15 mV in 2 min below 4.15 V, counted from 3 min after any load: a cell recovers upwards for
+    minutes after a long session), and decides charging / full / USB-but-draining from the settled voltage's
+    direction (docs/ui.md 3.16): readings are not taken while the speaker plays (and 15 s after), during a turn (and
+    20 s after) or right after a backlight step (on battery at <= 20 % they are, for the low-battery toasts);
+    USB_DRAIN = the settled level 20 mV below 3 min ago (or 30 mV below its peak since charging began). While
+    charging the cell reads higher than at rest (charge current x internal resistance + polarisation): the model
+    takes the plug-in step as that offset (60 mV when it has no reference, e.g. booted on USB) and removes all of it
+    before the discharge curve, up to 4.20 V. To check the offset on a port: `bat` on battery after 3 min idle
+    (`mv`), plug in, `bat` after 2 min (`ofs` = the measured step), charge 10 min, unplug, `bat` after 3 min: the
+    percent should not have jumped. Not measured yet: what the divider reads in the charger's CV phase (FULL needs
+    >= 4150 mV holding; a unit that reads lower never shows FULL and stays at about 90 % while charging), and what
+    it reads with USB and no cell (the model hides the indicator if the readings swing > 250 mV).

@@ -355,7 +355,12 @@ static board_bat_q_t bat_quality(uint32_t now)
 {
     if (audio_out_busy() || within(now, s_audio_t, BAT_SKIP_AUDIO_MS) || !app_quiet() ||
         within(now, s_turn_t, BAT_SKIP_TURN_MS) || within(now, s_screen_t, BAT_SKIP_SCREEN_MS)) {
-        return BOARD_BAT_SKIP;
+        // near empty on battery the warnings below must not wait for the end of a long conversation: the reading
+        // is taken under the load (it reads low, which errs on the safe side)
+        board_bat_t b;
+        board_battery_state(&b);
+        bool low = !b.sim && b.power == BOARD_PWR_BATTERY && b.pct >= 0 && b.pct <= BAT_REARM_PCT;
+        return low ? BOARD_BAT_LOADED : BOARD_BAT_SKIP;
     }
     return now - s_load_t >= BAT_SETTLE_MS ? BOARD_BAT_SETTLED : BOARD_BAT_LOADED;
 }
