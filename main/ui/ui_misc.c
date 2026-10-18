@@ -138,6 +138,21 @@ void ui_set_langs(const char *a, const char *b)
     ui_emit(UI_IN_LANGS, 0);
 }
 
+void ui_set_speaker(bool on)
+{
+    ui_set(g_s_speaker, on ? 1 : 0);
+    ui_emit(UI_IN_SPEAKER, on ? 1 : 0);
+    ui_save_int("speaker", on ? 1 : 0);
+    // voice replies follow the answer (5.2): none = text only, and a speaker turns them on, because text_only
+    // defaults to 1 for boards without one
+    int32_t text_only = on ? 0 : 1;
+    if (ui_get(g_s_text_only) != text_only) {
+        ui_set(g_s_text_only, text_only);
+        ui_emit(UI_IN_TEXT_ONLY, text_only);
+        ui_save_int("text_only", text_only);
+    }
+}
+
 static int s_busy;
 
 void ui_busy(bool on)

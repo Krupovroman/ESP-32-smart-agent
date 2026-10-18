@@ -168,6 +168,10 @@ void ui_set_input_cb(ui_input_cb_t cb, void *ctx)
 {
     s_in_ctx = ctx;
     s_in_cb = cb;
+    if (cb && !settings_get_int("speaker")) {
+        // the app keeps "no speaker" in RAM: hand it the stored choice once (the callback only posts)
+        cb(UI_IN_SPEAKER, 0, ctx);
+    }
 }
 
 bool ui_emit(ui_input_t ev, int32_t i)
@@ -664,6 +668,8 @@ esp_err_t ui_init(lv_display_t *disp)
     }
     int32_t mode = settings_get_int("mode");
     int32_t text_only = settings_get_int("text_only");
+    int32_t speaker = settings_get_int("speaker");
+    int32_t face = settings_get_int("face");
 
     if (!lvgl_port_lock(0)) {
         return ESP_ERR_TIMEOUT;
@@ -677,16 +683,15 @@ esp_err_t ui_init(lv_display_t *disp)
     g_s_state = ui_subj_int(UI_ST_IDLE, 0, UI_ST__N - 1);
     g_s_mode = ui_subj_int(mode ? 1 : 0, 0, 1);
     g_s_text_only = ui_subj_int(text_only ? 1 : 0, 0, 1);
-    // speakers are now connected on the bench board; the app posts UI_SET_SPEAKER 0 once a stored
-    // "no speaker" flag exists (onboarding O4 / S -> Динамик)
-    g_s_speaker = ui_subj_int(1, 0, 1);
+    // "speaker" is saved by O4 / S -> Динамик / D (ui_set_speaker); the app gets it in ui_set_input_cb
+    g_s_speaker = ui_subj_int(speaker ? 1 : 0, 0, 1);
     g_s_fault = ui_subj_int(UI_FAULT_NONE, 0, UI_FAULT__N - 1);
     g_s_net = ui_subj_int(UI_NET_CONNECTING, 0, UI_NET_FAILED);
     g_s_upload = ui_subj_int(0, 0, 100);
     g_s_hints = ui_subj_int(3, 0, 3);
     g_s_portal = ui_subj_int(0, 0, 255);
     g_s_tr_dir = ui_subj_int(0, 0, 2);
-    g_s_face = ui_subj_int(1, 0, 1);            // "Лицо шара: Вкл" by default (ui.md open question 3)
+    g_s_face = ui_subj_int(face ? 1 : 0, 0, 1);  // "Лицо шара", saved by S (default Вкл, ui.md open question 3)
 
     lv_obj_t *home = scr_home_create();
     s_nav[0] = (nav_t){ .scr = home, .scroller = NULL, .id = UI_SCR_HOME };

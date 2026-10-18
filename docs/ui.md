@@ -546,11 +546,11 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
   3. Модель ИИ (short name)
   4. Голос (voice name)
   5. Ответ голосом (Вкл/Выкл)
-  6. Динамик (Подключён/Нет)
+  6. Динамик (Подключён/Нет; saved as `speaker`. Нет also turns voice replies off, Подключён turns them on)
   7. Громкость
   8. Яркость
   9. Экран и сон ("Затемнение 30 с"): sub-list with dim after 15/30/60 s, ambient after +30/60/120 s, off after 2/5/10 min
-  10. Лицо шара (Вкл/Выкл, default Вкл)
+  10. Лицо шара (Вкл/Выкл, default Вкл; saved as `face`)
   11. Звуки (Вкл/Выкл)
   12. Язык меню (Русский/English)
   13. Провайдер (host)
@@ -1098,7 +1098,9 @@ Cost and memory:
   - The NVS write is debounced 2 s and done in IDLE.
   - Toast "Голос выкл." / "Голос вкл.". The face closes its eyes for 300 ms ("shh") or widens them.
   - In text-only mode the orb goes THINKING → ANSWER-READY (A14) → IDLE, and TTS is never requested.
-- **No speaker** (onboarding O4 or S → Динамик; the PCM5101 cannot sense one):
+- **No speaker** (onboarding O4, S → Динамик or D → Динамик; the PCM5101 cannot sense one):
+  - The choice is saved in the `speaker` setting and applied at boot (the UI hands a stored 0 to the app when the app registers).
+  - "Нет динамика" / Нет sets text-only; "Есть динамик" / Подключён turns voice replies on (`text_only` = 0), because `text_only` defaults to 1.
   - Replies are always text and the voice button shows F6A9 with a 6 px `warning` dot.
   - Tapping it posts the card "Динамик не подключён. Отвечаю текстом" with the action "Проверить звук".
   - Translator replay is disabled. The RD view is the way to show translations.
@@ -1226,7 +1228,7 @@ The SSE parser must ignore `: OPENROUTER PROCESSING` comment lines and treat `fi
 1. **O1, Language.** The mini orb opens its eyes and glances left and right. Title "Привет! · Hello!". Primary "Русский", secondary "English".
 2. **O2, Network.** "Подключим Wi-Fi". Primary "С телефона (QR)" → Q (Wi-Fi + key + model on one page). Secondary "Выбрать сеть здесь" → W → K → WC.
 3. **O3, Key.** Skipped if Q delivered it. Primary "С телефона (QR)", secondary "Ввести вручную" (K hex). Subtitle "Ключ: openrouter.ai/keys".
-4. **O4, Speaker.** "Проверим звук" plays three chimes. Primary "Слышу", secondary "Нет динамика"; the latter sets `s_speaker = 0` and text-only.
+4. **O4, Speaker.** "Проверим звук" plays three chimes. Primary "Слышу", secondary "Нет динамика"; the latter sets `s_speaker = 0` and text-only, the primary turns voice replies on (`text_only` = 0). Both are saved (`speaker`).
 5. **O5, First try.** Hero orb with the hint "Скажите «Привет»". This is a real round trip; any fault is shown with its fix (§5.6). On success: face HAPPY, "Готово" → H.
 
 ### 5.8 Sleep, ambient, power

@@ -446,6 +446,8 @@ void      settings_on_change(void (*cb)(const char *key, void *ctx), void *ctx);
 | `ui_lang` | str 4 | `ru` | `ru` / `en` |
 | `mode` | u8 | 0 | 0 assistant, 1 translator |
 | `text_only` | u8 | 1 | 1 = no TTS requests (no speaker yet) |
+| `speaker` | u8 | 1 | 0 = "no speaker" (O4 / S / D → Динамик), written by the UI; a stored 0 reaches the app as `UI_IN_SPEAKER` 0 when it registers its UI callback |
+| `face` | u8 | 1 | "Лицо шара" (UI only) |
 | `volume` | u8 | 60 | 0–100; 0 behaves like `text_only` for TTS |
 | `bright` | u8 | 80 | 5–100 |
 | `dim_s` | u16 | 60 | 0 = never |

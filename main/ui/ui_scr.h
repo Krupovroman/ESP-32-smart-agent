@@ -104,5 +104,7 @@ bool ui_lang_fix(char *a, char *b);
 void ui_lang_pair(char *out, size_t len);
 // Applies a new translator pair (UI copy, pill and chips, settings, UI_IN_LANGS).
 void ui_set_langs(const char *a, const char *b);
+// "Динамик" (O4, S, D): subject, UI_IN_SPEAKER, "speaker" setting, and voice replies off / on with it.
+void ui_set_speaker(bool on);
 // The rim busy comet, reference-counted by owner (several screens may wait at once).
 void ui_busy(bool on);

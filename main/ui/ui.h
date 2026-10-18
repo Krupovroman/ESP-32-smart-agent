@@ -123,7 +123,8 @@ typedef enum {
     UI_IN_TEXT,         // typed question (M -> "Написать текстом"): i = byte length, text from ui_typed_text()
     UI_IN_TR_DIR,       // translator direction: i = 0 auto, 1 A -> B, 2 B -> A (RAM only)
     UI_IN_LANGS,        // translator languages changed (tr_lang_a / tr_lang_b write already queued, not debounced)
-    UI_IN_SPEAKER,      // Settings -> "Динамик": i = 1 connected, 0 none (RAM only)
+    UI_IN_SPEAKER,      // O4 / S / D -> "Динамик": i = 1 connected, 0 none (the UI saves "speaker"; a stored 0
+                        // is also sent once when the app registers its callback)
     UI_IN_SLEEP,        // i = 0 awake, 1 dimmed, 2 ambient, 3 screen off (the app may stop the mic at 3)
 } ui_input_t;
 

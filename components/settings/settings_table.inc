@@ -3,6 +3,8 @@
 S("ui_lang",     ST_STR, 0,   "ru",                                0, 0,     3,    0)
 S("mode",        ST_U8,  0,   NULL,                                0, 1,     0,    0)
 S("text_only",   ST_U8,  1,   NULL,                                0, 1,     0,    0)
+S("speaker",     ST_U8,  1,   NULL,                                0, 1,     0,    0)   // O4 / S / D "Динамик"
+S("face",        ST_U8,  1,   NULL,                                0, 1,     0,    0)   // S "Лицо шара"
 S("volume",      ST_U8,  60,  NULL,                                0, 100,   0,    0)
 S("bright",      ST_U8,  80,  NULL,                                5, 100,   0,    0)
 S("dim_s",       ST_U16, 60,  NULL,                                0, 3600,  0,    0)
