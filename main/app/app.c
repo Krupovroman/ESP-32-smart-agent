@@ -1438,6 +1438,12 @@ static void on_ui(ui_input_t ev, int32_t arg)
         publish();
         break;
     case UI_IN_SLEEP: app_io_ui_sleep((int)arg); break;
+    case UI_IN_HINTS:
+        // D -> "Показать подсказки": the app's counter is the one that counts down (ui.md 5.9)
+        s_a.hints = arg < 0 ? 0 : arg > 3 ? 3 : (int)arg;
+        ui_i(UI_SET_HINTS, s_a.hints);
+        publish();
+        break;
     default: break;
     }
 }

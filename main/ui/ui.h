@@ -127,6 +127,7 @@ typedef enum {
     UI_IN_LANGS,        // translator languages changed (tr_lang_a / tr_lang_b saved)
     UI_IN_SPEAKER,      // Settings -> "Динамик": i = 1 connected, 0 none (RAM only)
     UI_IN_SLEEP,        // i = 0 awake, 1 dimmed, 2 ambient, 3 screen off (the app may stop the mic at 3)
+    UI_IN_HINTS,        // D -> "Показать подсказки": i = hints left (3); the app counts them down
 } ui_input_t;
 
 // Screens the UI opens on its own (pill, settings button, chips, offline orb, fault pill, card actions)
