@@ -134,6 +134,7 @@ static const str_def_t s_tab[S__N] = {
     E(S_M_ASSISTANT_SUB, "Отвечает на вопросы", "Answers questions", SLOT_ROW_SUB),
     E(S_M_TYPE, "Задать вопрос", "Type a question", SLOT_ROW),     // "Написать текстом" is 182 px
     E(S_M_NEW_SUB, "Забыть контекст", "Forget the context", SLOT_ROW_SUB),
+    E(S_M_FIX, "Исправить", "Fix it", SLOT_ROW_SUB),       // under the fault row at the top of M
     E(S_VOLUME, "Громкость", "Volume", SLOT_ROW),
     E(S_BRIGHT, "Яркость", "Brightness", SLOT_ROW),
     E(S_VOICE_REPLY, "Озвучка", "Voice", SLOT_ROW),

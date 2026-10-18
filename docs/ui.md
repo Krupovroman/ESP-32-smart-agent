@@ -524,6 +524,7 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
 **List contents** (titles ≤ 15 characters):
 
 - **M "Режим":**
+  0. *(only while the pill shows a fault)* the fault ("Ключ не принят", "Исправить" in the fault colour ›): opens its fixing screen (§3.14); back returns to M
   1. Ассистент (radio, "Отвечает на вопросы")
   2. Переводчик (radio, "RU ⇄ EN")
   3. *(translator only)* Языки ("Русский ⇄ English" ›)
@@ -703,7 +704,7 @@ The clock redraws once a minute. The dot breathes over an 8 s cycle (redrawing a
 
 **Pill.** A persistent fault replaces the pill text with the fault in its colour, e.g. "Нет Wi-Fi ›", "Ключ не принят ›", "Нет средств ›".
 - The pill grows to ≤ 160 wide (x 100–260): 166.6 OK.
-- While a fault is active, tapping the pill opens the fixing screen instead of M.
+- Tapping the pill always opens M, also with a fault. M then starts with a fault row that opens the fixing screen. The pill is the only way to M (mode, typed question, history), and in translator mode, where both side buttons are chips, also the only way to Settings, so a persistent fault must never block it.
 
 **Orb.** ERROR for 2.4 s, then OFFLINE (hollow) or IDLE.
 

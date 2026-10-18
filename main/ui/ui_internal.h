@@ -40,6 +40,11 @@ const char *ui_screen_name(ui_screen_t id);
 void ui_open(ui_open_t what);
 // Card action stadium: opens the fixing screen; false when the action belongs to the app (retry).
 bool ui_open_card(int32_t card);
+// Persistent fault the pill shows (3.14): g_s_fault, or UI_FAULT_NO_WIFI while offline; its pill / M-row text;
+// warning (yellow) rather than error (coral).
+int32_t ui_fault_shown(void);
+const char *ui_fault_text(int32_t f);
+bool ui_fault_warning(int32_t f);
 // Switches the UI language now: H is rebuilt (its chat survives) and the stack is dropped.
 void ui_apply_lang(int lang);
 // Stores the typed question for ui_typed_text() and emits UI_IN_TEXT; false without an app.

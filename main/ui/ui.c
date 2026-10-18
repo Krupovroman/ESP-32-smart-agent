@@ -330,6 +330,26 @@ static void nav_goto(int32_t id, const char *arg)
     }
 }
 
+int32_t ui_fault_shown(void)
+{
+    int32_t f = ui_get(g_s_fault);
+    int32_t n = ui_get(g_s_net);
+    bool offline = n == UI_NET_OFF || n == UI_NET_FAILED || ui_get(g_s_state) == UI_ST_OFFLINE;
+    return f == UI_FAULT_NONE && offline ? UI_FAULT_NO_WIFI : f;
+}
+
+const char *ui_fault_text(int32_t f)
+{
+    static const ui_sid_t ids[UI_FAULT__N] = { S__N, S_F_NO_WIFI, S_F_BAD_KEY, S_F_NO_CREDIT, S_F_LOW_CREDIT,
+                                               S_F_REGION, S_F_MODEL, S_F_MODEL_EXP, S_F_MIC };
+    return f > UI_FAULT_NONE && f < UI_FAULT__N ? ui_s(ids[f]) : "";
+}
+
+bool ui_fault_warning(int32_t f)
+{
+    return f == UI_FAULT_NO_CREDIT || f == UI_FAULT_LOW_CREDIT || f == UI_FAULT_MODEL_EXPIRING;
+}
+
 void ui_open(ui_open_t what)
 {
     switch (what) {
