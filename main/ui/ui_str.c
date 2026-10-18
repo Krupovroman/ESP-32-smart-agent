@@ -136,7 +136,7 @@ static const str_def_t s_tab[S__N] = {
     E(S_M_NEW_SUB, "Забыть контекст", "Forget the context", SLOT_ROW_SUB),
     E(S_VOLUME, "Громкость", "Volume", SLOT_ROW),
     E(S_BRIGHT, "Яркость", "Brightness", SLOT_ROW),
-    E(S_VOICE_REPLY, "Ответ голосом", "Voice replies", SLOT_ROW),
+    E(S_VOICE_REPLY, "Озвучка", "Voice", SLOT_ROW),
     E(S_VOICE_TR, "Перевод вслух", "Speak aloud", SLOT_ROW),
 
     E(S_S_NOT_CONNECTED, "Не подключено", "Not connected", SLOT_ROW_SUB),
@@ -216,7 +216,7 @@ static const str_def_t s_tab[S__N] = {
     E(S_A_ROLLBACK, "есть откат", "can roll back", SLOT_ROW),
     E(S_A_PANEL, "Панель", "Panel", SLOT_ROW_SUB),
     E(S_A_UPTIME, "Время работы", "Uptime", SLOT_ROW_SUB),
-    E(S_A_MEM, "Свободно: SRAM " TXT_MIDDOT " PSRAM", "Free: SRAM " TXT_MIDDOT " PSRAM", SLOT_ROW_SUB),
+    E(S_A_MEM, "Память: SRAM " TXT_MIDDOT " PSRAM", "Free: SRAM " TXT_MIDDOT " PSRAM", SLOT_ROW_SUB),
     E(S_A_LATENCY, "Последний ответ", "Last reply", SLOT_ROW_SUB),
     E(S_A_LAT_FMT, TXT_UP "%s с " TXT_MIDDOT " ответ %s с", TXT_UP "%s s " TXT_MIDDOT " reply %s s", SLOT_NONE),
     E(S_A_LAST_ERR, "Последняя ошибка", "Last error", SLOT_ROW_SUB),

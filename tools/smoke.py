@@ -116,8 +116,9 @@ def main():
             time.sleep(1.5)
             st, _ = try_cmd(d, "app state")
             d.cmd("mic src mic")
-            check("noise-only clip is not sent to the AI", st is not None and "unheard" in out_text(st).lower(),
-                  out_text(st)[:160] if st else "")
+            gate = (st or {}).get("gate", {})
+            check("noise-only clip is not sent to the AI", gate.get("verdict") in ("no_speech", "too_short", "silent")
+                  and (st or {}).get("ai", {}).get("upload_ms", 1) == 0, f"gate={gate}")
 
     info2 = d.cmd("info")
     check("internal heap min-ever >= 20 KB after the run", info2.get("int", {}).get("min", 0) >= 20 * 1024,
