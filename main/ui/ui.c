@@ -347,7 +347,7 @@ void ui_open(ui_open_t what)
         case UI_FAULT_LOW_CREDIT: ui_nav_push(UI_SCR_KEYINFO, 0); break;
         case UI_FAULT_MODEL:
         case UI_FAULT_MODEL_EXPIRING: ui_nav_push(UI_SCR_MODELS, 0); break;
-        case UI_FAULT_MIC: ui_nav_push(UI_SCR_ABOUT, 0); break;
+        case UI_FAULT_MIC: ui_nav_push(UI_SCR_ABOUT, UI_ABOUT_MIC); break;
         default: ui_nav_push(UI_SCR_WIFI, 0); break;
         }
         break;
@@ -363,8 +363,9 @@ bool ui_open_card(int32_t card)
     case UI_CARD_REGION: ui_nav_push(UI_SCR_PROVIDER, 0); return true;
     case UI_CARD_NO_CREDIT: ui_nav_push(UI_SCR_KEYINFO, 0); return true;
     case UI_CARD_MODEL: ui_nav_push(UI_SCR_MODELS, 0); return true;
-    case UI_CARD_MIC:
-    case UI_CARD_NO_SPEAKER: ui_nav_push(UI_SCR_ABOUT, 0); return true;
+    // D, centred on its microphone level / speaker test and "Динамик" switch
+    case UI_CARD_MIC: ui_nav_push(UI_SCR_ABOUT, UI_ABOUT_MIC); return true;
+    case UI_CARD_NO_SPEAKER: ui_nav_push(UI_SCR_ABOUT, UI_ABOUT_SOUND); return true;
     default: return false;      // retry cards: the app re-sends the cached clip
     }
 }

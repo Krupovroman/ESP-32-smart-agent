@@ -36,6 +36,9 @@ lv_obj_t *scr_dialog_build(uint32_t arg);
 lv_obj_t *scr_onboard_build(uint32_t arg);
 lv_obj_t *scr_ambient_build(uint32_t arg);
 
+// D (UI_SCR_ABOUT) argument: the test row to centre ("Проверить звук", "Диагностика", the mic fault pill)
+enum { UI_ABOUT_TOP, UI_ABOUT_SOUND, UI_ABOUT_MIC };
+
 // ---- Text entry K (3.8). done runs in taskLVGL: ok with the text after OK (K is already closed, so done may open
 // the next screen), or !ok with the draft after the cancel button, PWR or any other way out.
 typedef void (*ui_text_done_t)(const char *text, bool ok, void *ctx);

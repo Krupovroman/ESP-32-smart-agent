@@ -585,8 +585,10 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
 - **D "О системе":**
   - Info rows: firmware and slot (ota_0/1), ESP-IDF/LVGL versions, panel ID (reg 0x04), touch chip, MAC, IP, RSSI, uptime, free SRAM/PSRAM, last latency ("загрузка 0.9 с · ответ 1.6 с · голос 0.7 с"), last error.
   - Actions:
-    - Тест микрофона (live level row)
-    - Тест динамика
+    - Микрофон (live level row, "Уровень 42 %", 100 ms, falls back 50 %/s)
+    - Тест динамика (two short tones, 0.3 s, played only when tapped; "Громкость 0 %" toast at volume 0)
+    - Динамик (Подключён/Нет, the same switch as in S)
+    - The card actions "Проверить звук" and "Диагностика" and the "Микрофон ›" fault open D centred on these rows
     - Тест касания (D.touch)
     - Показать FPS
     - Показать подсказки (resets `s_hints` to 3)
@@ -1102,7 +1104,7 @@ Cost and memory:
   - The choice is saved in the `speaker` setting and applied at boot (the UI hands a stored 0 to the app when the app registers).
   - "Нет динамика" / Нет sets text-only; "Есть динамик" / Подключён turns voice replies on (`text_only` = 0), because `text_only` defaults to 1.
   - Replies are always text and the voice button shows F6A9 with a 6 px `warning` dot.
-  - Tapping it posts the card "Динамик не подключён. Отвечаю текстом" with the action "Проверить звук".
+  - Tapping it posts the card "Динамик не подключён. Отвечаю текстом" with the action "Проверить звук" → D (speaker test and the Динамик switch).
   - Translator replay is disabled. The RD view is the way to show translations.
 
 ### 5.3 What the orb shows (with face)

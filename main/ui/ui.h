@@ -98,7 +98,7 @@ typedef enum {
     UI_SCR_DIR,         // translator direction
     UI_SCR_ADJUST,      // A (arg 0 = volume, 1 = brightness)
     UI_SCR_DISPLAY,     // screen and sleep timers
-    UI_SCR_ABOUT,       // D: about / diagnostics
+    UI_SCR_ABOUT,       // D: about / diagnostics (arg 1 = centre the speaker test, 2 = the microphone level)
     UI_SCR_LICENSES,
     UI_SCR_DIALOG,      // C: confirm dialog
     UI_SCR_ONBOARD,     // O1-O5 first boot (arg = step 1..5)

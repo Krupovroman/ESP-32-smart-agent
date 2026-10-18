@@ -221,6 +221,11 @@ static const str_def_t s_tab[S__N] = {
     E(S_A_LAT_FMT, TXT_UP "%s с " TXT_MIDDOT " ответ %s с", TXT_UP "%s s " TXT_MIDDOT " reply %s s", SLOT_NONE),
     E(S_A_LAST_ERR, "Последняя ошибка", "Last error", SLOT_ROW_SUB),
     E(S_A_NONE, TXT_EMDASH, TXT_EMDASH, SLOT_ROW),
+    // "Тест микрофона" is 164 px in ui_20, at the row title limit
+    E(S_A_MIC, "Микрофон", "Microphone", SLOT_ROW),
+    E(S_A_MIC_FMT, "Уровень %d %%", "Level %d %%", SLOT_ROW_SUB),
+    E(S_A_SPK_TEST, "Тест динамика", "Speaker test", SLOT_ROW),
+    E(S_A_SPK_SUB, "Нажмите " TXT_EMDASH " сигнал", "Tap for a beep", SLOT_ROW_SUB),
     E(S_A_TOUCH, "Тест касания", "Touch test", SLOT_ROW),
     E(S_A_HINTS, "Подсказки", "Hints", SLOT_ROW),
     E(S_A_HINTS_SUB, "Показать снова", "Show again", SLOT_ROW_SUB),
