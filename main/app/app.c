@@ -39,6 +39,7 @@ static const char *TAG = "app";
 #define KEEP_CLIP_MAX   (640 * 1024)    // PSRAM for their copied clips (20 s of 16 kHz audio)
 #define KEEP_PSRAM_MIN  (1024 * 1024)   // a copy never takes free PSRAM below this (selftest gate)
 #define PORTAL_WAIT_MS  5000        // BOOT on Q: the portal stops once Q is deleted (UI worker)
+#define DIVIDER_EARLY_MS 3000       // the AI client measures idle when its request starts, a bit later
 
 typedef enum { TURN_NONE, TURN_VOICE, TURN_TEXT, TURN_REPLAY } turn_kind_t;
 
@@ -106,7 +107,7 @@ typedef struct {
     int hints;
     uint32_t card_key;              // error id + body of the last card (0 = none), for the repeat rule
     uint32_t last_card_t;
-    uint32_t last_end_t;
+    uint32_t last_end_t;            // last answered exchange (the AI client's history clock)
     bool chat_used[2];
     // timings of the last turn
     uint32_t t_rec_ms, t_upload_ms, t_ai_ms, t_ttfb_ms, t_total_ms;
@@ -604,7 +605,6 @@ static void finish_turn(ui_state_t ui)
     if (s_a.t_submit) {
         s_a.t_total_ms = now - s_a.t_submit;
     }
-    s_a.last_end_t = now;
     turn_reset();
     ui_state(ui);
     set_state(APP_IDLE);
@@ -635,13 +635,15 @@ static void cancel_turn(void)
     turn_reset();
 }
 
-// ui.md 3.3: after the idle time the model context resets and a divider marks the new conversation
+// ui.md 3.3: after the idle time the model context resets and a divider marks the new conversation. One idle
+// rule with the AI client's history: counted from the last answered exchange, decided at submit and a little
+// early, so the app clears the history (with the divider) before the AI client would do it silently.
 static void maybe_divider(void)
 {
     int32_t idle_min = app_cfg_int("hist_idle_min", 10);
     uint32_t now = app_now_ms();
     if (!s_a.chat_used[s_a.mode] || !s_a.last_end_t || idle_min <= 0 ||
-        now - s_a.last_end_t < (uint32_t)idle_min * 60000u) {
+        now - s_a.last_end_t + DIVIDER_EARLY_MS < (uint32_t)idle_min * 60000u) {
         return;
     }
     char hhmm[8] = "";
@@ -682,7 +684,6 @@ static void start_recording(int8_t side, uint32_t preroll_ms)
         return;
     }
     preroll_ms = preroll_cap(preroll_ms);
-    maybe_divider();
     begin_turn(TURN_VOICE);
     s_a.t_submit = 0;
     ai_client_prewarm();            // the TLS handshake (2-3 s on the first request) runs while the user speaks
@@ -742,6 +743,7 @@ static bool submit_clip(const int16_t *pcm, size_t samples, uint32_t rate, int8_
     if (s_a.mode == 1) {
         src = side == UI_SIDE_A ? a : side == UI_SIDE_B ? b : NULL;
     }
+    maybe_divider();                // before the request: the AI client must not see the old history
     ai_request_t q = {
         .turn = s_a.turn, .mode = s_a.mode ? AI_MODE_TRANSLATOR : AI_MODE_ASSISTANT,
         .pcm = pcm, .samples = samples, .rate = rate, .src_lang = src,
@@ -827,7 +829,6 @@ static void send_recording(const char *why)
         if (!too_short) {
             ui_i(UI_SET_MOOD, UI_MOOD_SAD);
         }
-        s_a.last_end_t = app_now_ms();
         turn_reset();
         ui_state(UI_ST_IDLE);
         set_state(APP_IDLE);
@@ -1030,6 +1031,9 @@ static void on_result(app_result_t *r)
         clear_fault();              // the key, credit and model work again
     }
     s_a.card_key = 0;               // the same error after an answer is news again
+    if (s_a.mode == 1 || (!r->truncated && r->transcript[0] && r->text[0])) {
+        s_a.last_end_t = s_a.t_result;  // the AI client keeps this exchange in its history (hist_add) now
+    }
     int side = UI_SIDE_AUTO;
     if (s_a.mode == 1) {
         char a[8], b[8];
@@ -1160,7 +1164,6 @@ static bool cancel_any(bool notify)
         if (notify) {
             ui_status_id(S_ST_CANCELLED);
         }
-        s_a.last_end_t = app_now_ms();
         ui_state(UI_ST_IDLE);
         set_state(APP_IDLE);
         return true;
