@@ -479,6 +479,64 @@ static const err_map_t ERR_MAP[] = {
     { "MIC", UI_CARD_MIC, UI_FAULT_MIC, false },
 };
 
+// English texts of the protocol §9.1 rows (orerr.c has the Russian ones) for ui_lang = en
+static const struct {
+    const char *id, *en;
+} ERR_EN[] = {
+    { "N0", "No Wi-Fi. Connect in Settings." },
+    { "N1", "Server not found. Check the internet." },
+    { "N2", "Server unavailable. Try again later." },
+    { "N3", "Server certificate error. The firmware needs an update." },
+    { "N4", "Couldn't set up a secure connection." },
+    { "N5", "The connection dropped while sending. Try again." },
+    { "N6", "No reply from the AI. Try again." },
+    { "N7", "The reply was cut off. Try again." },
+    { "N8", "That took too long. Try again." },
+    { "400", "The server rejected the request. Check the model and voice in Settings." },
+    { "400ctx", "The conversation is too long, starting a new one." },
+    { "401", "Invalid API key. Enter it again in Settings." },
+    { "402w", "Wait a couple of seconds" TXT_ELLIPSIS },
+    { "402k", "This key's limit is used up. Raise it on openrouter.ai." },
+    { "402", "Out of OpenRouter credit. Top up your balance." },
+    { "403b", "The key's budget is used up." },
+    { "403r", "The model isn't available in your region. Choose another provider's model." },
+    { "403m", "The request was blocked by a safety filter." },
+    { "403", "Access denied (403)." },
+    { "404", "Model not found, or it lacks voice and JSON support. Choose another." },
+    { "408", "The server gave up waiting for the request. Try again." },
+    { "413", "The recording is too long. Speak shorter." },
+    { "422", "The server couldn't process the request." },
+    { "429", "Too many requests. Try again in a minute." },
+    { "500", "OpenRouter server error. Try again." },
+    { "502", "The model is temporarily unavailable. Try later." },
+    { "503", "No servers available for the model. Try later." },
+    { "504", "The model didn't answer in time. Try again." },
+    { "529", "The service is overloaded. Try later." },
+    { "P2", "Couldn't read the AI's reply." },
+    { "P4", "Didn't catch that. Please repeat." },
+    { "P5", "The AI refused to answer this request." },
+    { "T1", "Voice unavailable" },
+    { "T2", "This voice returns an unsupported format." },
+    { "T3", "Voice isn't available in this language" },
+    { "K0", "No API key. Enter one in Settings." },
+    { "M0", "Not enough memory." },
+    { "AB", "Cancelled." },
+};
+
+// User-facing text of an error in the UI language
+static const char *err_msg(const or_err_t *e)
+{
+    if (!ui_str_lang()) {
+        return e->msg_ru;
+    }
+    for (size_t i = 0; i < sizeof(ERR_EN) / sizeof(ERR_EN[0]); i++) {
+        if (!strcmp(ERR_EN[i].id, e->id)) {
+            return ERR_EN[i].en;
+        }
+    }
+    return "The server returned an error.";     // the generic "HTTP" row (H4xx / H5xx)
+}
+
 static void show_error(const char *id, const char *msg)
 {
     int card = UI_CARD_GENERIC, fault = -1;
@@ -521,7 +579,7 @@ static void show_local_error(const char *id)
 {
     or_err_t e;
     or_err_local(&e, id);
-    show_error(e.id, e.msg_ru);
+    show_error(e.id, err_msg(&e));
 }
 
 static ready_t ready(void)
@@ -1109,7 +1167,7 @@ static void on_tts_error(const or_err_t *e)
     } else if (s_a.mode == 1 && s_a.reply) {
         ui_post_text(UI_BOT_MSG, 1, s_a.reply);    // the translation bubble gets its note
     } else {
-        ui_post_text(UI_TOAST, 0, e->msg_ru);
+        ui_post_text(UI_TOAST, 0, err_msg(e));
     }
     audio_out_stop();
     finish_turn(UI_ST_IDLE);
@@ -1493,7 +1551,7 @@ static void handle(app_evt_t *e)
             const or_err_t *er = e->p;
             devcon_event("ai", "\"turn\":%u,\"phase\":\"error\",\"id\":\"%s\"", (unsigned)e->turn, er->id);
             cancel_turn();
-            show_error(er->id, er->msg_ru);
+            show_error(er->id, err_msg(er));
         }
         break;
     case EV_AI_RELEASED:
