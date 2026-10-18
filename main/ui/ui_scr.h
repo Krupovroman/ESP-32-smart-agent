@@ -101,7 +101,10 @@ void ui_url_host(const char *url, char *out, size_t len);
 int ui_lang_count(void);
 const char *ui_lang_code(int i);
 const char *ui_lang_name(const char *code);
-// Replaces codes outside the table (char[4] each) with en, or ru when the other slot is en; true when changed.
+// False for zh / ja / ko while the CJK font pack is missing or bad (ui_font.h): listed, but not selectable.
+bool ui_lang_available(int i);
+// Replaces codes outside the table, or not available (char[4] each), with en, or ru when the other slot is en;
+// true when changed.
 bool ui_lang_fix(char *a, char *b);
 // The pair for a subtitle: "Русский — Английский", or "RU — EN" when the names do not fit 184 px.
 void ui_lang_pair(char *out, size_t len);

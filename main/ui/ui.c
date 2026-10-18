@@ -2,6 +2,7 @@
 // navigation stack, physical-button hooks, and the inspection helpers used by the dev console.
 #include "ui.h"
 #include "ui_chat.h"
+#include "ui_font.h"
 #include "ui_geom.h"
 #include "ui_internal.h"
 #include "ui_list.h"
@@ -692,6 +693,7 @@ esp_err_t ui_init(lv_display_t *disp)
     ESP_RETURN_ON_FALSE(s_typed_mx, ESP_ERR_NO_MEM, TAG, "mutex");
     ui_work_init();
     cm_init();
+    ui_font_probe();        // the CJK pack decides whether zh / ja / ko are offered (ui_lang_fix below)
 
     // first frame already matches the saved settings; the app keeps them in sync through ui_post()
     char buf[12];
@@ -723,6 +725,7 @@ esp_err_t ui_init(lv_display_t *disp)
 #if LV_USE_PERF_MONITOR
     lv_sysmon_performance_pause(NULL);      // log mode keeps running otherwise; "perf on" resumes it
 #endif
+    ui_font_init();         // before the first label: font draw buffers move to PSRAM
     indev_setup();
     ui_theme_init();
     g_s_state = ui_subj_int(UI_ST_IDLE, 0, UI_ST__N - 1);

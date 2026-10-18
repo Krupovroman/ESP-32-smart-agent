@@ -239,14 +239,20 @@ static size_t sentences(const doc_t *d, span_t *out, size_t max)
     return n;
 }
 
-// Cuts [a, b) longer than limit at the last , ; : — – in [a+150, a+limit], else the last space.
+static bool is_cjk_pause(uint32_t c)
+{
+    return c == 0xFF0C || c == 0x3001 || c == 0xFF1B || c == 0xFF1A;     // ， 、 ； ：
+}
+
+// Cuts [a, b) longer than limit at the last , ; : — – (or a CJK comma, which has no space after it) in
+// [a+150, a+limit], else the last space.
 static size_t cut_point(const doc_t *d, size_t a, size_t b, size_t limit)
 {
     size_t hi = a + limit < b ? a + limit : b;
     size_t lo = a + (CUT_FROM < limit ? CUT_FROM : limit / 2);
     for (size_t c = hi; c > lo; c--) {
         uint32_t x = d->cp[c - 1];
-        if (x == ',' || x == ';' || x == ':') {
+        if (x == ',' || x == ';' || x == ':' || is_cjk_pause(x)) {
             return c;
         }
         if ((x == 0x2014 || x == 0x2013) && c >= 2 && is_ws(d->cp[c - 2]) && c < b && is_ws(d->cp[c])) {

@@ -63,12 +63,25 @@ function Invoke-FontConv([string]$name, [int]$size, [string]$ttf, [string]$range
     if ($rc -ne 0) { throw "lv_font_conv failed for $name" }
 }
 
+# ui_16 / ui_20 / ui_28 fall back to the CJK fonts of the storage pack (main/ui/ui_font.c, ui.md 1.3): the
+# generated descriptor gets ".fallback = &ui_cjk_<size>" and the extern declaration of that object
+function Add-CjkFallback([string]$name) {
+    $file = Join-Path $out "$name.c"
+    $px = $name.Substring(3)
+    $c = [IO.File]::ReadAllText($file)
+    $decl = "/*CJK fallback of the storage font pack (main/ui/ui_font.c); added by tools/mkfonts.ps1*/`nextern lv_font_t ui_cjk_$px;`n`n"
+    $c = $c.Replace('/*Initialize a public general font descriptor*/', $decl + '/*Initialize a public general font descriptor*/')
+    $c = $c.Replace('.fallback = NULL,', ".fallback = &ui_cjk_$px,")
+    [IO.File]::WriteAllText($file, $c)
+}
+
 Push-Location $root
 try {
     Invoke-FontConv 'ui_16' 16 $medium $R_TEXT $I_16
     Invoke-FontConv 'ui_20' 20 $medium $R_TEXT $I_FULL
     Invoke-FontConv 'ui_28' 28 $semi $R_TITLE $I_28
     Invoke-FontConv 'ui_48' 48 $semi $R_DIG ''
+    foreach ($n in @('ui_16', 'ui_20', 'ui_28')) { Add-CjkFallback $n }
 } finally {
     Pop-Location
 }

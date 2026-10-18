@@ -36,6 +36,7 @@
 | Прошивка сломана, но USB виден | `.\tools\flash.ps1` (esptool сам сбросит чип), или `python tools\dev.py reboot dl` → прошивать |
 | Ничего не отвечает / boot loop | Режим загрузки: **держать BOOT, нажать и отпустить RESET, отпустить BOOT**. Появится ROM USB-Serial-JTAG (VID 0x303A). Затем `.\tools\flash.ps1 -NoWait` или `.\tools\restore.ps1 -Tag <t>` |
 | Вернуть заводскую прошивку | `.\tools\restore.ps1 -Factory` (проверяет SHA-256, спрашивает YES). Заменяет таблицу разделов и NVS. Обратно: полный `.\tools\flash.ps1` и заново секреты |
+| Пропали китайский / японский / корейский («ZH · нет шрифта»: заводской образ, `erase-flash`, новая плата) | `.\tools\flash.ps1 -Storage` — пакет шрифтов `build\storage.bin` в раздел `storage` (OTA и `restore.ps1 -Tag` его не трогают) |
 
 ## Как работает автоматический откат
 

@@ -1,6 +1,7 @@
 // "ui" dev-console command: drives the UI without the app (docs/ui.md 7.9). Commands post through the
 // UI queue and wait until it is pumped, so scripted sequences see the result of the previous line.
 #include "ui.h"
+#include "ui_font.h"
 #include "ui_internal.h"
 #include "ui_kb.h"
 #include "ui_list.h"
@@ -709,4 +710,5 @@ void ui_console_register(void)
 {
     devconsole_register("ui", "UI test hooks: ui screens | goto | kb | keys | state | mood | user | bot | tree | tap ...",
                         cmd_ui);
+    ui_font_console_register();     // "font": CJK font pack status and render bench
 }

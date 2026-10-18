@@ -58,6 +58,27 @@ static void t_text(void)
     for (int i = 0; i < 60; i++) strcat(nop, "слово ");
     show_split(nop);
     show_split("Hello. Mr. Smith went to Washington. He said: \"Hi!\" Then he left. 你好。我很好！谢谢？");
+    {
+        // one Chinese sentence of 450 characters: cut after a full-width comma, never inside a run of hanzi
+        char zh[2000] = "";
+        for (int i = 0; i < 50; i++) strcat(zh, "今天天气很好我们");
+        strcat(zh, "，");
+        for (int i = 0; i < 6; i++) strcat(zh, "去公园散步吧好");
+        strcat(zh, "。");
+        char **c3;
+        int n3 = tts_split(zh, &c3);
+        size_t l0 = n3 > 0 ? utf8_cp_len(c3[0]) : 0;
+        CHECK(n3 >= 2 && l0 == 200);        // first chunk <= 200: no comma in 150..200, hard cut at 200
+        tts_split_free(c3, n3);
+        char zh2[2000] = "";
+        for (int i = 0; i < 20; i++) strcat(zh2, "今天天气很好我们");
+        strcat(zh2, "，");
+        for (int i = 0; i < 10; i++) strcat(zh2, "去公园散步吧好");
+        strcat(zh2, "。");
+        n3 = tts_split(zh2, &c3);
+        CHECK(n3 == 2 && utf8_cp_len(c3[0]) == 161 && !strcmp(c3[0] + strlen(c3[0]) - 3, "，"));
+        tts_split_free(c3, n3);
+    }
     char **ch;
     CHECK(tts_split("", &ch) == 0);
     CHECK(tts_split("... !!! ???", &ch) == 0);

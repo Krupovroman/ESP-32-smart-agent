@@ -207,7 +207,26 @@ Build notes:
 
 `LV_USE_FONT_PLACEHOLDER 1` stays on, so anything missed shows as a box.
 
-For translator targets in scripts we do not ship (zh/ja/ko/ar/hi/th), the schema adds a `display_text` romanisation. The audio still uses the real language.
+**CJK fallback fonts (Chinese, Japanese, Korean).** The Inter fonts stay Latin / Cyrillic. Hanzi, kana and Hangul come from a font in the `storage` partition (architecture 1.0), drawn by LVGL's Tiny TTF (stb_truetype) and chained behind the Inter fonts as `font->fallback`, so every label in `ui_16` / `ui_20` / `ui_28` draws mixed text with no code change, the sanitiser and the `ui_28` glyph check included (`main/ui/ui_font.c`).
+
+| | |
+|---|---|
+| Source | Noto Sans CJK SC **Medium** 2.004 (SIL OFL 1.1, `assets/fonts/NotoSansCJK-OFL.txt`); one weight for all three sizes (Inter is Medium at 16 / 20 px and SemiBold at 28 px). Japanese kanji are drawn in this font's Simplified Chinese glyph forms (no `locl`): a few, such as 直 角 骨, look Chinese to a Japanese reader |
+| File | `assets/fonts/cjk/RACJK-Medium.ttf` ("RA CJK"), made by `tools/mkcjk.py`: glyph subset, CFF converted to TrueType quadratics (stb reads a glyf box from its header; a CFF glyph costs about 1.8x more per new glyph, measured on the PC), no hints, no layout tables, no vertical metrics. 5,043,260 bytes |
+| Glyph set (21,803) | GB 2312 complete (6763 hanzi, both levels, plus its punctuation, full-width forms, kana, pinyin, Greek); JIS X 0208 non-kanji rows and both kanji levels; all 11,172 Hangul syllables and the compatibility jamo; CJK symbols and punctuation, half-width and full-width forms. Code points Inter has are left out. `--jis1-only --ksx1001-only` gives 11,041 glyphs and 2.7 MB |
+| Sizes | 16, 20 and 28 px em: `ui_cjk_16/20/28` behind `ui_16/20/28` (`ui_48` stays digits only). A glyph is placed on the Inter line's baseline; ideographs reach 0.88 em above and 0.12 em below it, which stays inside the 20 / 26 / 36 px Inter lines. The host test checks every glyph of the pack at each size: all hanzi, kana, Hangul and CJK punctuation fit; only pinyin ǘ ǚ ǜ, Å and full-width ＾ ｀ reach 1 px over at 16 px, and the combining tone marks U+302A-302D and vertical repeat marks U+3031-3032 stick out |
+| Glyph cache | per size 224 / 224 / 160 entries (LRU). A8 bitmaps in PSRAM through LVGL's font draw-buffer handlers (≈ 0.3 / 0.45 / 0.85 KB each, ≤ 310 KB in all); cache nodes and stb's scratch in the LVGL pool (≈ 260 B per entry, ≤ 160 KB). Kerning off, no kerning cache |
+| Coverage | `cjk.cov` in the pack is a 64 Kbit map of the font's cmap: only covered code points reach Tiny TTF, so emoji or Arabic cost one bit test |
+| Without the pack | the fallbacks find nothing: the UI is as before, and the translator lists zh / ja / ko disabled with "ZH · нет шрифта" (`S_LP_NO_FONT_FMT`); a stored CJK pair falls back to en / ru at boot (`ui_lang_fix`) |
+| Start-up | the header is checked in `ui_init` (< 1 ms); the CRC-32 of the 5 MB runs in a one-shot `cjk_crc` task (core 0, idle priority, so it only uses time core 0 has spare and never slows app_main's boot; 4 KB stack in PSRAM; estimated 0.3-0.6 s of CPU and DIO flash reads, `font status` shows `verify_ms`), which then creates the three Tiny TTF fonts under the LVGL lock. CJK text that arrives before that is dropped by the sanitiser, as without the pack. zh / ja / ko stay offered while the check runs (so a stored CJK pair survives the boot); a pack that fails the check, or fonts that cannot be created, are never read, and the translator pair then falls back as without the pack (`ui_lang_fix`, stored like a pick, in taskLVGL) |
+
+Rendering cost: a glyph that is not cached is rasterised once per size (stb_truetype on the flash-mapped outlines); after that it is a cache hit, as cheap as an Inter glyph. On the PC the subset rasterises a 28 px hanzi in 8.3 µs (16 px: 6.6 µs); ESP32-S3 at 240 MHz without SIMD is estimated 60-120x slower, ≈ 0.5-1.0 ms per new 28 px glyph, so a 40-hanzi translation at 28 px appears in ≈ 25-50 ms plus the normal frame. `font bench` measures it on the board (cold descriptor and bitmap per size, and a 252 px `ui_28` label of 40 new hanzi from creation to the end of the frame that shows it).
+
+Line breaking: LVGL 9.5 breaks between any two hanzi or kana (`lv_text_is_a_word`), and at spaces for Korean. There is no kinsoku (a `。` may start a line).
+
+Host test: `main/ui/host_test/build.ps1` (MSVC, after one ESP-IDF build) compiles LVGL 9.5, the Inter fonts, `ui_font.c`, `ui_str.c` and `components/assets` for the PC, runs them over `build/storage.bin`, without a pack and with a corrupted one (46 checks: states, the translator-pair fallback of a corrupted pack, sanitiser, the `ui_28` rule, the 7.9 string-fit test of every RU / EN string, every CJK glyph inside the Inter line box, glyphs in the frame buffer, `font status` / `font bench`), and writes 2x PNG screenshots of mixed text, translator bubbles and the reader to `main/ui/host_test/out/`. It is the same LVGL software renderer, fonts and pack as on the board, so the pictures show the glyphs the panel will get; the timings it prints are PC timings.
+
+For Arabic (and other scripts without a font) the translator offers no language; the `display_text` romanisation of the schema is not used.
 
 **Typed strings in the prompt:**
 - The assistant system prompt asks for "plain text, no markdown, no emoji, ≤ 60 words".
@@ -484,7 +503,7 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
 - Language A: left-aligned with a 3 px LEFT border in `lang-a`. Language B: right-aligned with a 3 px RIGHT border in `lang-b` (`border_side`).
 - Line 1: `ui_16`, "RU → EN" with the target code in the target colour.
 - Line 2: transcript, `ui_16` `text-2`.
-- Line 3: translation in `text-1`. It uses `ui_28` if it has ≤ 48 characters and every glyph exists in `ui_28`, otherwise `ui_20`.
+- Line 3: translation in `text-1`. It uses `ui_28` if it has ≤ 48 columns (`ui_str_cols`: a CJK character counts 2, so 24 hanzi) and every glyph exists in `ui_28` or its CJK fallback, otherwise `ui_20`.
 
 ### 3.5 HIST, history (assistant and translator)
 
@@ -1477,6 +1496,7 @@ The two partial buffers let DMA of one chunk overlap rendering of the next. A 20
 | `LV_FONT_MONTSERRAT_*` | all 0 | – |
 | `LV_FONT_CUSTOM_DECLARE` / `LV_FONT_DEFAULT` | `LV_FONT_DECLARE(ui_16) LV_FONT_DECLARE(ui_20) LV_FONT_DECLARE(ui_28) LV_FONT_DECLARE(ui_48)` / `&ui_20` | – |
 | `LV_USE_FONT_PLACEHOLDER`, `LV_TXT_ENC` | 1, `LV_TXT_ENC_UTF8` | – |
+| `LV_USE_TINY_TTF` / `LV_TINY_TTF_FILE_SUPPORT` / `LV_TINY_TTF_CACHE_KERNING_CNT` | 1 / 0 / 0 | CJK fallback (1.3): the font is read from the memory-mapped pack, not through `lv_fs`; per-font glyph caches are set at creation (`LV_TINY_TTF_CACHE_GLYPH_CNT` 128 only applies to `lv_tiny_ttf_create_data`) |
 | `LV_USE_THEME_DEFAULT`, `LV_USE_THEME_SIMPLE` | 0, 0 | every part is styled explicitly (§7.5) |
 | `LV_OBJ_STYLE_CACHE` | 1 | – |
 | `LV_LABEL_TEXT_SELECTION` | 0 | – |
@@ -1672,6 +1692,8 @@ static void ui_pump_cb(lv_timer_t *t)
 
 Peak LVGL heap (H + HIST + transient) stays under 120 KB, plus the 185 KB flip layer only while RD is flipped.
 
+CJK glyph caches (1.3) grow with use and never shrink: at most ≈ 160 KB of cache nodes in the LVGL pool and ≈ 310 KB of A8 bitmaps in the PSRAM heap (font draw buffers, outside the pool). The 5 MB font itself costs no RAM (memory-mapped flash: the 5.07 MB pack takes 78 of the S3's 512 MMU pages of 64 KB).
+
 ### 7.9 Files, simulator and test hooks
 
 ```
@@ -1707,6 +1729,8 @@ main/ui/
 | `ui chganim <ms>` / `ui chganim glow <ms>` / `ui chganim off` | locked: holds the charging animation (A38) at ms of its clock, or the full glow (A39); `off` runs on from the held frame |
 | `bat` / `bat sim <pct> [battery\|charging\|full\|drain\|0-3]` / `bat sim off` | the battery model's state (`power`, `mv`, `raw`, `d3`, `ofs`, `skipped`, §3.16); the override for UI tests reaches the UI at once (full shows 100) |
 | `btn boot double` | two simulated 80 ms BOOT taps 120 ms apart (the mode switch) |
+| `font` / `font status` | CJK pack state (`absent` / `checking` / `ready` / `bad`), label, bytes, verify time, glyph and code-point counts; per size cache entries, lookups, bitmaps, rendered (cache misses), hits, average and worst render µs; PSRAM in font draw buffers |
+| `font bench [n] [offset]` | in taskLVGL: n (≤ 64, default 40) hanzi on fresh Tiny TTF fonts per size (cold descriptor and bitmap µs), then a 252 px `ui_28` label of n other hanzi on the top layer, from creation to the end of the frame that shows it (`label28.shown_ms`), and taskLVGL's free stack |
 
 **CI string-fit test.** Every RU and EN string is measured with `lv_text_get_size()` against its slot, and the build fails on any overflow:
 
@@ -1738,6 +1762,7 @@ main/ui/
 8. **Arclabel quality** at 20 px (rotated-glyph anti-aliasing) and the radius tuning, so that glyphs stay at r ≤ 162.
 9. **Backlight PWM** at 15 % duty: no visible flicker (LEDC ≥ 20 kHz).
 10. **RD flip layer:** time and memory of one 185 KB rotated render.
+11. **CJK rendering** (1.3): `font bench` cold render per 28 px glyph (estimate 0.5-1.0 ms), `label28.shown_ms` for 40 hanzi (target ≤ 200 ms), `lvgl_stack_free` after it (keep ≥ 1 KB, else raise `task_stack` in display.c), and the look of 16 px hanzi without hinting next to Inter.
 
 
 ## Open questions
@@ -1746,7 +1771,7 @@ main/ui/
 - Does the CST816T on this rev 2.1 board report continuously while a finger drags, and keep reporting 'pressed' during a stationary hold of more than 3 s? On-screen hold-to-talk, the translator chip hold and scrolling depend on this; BOOT and latched mode are the fallbacks.
 - Should the orb face be on by default? The spec defaults to 'Лицо шара: Вкл' with a Settings toggle; this is a product-taste decision for the user.
 - Is the user's OpenRouter account usable from their region? Research reports that Russia/Belarus-region accounts lost all access from 2026-06-27. This decides whether the 403 'region' card is an edge case or the first-run experience, and whether a non-OpenRouter provider must be configured during onboarding.
-- Which translator languages are required beyond the 14 curated ones? CJK, Arabic and other scripts would show only a romanised display_text, because the fonts do not include those scripts.
+- Which translator languages are required beyond the 13 offered ones? Chinese, Japanese and Korean draw through the CJK font pack (1.3); Arabic and other scripts would need their own font (and Arabic, right-to-left shaping).
 - Real LVGL 9.5 frame rate on this board without S3 SIMD, and whether internal RAM next to Wi-Fi, TLS and I2S allows growing the draw buffers from 360x40 to 360x60.
 - ST77916 panel batch (register 0x04 result) and whether partial flushes need an even-coordinate rounder; visible tearing while scrolling without TE.
 - QR scan reliability at 6 px/module on the user's phone, and whether captive-portal auto-open works with the DNS hijack (otherwise step 2 with the URL QR is always needed).

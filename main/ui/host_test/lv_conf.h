@@ -1,0 +1,34 @@
+// lv_conf for the host font test: the options of sdkconfig.defaults that change how text is drawn.
+#ifndef LV_CONF_H
+#define LV_CONF_H
+
+#define LV_COLOR_DEPTH 16
+#define LV_USE_STDLIB_MALLOC LV_STDLIB_BUILTIN
+#define LV_USE_STDLIB_STRING LV_STDLIB_CLIB
+#define LV_USE_STDLIB_SPRINTF LV_STDLIB_CLIB
+#define LV_MEM_SIZE (1024 * 1024)
+#define LV_USE_OS LV_OS_NONE
+#define LV_DRAW_SW_COMPLEX 1
+#define LV_USE_DRAW_SW_COMPLEX_GRADIENTS 0
+#define LV_USE_LOG 1
+#define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
+#define LV_LOG_PRINTF 1
+#define LV_USE_OBSERVER 1
+#define LV_USE_OBJ_NAME 1
+#define LV_FONT_MONTSERRAT_14 1
+#define LV_USE_FONT_PLACEHOLDER 1
+#define LV_TXT_ENC LV_TXT_ENC_UTF8
+#define LV_USE_THEME_DEFAULT 0
+#define LV_USE_THEME_SIMPLE 0
+#define LV_USE_THEME_MONO 0
+#define LV_USE_TINY_TTF 1
+#define LV_TINY_TTF_FILE_SUPPORT 0
+#define LV_TINY_TTF_CACHE_GLYPH_CNT 128
+#define LV_TINY_TTF_CACHE_KERNING_CNT 0
+#define LV_USE_LABEL 1
+#define LV_USE_FLEX 1
+#define LV_USE_SYSMON 0
+#define LV_BUILD_EXAMPLES 0
+#define LV_BUILD_DEMOS 0
+
+#endif

@@ -513,7 +513,7 @@ Rules:
 - Plain text only: no markdown, no emoji.
 ```
 
-Language table (`{X_NAME}` is used in the prompt; the Russian name is used in the UI):
+Language table (`{X_NAME}` is used in the prompt; the Russian name is used in the UI). The translator pickers offer every row but `ar`: zh, ja and ko need the CJK font pack in the `storage` partition (ui.md 1.3) and are listed but disabled ("ZH · нет шрифта") on a board without it. The prompt names and the assistant's `lang` enum keep all 14 rows; an assistant reply in Chinese, Japanese or Korean draws through the same font pack.
 
 | Code | Prompt name | UI (RU) |
 |---|---|---|
@@ -644,7 +644,7 @@ Whether OpenRouter delivers PCM progressively for MAI, or only after synthesis f
 
 1. **Chunk 1 (low latency).** Emit as soon as the first sentence is complete. If it is shorter than 40 characters and a next sentence exists, append sentences while the total stays at or below **200**.
 2. **Later chunks.** Add sentences greedily while the total stays at or below **400**. Emit once the chunk is at least **150**, or at end of text.
-3. **A single sentence longer than 400** (or longer than 200 for chunk 1): cut at the last `,` `;` `:` ` — ` or ` – ` that falls between positions 150 and 400. Failing that, cut at the last space before 400.
+3. **A single sentence longer than 400** (or longer than 200 for chunk 1): cut at the last `,` `;` `:` ` — ` or ` – ` that falls between positions 150 and 400, or after a CJK `，` `、` `；` `：` there (CJK text has no spaces). Failing that, cut at the last space before 400, else at 400.
 4. Never emit a piece shorter than 20 characters; merge it into the previous one. Drop chunks that are empty or contain only punctuation.
 
 ### 5.5 Default voice per language for `microsoft/mai-voice-2.1-flash`

@@ -249,7 +249,12 @@ static int s_lp_slot;
 
 static void lp_cb(lv_event_t *e)
 {
-    const char *code = ui_lang_code((int)(intptr_t)lv_event_get_user_data(e));
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    if (!ui_lang_available(idx)) {
+        ui_toast(ui_s(S_NO_FONT_PACK));     // disabled row (zh / ja / ko without the font pack): stay on the list
+        return;
+    }
+    const char *code = ui_lang_code(idx);
     const char *cur = s_lp_slot ? g_lang_b : g_lang_a;
     const char *other = s_lp_slot ? g_lang_a : g_lang_b;
     if (strcmp(code, cur) != 0) {
@@ -280,12 +285,20 @@ lv_obj_t *scr_lang_pick_build(uint32_t arg)
         const char *code = ui_lang_code(i);
         snprintf(name, sizeof(name), "lp_%s", code);
         upper(code, sub, sizeof(sub));
-        if (!strcmp(code, other)) {
+        if (!ui_lang_available(i)) {
+            // listed, so the user sees why it cannot be picked: "ZH · нет шрифта"
+            char c[4];
+            snprintf(c, sizeof(c), "%.3s", sub);
+            snprintf(sub, sizeof(sub), ui_s(S_LP_NO_FONT_FMT), c);
+        } else if (!strcmp(code, other)) {
             // the other slot's language: picking it swaps the pair
             size_t n = strlen(sub);
             snprintf(sub + n, sizeof(sub) - n, " " TXT_MIDDOT " %s", ui_s(s_lp_slot ? S_T_LANG_A : S_T_LANG_B));
         }
         lv_obj_t *r = ui_list_row(list, name, NULL, ui_lang_name(code), sub, UI_ROW_CHECK, lp_cb, (void *)(intptr_t)i);
+        if (!ui_lang_available(i)) {
+            ui_row_set_enabled(r, false);
+        }
         if (!strcmp(code, cur)) {
             ui_row_set_check(r, true);
             sel = r;
