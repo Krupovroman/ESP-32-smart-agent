@@ -235,7 +235,7 @@ void ui_font_init(void)
         return;
     }
     // priority 1 shares core 0 with app_main (also 1) instead of holding up the boot
-    if (xTaskCreatePinnedToCoreWithCaps(verify_task, "cjk_crc", 3072, NULL, 1, NULL, 0,
+    if (xTaskCreatePinnedToCoreWithCaps(verify_task, "cjk_crc", 4096, NULL, 1, NULL, 0,
                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
         ESP_LOGE(TAG, "no verify task");
         s_state = UI_CJK_BAD;
