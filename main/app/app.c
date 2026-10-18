@@ -1402,13 +1402,19 @@ static void set_text_only(bool v, bool save_now)
     publish();
 }
 
-static void new_chat(void)
+// all = S -> История -> Удалить: the UI already cleared both chats and stays in S (ux-12); otherwise
+// "Новый разговор" (M / HIST): clear this mode's chat and show H
+static void new_chat(bool all)
 {
     app_abort_all();
     ai_client_history_clear();
-    ui_i(UI_CLEAR, 0);
-    ui_i(UI_GOTO, UI_SCR_HOME);
-    s_a.chat_used[s_a.mode] = false;
+    if (all) {
+        s_a.chat_used[0] = s_a.chat_used[1] = false;
+    } else {
+        ui_i(UI_CLEAR, 0);
+        ui_i(UI_GOTO, UI_SCR_HOME);
+        s_a.chat_used[s_a.mode] = false;
+    }
     s_a.card_key = 0;               // an empty chat shows the next error card even if it repeats
 }
 
@@ -1459,7 +1465,7 @@ static void on_setting(const char *key)
 static void on_ui(ui_input_t ev, int32_t arg)
 {
     switch (ev) {
-    case UI_IN_NEW_CHAT: new_chat(); break;
+    case UI_IN_NEW_CHAT: new_chat(arg != 0); break;
     case UI_IN_CARD_ACTION: {
         int card = (int)(arg & 0xFF);
         if (card == UI_CARD_SERVER || card == UI_CARD_TLS) {

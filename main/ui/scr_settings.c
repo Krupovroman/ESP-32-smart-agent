@@ -93,7 +93,7 @@ static void clear_history(void *ctx)
     int m = ui_get(g_s_mode);
     cm_clear(1 - m);
     scr_home_clear(false);
-    ui_emit(UI_IN_NEW_CHAT, 0);
+    ui_emit(UI_IN_NEW_CHAT, 1);         // 1: both chats are cleared here, the app does not go to H
     ui_toast(ui_s(S_H_CLEARED));
 }
 

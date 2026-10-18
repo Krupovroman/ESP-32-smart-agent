@@ -114,7 +114,8 @@ typedef enum {
     UI_IN_PTT_UP,       // i = held ms (the app decides hold vs latch)
     UI_IN_PTT_CANCEL,   // released beyond the cancel radius (discard)
     UI_IN_TEXT_ONLY,    // voice button: i = new text_only value
-    UI_IN_NEW_CHAT,     // "Новый разговор" (history and model context reset)
+    UI_IN_NEW_CHAT,     // "Новый разговор" (history and model context reset); i = 1: S -> История -> Удалить
+                        // (both chats already cleared, stay in S)
     UI_IN_CARD_ACTION,  // retry stadium tapped: i = ui_card_t in bits 0-7, the card's turn tag (UI_SET_TURN) above
     UI_IN_WRONG_LANG,   // reader: re-send that turn's clip with the other source forced; i = the entry's turn tag
     UI_IN_REPLAY,       // reader: speak that turn's translation again; i = the entry's turn tag
