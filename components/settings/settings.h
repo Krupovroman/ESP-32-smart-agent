@@ -25,13 +25,17 @@ int32_t settings_get_int(const char *key);
 // Copies the value (always NUL-terminated); returns its length.
 size_t settings_get_str(const char *key, char *buf, size_t len);
 esp_err_t settings_set_int(const char *key, int32_t v);
+// URL keys (ai_url, tts_url, stt_url, ota_url) are trimmed and must be "" or https://host[:port]/...
 esp_err_t settings_set_str(const char *key, const char *v);
 // Parses v according to the key's type (used by the console and the phone portal).
 esp_err_t settings_set_from_string(const char *key, const char *v);
 // Printable value: secrets come back as "sk-or-…c3f9 (73)" or "" when empty.
 void settings_format(const char *key, char *buf, size_t len);
 bool settings_is_set(const char *key);
-esp_err_t settings_reset(void);
+// Back to defaults. keep_wifi: only namespace "cfg" is erased. Otherwise a factory reset: the
+// whole NVS partition is erased (key, Wi-Fi passwords, URLs physically gone); the caller clears
+// net's RAM list (net_forget_all) or restarts.
+esp_err_t settings_reset(bool keep_wifi);
 
 const setting_desc_t *settings_table(size_t *n);
 const setting_desc_t *settings_find(const char *key);

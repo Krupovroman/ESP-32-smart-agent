@@ -19,9 +19,12 @@ int64_t ai_now_ms(void);
 // Settings that may be missing from the table get def (the table is owned by components/settings).
 int32_t cfg_int(const char *key, int32_t def);
 void cfg_str(const char *key, char *buf, size_t len, const char *def);
-// tts_url / stt_url and tts_key / stt_key fall back to ai_url / ai_key when empty.
+// tts_url / stt_url fall back to ai_url when empty.
 void cfg_url(const char *key, char *buf, size_t len);
-void cfg_key(const char *key, char *buf, size_t len);
+// tts_key / stt_key for the endpoint url; empty falls back to ai_key only when url is on the
+// ai_url host. Returns false for another host without its own key: the request then goes
+// without Authorization (a keyless service) instead of carrying the AI key there.
+bool cfg_key(const char *key, const char *url, char *buf, size_t len);
 // base + path with exactly one '/' between them.
 void ai_join_url(char *out, size_t len, const char *base, const char *path);
 bool ai_net_up(void);
@@ -47,6 +50,8 @@ esp_err_t ai_run_sync(esp_err_t (*fn)(void *ctx), void *ctx);
 bool ai_turn_cancelled(uint32_t turn);
 // Abort callback for or_req_t: ctx points at a uint32_t turn.
 bool ai_abort_turn(void *ctx);
+// or_abort_fn (ctx unused): true while a job (a turn) waits in the ai queue behind this one.
+bool ai_job_waiting(void *ctx);
 // Unused stack bytes (high-water mark) of the ai and tts tasks, 0 before they start.
 uint32_t ai_task_stack_free(void);
 uint32_t tts_task_stack_free(void);

@@ -106,7 +106,7 @@ static void restart_job(void *arg)
 static void reset_job(void *arg)
 {
     (void)arg;
-    settings_reset();
+    settings_reset(false);              // factory reset: Wi-Fi networks and the key are erased too
     vTaskDelay(pdMS_TO_TICKS(300));
     esp_restart();
 }

@@ -1,5 +1,6 @@
 #include "settings.h"
 
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 #include "esp_check.h"
@@ -52,14 +53,77 @@ const setting_desc_t *settings_table(size_t *n)
     return s_table;
 }
 
-static char *dup_str(const char *s)
+static char *dup_n(const char *s, size_t n)
 {
-    size_t n = strlen(s) + 1;
-    char *d = heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
+    char *d = heap_caps_malloc(n + 1, MALLOC_CAP_SPIRAM);
     if (d) {
         memcpy(d, s, n);
+        d[n] = 0;
     }
     return d;
+}
+
+static char *dup_str(const char *s)
+{
+    return dup_n(s, strlen(s));
+}
+
+static bool is_url_key(const char *key)
+{
+    return !strcmp(key, "ai_url") || !strcmp(key, "tts_url") || !strcmp(key, "stt_url") || !strcmp(key, "ota_url");
+}
+
+// Drops whitespace around a URL (the portal decodes '+' to ' ', pasted text ends in a newline).
+static const char *url_trim(const char *v, size_t *n)
+{
+    *n = strlen(v);
+    while (*n && isspace((unsigned char)*v)) {
+        v++;
+        (*n)--;
+    }
+    while (*n && isspace((unsigned char)v[*n - 1])) {
+        (*n)--;
+    }
+    return v;
+}
+
+// "https://host[:port][/rest]" in RFC 3986 characters. esp_http_client prints a URL it cannot
+// parse in full at ERROR level, relay secret included, so nothing it could reject gets stored.
+static bool url_ok(const char *v, size_t n)
+{
+    if (n == 0) {
+        return true;          // empty: falls back to the default / ai_url
+    }
+    if (n < 9 || strncmp(v, "https://", 8)) {
+        return false;
+    }
+    size_t i = 8, host = 0;
+    for (; i < n && (isalnum((unsigned char)v[i]) || v[i] == '.' || v[i] == '-' || v[i] == '_'); i++) {
+        host++;
+    }
+    if (host == 0) {
+        return false;
+    }
+    if (i < n && v[i] == ':') {
+        uint32_t port = 0;
+        size_t digits = 0;
+        for (i++; i < n && isdigit((unsigned char)v[i]) && digits < 6; i++, digits++) {
+            port = port * 10 + (uint32_t)(v[i] - '0');
+        }
+        if (digits == 0 || port == 0 || port > 65535) {
+            return false;
+        }
+    }
+    if (i < n && v[i] != '/' && v[i] != '?') {
+        return false;
+    }
+    for (; i < n; i++) {
+        unsigned char c = (unsigned char)v[i];
+        if (!isalnum(c) && !strchr("-._~:/?#[]@!$&'()*+,;=%", c)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static void load_one(nvs_handle_t h, int i)
@@ -74,6 +138,12 @@ static void load_one(nvs_handle_t h, int i)
                 free(v);
                 v = NULL;
             }
+        }
+        if (v && is_url_key(d->key)) {
+            size_t n;
+            const char *t = url_trim(v, &n);     // stored before set_str trimmed URLs
+            memmove(v, t, n);
+            v[n] = 0;
         }
         s_val[i].str = v ? v : dup_str(d->def_str ? d->def_str : "");
         return;
@@ -144,7 +214,13 @@ size_t settings_get_str(const char *key, char *buf, size_t len)
 bool settings_is_set(const char *key)
 {
     int i = index_of(key);
-    return i >= 0 && s_table[i].type == ST_STR && s_val[i].str && s_val[i].str[0];
+    if (i < 0 || s_table[i].type != ST_STR) {
+        return false;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool set = s_val[i].str && s_val[i].str[0];
+    xSemaphoreGive(s_lock);
+    return set;
 }
 
 static void notify(const char *key)
@@ -176,16 +252,18 @@ esp_err_t settings_set_str(const char *key, const char *v)
 {
     int i = index_of(key);
     ESP_RETURN_ON_FALSE(i >= 0 && s_table[i].type == ST_STR, ESP_ERR_NOT_FOUND, TAG, "%s", key);
-    ESP_RETURN_ON_FALSE(strlen(v) <= s_table[i].max_len, ESP_ERR_INVALID_SIZE, TAG, "%s too long", key);
-    if (!strcmp(key, "ai_url") || !strcmp(key, "tts_url") || !strcmp(key, "stt_url") || !strcmp(key, "ota_url")) {
-        ESP_RETURN_ON_FALSE(v[0] == 0 || !strncmp(v, "https://", 8), ESP_ERR_INVALID_ARG, TAG, "%s must be https", key);
+    size_t n = strlen(v);
+    if (is_url_key(key)) {
+        v = url_trim(v, &n);
+        ESP_RETURN_ON_FALSE(url_ok(v, n), ESP_ERR_INVALID_ARG, TAG, "%s must be an https://host/... URL", key);
     }
-    char *copy = dup_str(v);
+    ESP_RETURN_ON_FALSE(n <= s_table[i].max_len, ESP_ERR_INVALID_SIZE, TAG, "%s too long", key);
+    char *copy = dup_n(v, n);
     ESP_RETURN_ON_FALSE(copy, ESP_ERR_NO_MEM, TAG, "oom");
     nvs_handle_t h;
     esp_err_t err = nvs_open(NS, NVS_READWRITE, &h);
     if (err == ESP_OK) {
-        err = nvs_set_str(h, key, v);
+        err = nvs_set_str(h, key, copy);
         if (err == ESP_OK) {
             err = nvs_commit(h);
         }
@@ -242,24 +320,49 @@ void settings_format(const char *key, char *buf, size_t len)
     memset(tmp, 0, sizeof(tmp));
 }
 
-esp_err_t settings_reset(void)
+esp_err_t settings_reset(bool keep_wifi)
 {
-    nvs_handle_t h;
-    ESP_RETURN_ON_ERROR(nvs_open(NS, NVS_READWRITE, &h), TAG, "open");
-    nvs_erase_all(h);
-    nvs_commit(h);
-    nvs_close(h);
+    esp_err_t err;
+    if (keep_wifi) {
+        nvs_handle_t h;
+        ESP_RETURN_ON_ERROR(nvs_open(NS, NVS_READWRITE, &h), TAG, "open");
+        err = nvs_erase_all(h);
+        if (err == ESP_OK) {
+            err = nvs_commit(h);
+        }
+        nvs_close(h);
+    } else {
+        // Factory reset: erase the whole partition. nvs_erase_all() only marks entries erased, so
+        // the key and the relay URL would stay readable in flash; this also removes the Wi-Fi
+        // networks (namespace "wifi") and the boot notes ("sys"). Wi-Fi keeps no NVS handle
+        // (CONFIG_ESP_WIFI_NVS_ENABLED is off) and every other user opens one per access.
+        ESP_LOGW(TAG, "factory reset: erasing the NVS partition");
+        nvs_flash_deinit();
+        err = nvs_flash_erase();
+        esp_err_t e2 = nvs_flash_init();
+        if (err == ESP_OK) {
+            err = e2;
+        }
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "reset: %s", esp_err_to_name(err));
+    }
     for (int i = 0; i < (int)N_SETTINGS; i++) {
         if (s_table[i].type == ST_STR) {
+            // swapped under the lock like settings_set_str(): readers copy under it, and a
+            // concurrent set frees only the pointer it replaced itself
+            char *fresh = dup_str(s_table[i].def_str ? s_table[i].def_str : "");
+            xSemaphoreTake(s_lock, portMAX_DELAY);
             char *old = s_val[i].str;
-            s_val[i].str = dup_str(s_table[i].def_str ? s_table[i].def_str : "");
+            s_val[i].str = fresh;
+            xSemaphoreGive(s_lock);
             free(old);
         } else {
             s_val[i].num = (int32_t)s_table[i].def_num;
         }
     }
     notify("*");
-    return ESP_OK;
+    return err;
 }
 
 void settings_on_change(void (*cb)(const char *key, void *ctx), void *ctx)

@@ -12,6 +12,7 @@
 #include "esp_heap_caps.h"
 #include "esp_idf_version.h"
 #include "esp_log.h"
+#include "esp_lvgl_port.h"
 #include "esp_mac.h"
 #include "esp_memory_utils.h"
 #include "esp_psram.h"
@@ -64,10 +65,15 @@ static void print_heap_members(void)
            (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
+    // The TLSF walk races taskLVGL's allocations (LV_OS_NONE: no allocator lock), so it runs
+    // under the port lock; no display means no LVGL heap, and a busy LVGL omits the member.
     lv_mem_monitor_t m;
-    lv_mem_monitor(&m);
-    printf(",\"lvgl\":{\"total\":%u,\"free\":%u,\"biggest\":%u,\"frag_pct\":%u}", (unsigned)m.total_size,
-           (unsigned)m.free_size, (unsigned)m.free_biggest_size, (unsigned)m.frag_pct);
+    if (display_get() && lvgl_port_lock(200)) {
+        lv_mem_monitor(&m);
+        lvgl_port_unlock();
+        printf(",\"lvgl\":{\"total\":%u,\"free\":%u,\"biggest\":%u,\"frag_pct\":%u}", (unsigned)m.total_size,
+               (unsigned)m.free_size, (unsigned)m.free_biggest_size, (unsigned)m.frag_pct);
+    }
 #endif
 }
 

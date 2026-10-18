@@ -137,8 +137,8 @@ static esp_err_t out_begin(uint32_t turn, uint32_t rate, uint8_t ch)
     return e;
 }
 
-// Never blocks inside the stream buffer: xStreamBufferReset() (audio_out_stop) is refused while a
-// sender waits on it, so a blocked writer would make barge-in keep playing a full ring.
+// Never blocks inside the stream buffer: audio_out_stop() drains the ring, and a writer blocked on a
+// full ring would refill it with the old reply as fast as the drain frees space.
 static bool out_write(sink_t *s, const uint8_t *p, size_t n)
 {
     int64_t last = esp_timer_get_time();
@@ -421,9 +421,9 @@ static esp_err_t speak_chunk(sink_t *s, const char *model, const char *voice, co
     char base[136], url[200], key[208], referer[136];
     cfg_url("tts_url", base, sizeof(base));
     ai_join_url(url, sizeof(url), base, "audio/speech");
-    cfg_key("tts_key", key, sizeof(key));
+    bool need_key = cfg_key("tts_key", base, key, sizeof(key));
     cfg_str("ref_url", referer, sizeof(referer), "");
-    if (!key[0]) {
+    if (!key[0] && need_key) {
         or_err_local(err, "K0");
         return ESP_FAIL;
     }

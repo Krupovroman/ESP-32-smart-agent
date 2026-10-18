@@ -89,7 +89,8 @@ void app_main(void)
             ESP_LOGE(TAG, "wifi unavailable");
         }
         devconsole_heap_stage("after_wifi_init");
-        // a pending OTA image is confirmed here, or rolled back (no return)
+        // a pending OTA image is confirmed here, or rolled back (no return). On purpose before
+        // Wi-Fi and the app: crash loops after this point reach safe mode (see selftest_ready)
         selftest_run(&st);
         if (st.wifi == ESP_OK) {
             net_start();
