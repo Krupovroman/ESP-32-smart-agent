@@ -51,8 +51,9 @@ static void pool_init(void)
     int expect = 0;
     if (__atomic_compare_exchange_n(&s_pool_state, &expect, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
         s_pool_lock = xSemaphoreCreateMutexStatic(&s_pool_lock_buf);
-        // fetch_headers() logs a warning on every 1 s wait tick; real errors stay visible
-        esp_log_level_set("HTTP_CLIENT", ESP_LOG_ERROR);
+        // fetch_headers() logs a warning on every 1 s wait tick, and set_url() logs a URL it cannot
+        // parse in full (relay secret included). Errors are reported here instead (or_begin, or_err_t).
+        esp_log_level_set("HTTP_CLIENT", ESP_LOG_NONE);
         __atomic_store_n(&s_pool_state, 2, __ATOMIC_RELEASE);
     }
     while (__atomic_load_n(&s_pool_state, __ATOMIC_ACQUIRE) != 2) {
@@ -323,6 +324,7 @@ esp_err_t or_begin(or_conn_t *c, const or_req_t *q, or_resp_t *r)
 
     esp_err_t err = esp_http_client_set_url(c->h, q->url);
     if (err != ESP_OK) {
+        ESP_LOGE(TAG, "bad URL for %s: %s", c->key, esp_err_to_name(err));   // origin only: no secret
         esp_http_client_close(c->h);   // a socket left open here would be reused unannounced
         r->phase = OR_PH_CONNECT;
         r->err = err;

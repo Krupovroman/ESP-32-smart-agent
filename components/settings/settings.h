@@ -25,6 +25,7 @@ int32_t settings_get_int(const char *key);
 // Copies the value (always NUL-terminated); returns its length.
 size_t settings_get_str(const char *key, char *buf, size_t len);
 esp_err_t settings_set_int(const char *key, int32_t v);
+// URL keys (ai_url, tts_url, stt_url, ota_url) are trimmed and must be "" or https://host[:port]/...
 esp_err_t settings_set_str(const char *key, const char *v);
 // Parses v according to the key's type (used by the console and the phone portal).
 esp_err_t settings_set_from_string(const char *key, const char *v);
