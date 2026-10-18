@@ -481,6 +481,8 @@ int g_nui;
 int g_ui_ctx;
 bool g_boot_ok;
 int g_pwr_short, g_pwr_down, g_pwr_up;
+bool g_locked;
+int g_boot_refused;
 uint32_t g_inactive_ms;
 bool g_touch_down;
 int g_wait_release;
@@ -540,13 +542,44 @@ ui_ctx_t ui_context(void)
 
 bool ui_boot_down(void)
 {
+    if (g_locked) {
+        g_boot_refused++;       // the real UI shakes the padlock
+        return false;
+    }
     return g_boot_ok;
 }
 
-bool ui_pwr_short(void)
+static void lock_to(bool on)
+{
+    // as scr_lock.c: the state flips in the UI task, which then tells the app
+    if (on != g_locked) {
+        g_locked = on;
+        if (s_in_cb) {
+            s_in_cb(UI_IN_LOCK, on ? 1 : 0, NULL);
+        }
+    }
+}
+
+void ui_pwr_short(void)
 {
     g_pwr_short++;
-    return true;
+    lock_to(!g_locked);
+}
+
+void ui_keylock(bool on)
+{
+    lock_to(on);
+}
+
+bool ui_keylocked(void)
+{
+    return g_locked;
+}
+
+const char *ui_s(ui_sid_t id)
+{
+    // the app only formats the low-battery toast itself
+    return id == S_BAT_LOW ? (g_ui_lang ? "Battery %d %%" : "Батарея %d %%") : "?";
 }
 
 void ui_pwr_down(void)
@@ -650,6 +683,7 @@ int g_backlight = -1;
 int g_power_off, g_latch_on;
 bool g_boot_down, g_pwr_held;
 int g_bat_mv = -1;
+bool g_bat_chg;
 int g_net_state = NET_UP;
 bool g_portal;
 
@@ -705,6 +739,24 @@ int board_battery_pct(int mv)
     return p < 0 ? 0 : p > 100 ? 100 : p;
 }
 
+bool board_battery_sample(void)
+{
+    return false;
+}
+
+void board_battery_state(board_bat_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->mv = g_bat_mv;
+    out->pct = board_battery_pct(g_bat_mv);
+    out->charging = out->pct >= 0 && g_bat_chg;
+}
+
+void board_battery_sim(int pct, bool charging)
+{
+    (void)pct, (void)charging;
+}
+
 void net_status(net_status_t *out)
 {
     memset(out, 0, sizeof(*out));
@@ -741,6 +793,9 @@ void mocks_reset(void)
     g_ui_ctx = UI_CTX_HOME;
     g_boot_ok = true;
     g_pwr_short = g_pwr_down = g_pwr_up = 0;
+    g_locked = false;
+    g_boot_refused = 0;
+    g_bat_chg = false;
     g_inactive_ms = 100000;
     g_touch_down = false;
     g_ui_level = 0;

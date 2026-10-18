@@ -27,6 +27,7 @@ typedef enum {
     EV_UI,              // i = ui_input_t (other than push-to-talk and text-only), j = its argument
     EV_WAKE,            // a touch while the screen was dimmed or off
     EV_SYNC,            // no-op: lets a console command wait until its events were handled
+    EV_BATTERY,         // console "bat sim": hand the battery state to the UI now, not at the next 5 s reading
 } app_evt_type_t;
 
 // Where a push-to-talk press came from

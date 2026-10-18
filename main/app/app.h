@@ -30,7 +30,9 @@ typedef struct {
     int fault;                      // ui_fault_t set by the app
     // device
     const char *screen;             // "on", "dim", "off"
-    int bat_mv, bat_pct;            // -1 = unknown / no battery
+    int bat_mv, bat_pct;            // -1 = unknown / no battery (board_battery_state)
+    bool bat_charging, bat_full;
+    bool locked;                    // the lock screen is up (ui_keylocked)
     bool low_mem;
 } app_status_t;
 
@@ -45,5 +47,5 @@ app_state_t app_state(void);
 const char *app_state_name(app_state_t s);
 // Snapshot for the console (any task).
 void app_status(app_status_t *out);
-// Registers the app dev-console commands: app, state, ptt, cancel, mode, textonly, btn.
+// Registers the app dev-console commands: app, state, ptt, cancel, mode, textonly, btn, lock, unlock, bat.
 void app_console_register(void);

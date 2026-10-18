@@ -9,6 +9,7 @@
 #include "vad.h"
 
 #define APP_TAP_MS          400     // ui.md 2.3: tap / hold threshold
+#define APP_DOUBLE_MS       300     // BOOT double tap: the second press within this after the first tap's release
 #define APP_LATCH_IDLE_MS   5000    // latched recording without speech: "Не расслышал"
 #define APP_VAD_SPEECH_MS   400     // auto-send after this much speech ...
 #define APP_VAD_SILENCE_MS  1200    // ... followed by this much silence (ui.md 5.1)
@@ -45,7 +46,7 @@ void app_vad_cfg(vad_cfg_t *get, const vad_cfg_t *set);
 // ---- app.c, called by app_io.c (app task)
 void app_ptt_down(int8_t side, app_src_t src);
 void app_ptt_up(int32_t held_ms, app_src_t src);
-// PWR short press (ui.md 2.3): back off other screens; on H cancel / stop speech / dismiss, or screen off.
+// PWR short press (ui.md 2.3): lock / unlock (locking ends the turn: UI_IN_LOCK).
 void app_pwr_short(void);
 // Ends whatever runs (recording, turn, speech) without a message; the state becomes IDLE.
 void app_abort_all(void);
@@ -74,6 +75,9 @@ bool app_io_portal(void);
 bool app_io_low_mem(void);
 // Idle microphone noise floor (dBFS x10) or VAD_NO_HINT.
 int app_io_ambient(void);
+// Battery state to the UI if it changed since the last post, and the low-battery toasts (sample = read the ADC
+// first; the 5 s poll does, the console's "bat sim" does not).
+void app_io_battery(bool sample);
 // Any task
 app_screen_t app_io_screen(void);
 int app_io_bat_mv(void);

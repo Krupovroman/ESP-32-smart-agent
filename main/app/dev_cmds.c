@@ -1,7 +1,8 @@
 // App dev-console commands (architecture 7.3): the whole push-to-talk flow without touching the device.
 //   app state | say <text> | wait [state] [ms] | vad [snr_db min_ms heard_ms] | dir 0|1|2 | wake   (state = app state)
 //   ptt down [a|b] | up [held_ms] | tap      cancel      mode assistant|translator      textonly 0|1
-//   btn boot|pwr click|long|down|up          (simulated keys, through the button driver's debounce)
+//   btn boot|pwr click|long|down|up | btn boot double   (simulated keys, through the button driver's debounce)
+//   lock | unlock      bat | bat sim <pct> [charging 0|1] | bat sim off   (ui.md 3.16)
 // With injected audio: "mic load ..." + "mic src inject fast", then "ptt tap" (latched; the end of the
 // clip sends it) or "ptt down" / "ptt up 800".
 #include "app_priv.h"
@@ -23,6 +24,8 @@
 #define SYNC_MS     1500        // a console event must be handled within this
 #define TAP_MS      80
 #define SIM_GAP_MS  60          // simulated key edges: longer than the 30 ms debounce
+#define DOUBLE_TAP_MS 80        // "btn boot double": each press
+#define DOUBLE_GAP_MS 120       // ... and the pause between them
 
 static const char *const s_fault_names[] = {
     "none", "nowifi", "badkey", "nocredit", "lowcredit", "region", "model", "expiring", "mic", "nokey",
@@ -121,8 +124,10 @@ static int cmd_state(void)
     } else {
         printf("\"ambient\":%.1f,", st.ambient_x10 / 10.0);
     }
-    printf("\"mic_src\":\"%s\",\"bat_mv\":%d,\"bat_pct\":%d,\"heap\":{\"int\":%u,\"int_min\":%u,\"psram\":%u}}\n",
-           audio_in_get_source() == AUDIO_SRC_INJECT ? "inject" : "mic", st.bat_mv, st.bat_pct,
+    printf("\"mic_src\":\"%s\",\"bat_mv\":%d,\"bat_pct\":%d,\"bat_charging\":%d,\"bat_full\":%d,\"locked\":%d,"
+           "\"heap\":{\"int\":%u,\"int_min\":%u,\"psram\":%u}}\n",
+           audio_in_get_source() == AUDIO_SRC_INJECT ? "inject" : "mic", st.bat_mv, st.bat_pct, st.bat_charging,
+           st.bat_full, st.locked,
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -308,11 +313,64 @@ static int cmd_btn(int argc, char **argv)
         board_buttons_simulate(b, true);
         vTaskDelay(pdMS_TO_TICKS(hold));
         board_buttons_simulate(b, false);
+    } else if (!strcmp(ev, "double") && b == BOARD_BTN_BOOT) {
+        // two 80 ms taps 120 ms apart: the second press lands well inside APP_DOUBLE_MS after the first release
+        for (int i = 0; i < 2; i++) {
+            board_buttons_simulate(b, true);
+            vTaskDelay(pdMS_TO_TICKS(DOUBLE_TAP_MS));
+            board_buttons_simulate(b, false);
+            if (i == 0) {
+                vTaskDelay(pdMS_TO_TICKS(DOUBLE_GAP_MS));
+            }
+        }
     } else {
-        return dc_fail("usage: btn boot|pwr click|long|down|up");
+        return dc_fail("usage: btn boot|pwr click|long|down|up | btn boot double");
     }
     vTaskDelay(pdMS_TO_TICKS(SIM_GAP_MS));
     return done(post_wait(EV_SYNC, 0, 0, NULL));
+}
+
+// lock / unlock: as a PWR press would (the UI runs the animation; the command returns once the state changed)
+static int cmd_lock(int argc, char **argv)
+{
+    (void)argc;
+    bool on = !strcmp(argv[0], "lock");
+    ui_keylock(on);
+    for (int i = 0; i < 50 && ui_keylocked() != on; i++) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    if (ui_keylocked() != on) {
+        return dc_fail("the UI did not %s", on ? "lock" : "unlock");
+    }
+    printf("{\"locked\":%d}\n", on);
+    return 0;
+}
+
+// bat: the battery model (board_battery_state); bat sim <pct> [charging 0|1] overrides it for UI tests, bat sim off
+static int cmd_bat(int argc, char **argv)
+{
+    if (argc > 1 && !strcmp(argv[1], "sim")) {
+        if (argc == 3 && !strcmp(argv[2], "off")) {
+            board_battery_sim(-1, false);
+        } else if (argc >= 3 && atoi(argv[2]) >= 0 && atoi(argv[2]) <= 100) {
+            board_battery_sim(atoi(argv[2]), argc > 3 && atoi(argv[3]) != 0);
+        } else {
+            return dc_fail("usage: bat | bat sim <0-100> [charging 0|1] | bat sim off");
+        }
+        if (app_started()) {
+            int rc = post_wait(EV_BATTERY, 0, 0, NULL);     // the UI gets it now, not at the next reading
+            if (rc) {
+                return rc;
+            }
+        }
+    } else if (argc > 1) {
+        return dc_fail("usage: bat | bat sim <0-100> [charging 0|1] | bat sim off");
+    }
+    board_bat_t b;
+    board_battery_state(&b);
+    printf("{\"pct\":%d,\"mv\":%d,\"charging\":%d,\"full\":%d,\"usb\":%d,\"sim\":%d}\n", b.pct, b.mv, b.charging,
+           b.full, b.usb, b.sim);
+    return 0;
 }
 
 void app_console_register(void)
@@ -325,5 +383,8 @@ void app_console_register(void)
     devconsole_register("cancel", "cancel - stop the recording, turn or speech", cmd_cancel);
     devconsole_register("mode", "mode assistant|translator", cmd_mode);
     devconsole_register("textonly", "textonly 0|1 - replies in text only / spoken", cmd_textonly);
-    devconsole_register("btn", "btn boot|pwr click|long|down|up - simulated keys", cmd_btn);
+    devconsole_register("btn", "btn boot|pwr click|long|down|up | btn boot double - simulated keys", cmd_btn);
+    devconsole_register("lock", "lock - lock screen (as PWR)", cmd_lock);
+    devconsole_register("unlock", "unlock - leave the lock screen (as PWR)", cmd_lock);
+    devconsole_register("bat", "bat | bat sim <pct> [charging 0|1] | bat sim off - battery model", cmd_bat);
 }

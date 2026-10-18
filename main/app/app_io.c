@@ -21,8 +21,10 @@ static const char *TAG = "app_io";
 
 #define DIM_PCT          25              // ui.md 5.8: dimmed backlight
 #define NET_POLL_MS      500
-#define BAT_POLL_MS      30000
-#define BAT_WARN_PCT     10              // ui.md 5.6: toast "Батарея 10 %"
+#define BAT_POLL_MS      5000            // ui.md 3.16: one reading into the battery model every 5 s
+#define BAT_LOW_PCT      15              // toasts "Батарея 15 %" and "Батарея 5 %", once each per discharge
+#define BAT_CRIT_PCT     5
+#define BAT_REARM_PCT    20              // ... until charging or back above this
 #define HEAP_POLL_MS     1000
 #define TOUCH_POLL_MS    200
 #define AMBIENT_POLL_MS  100
@@ -50,7 +52,8 @@ static uint32_t s_off_check, s_note_until;
 static int s_net = -1;
 static bool s_portal;
 static uint32_t s_t_net, s_t_bat, s_t_heap, s_t_touch, s_t_amb;
-static bool s_bat_polled, s_bat_warned;
+static bool s_bat_polled, s_bat_warned, s_bat_crit;
+static int32_t s_bat_posted = -1;       // UI_BAT_MAKE() value last sent to the UI
 static bool s_low_mem;
 static int s_ambient = VAD_NO_HINT;
 static save_t s_save[] = { { .key = "mode" }, { .key = "text_only" } };
@@ -201,7 +204,10 @@ void app_io_button(board_btn_t b, board_btn_ev_t ev, uint32_t held_ms)
     }
     switch (ev) {
     case BTN_EV_DOWN:
-        s_pwr_woke = app_io_activity();
+        // ui.md 2.3: PWR on a dark screen only wakes it; locked, the press lights the lock screen and its click
+        // unlocks (one press). A dimmed or ambient screen is still seen: its click locks.
+        s_pwr_woke = app_io_screen() == APP_SCREEN_OFF && !ui_keylocked();
+        app_io_activity();
         ui_pwr_down();              // the rim POWER ring appears after 600 ms
         break;
     case BTN_EV_UP:
@@ -209,9 +215,9 @@ void app_io_button(board_btn_t b, board_btn_ev_t ev, uint32_t held_ms)
         break;
     case BTN_EV_CLICK:
         if (s_pwr_woke) {
-            s_pwr_woke = false;     // PWR on a dark screen only wakes it
+            s_pwr_woke = false;
         } else {
-            app_pwr_short();
+            app_pwr_short();        // lock / unlock
         }
         break;
     case BTN_EV_LONG:
@@ -326,19 +332,35 @@ static void poll_net(void)
     }
 }
 
-static void poll_battery(void)
+void app_io_battery(bool sample)
 {
-    int mv = board_battery_mv();
-    atomic_store(&s_bat_mv, mv);
-    int pct = board_battery_pct(mv);
-    if (pct >= 0 && pct <= BAT_WARN_PCT && !s_bat_warned) {
+    if (sample) {
+        board_battery_sample();
+    }
+    board_bat_t b;
+    board_battery_state(&b);
+    atomic_store(&s_bat_mv, b.mv);
+    int32_t v = UI_BAT_MAKE(b.pct, (b.charging ? UI_BAT_CHARGING : 0) | (b.full ? UI_BAT_FULL : 0) |
+                                       (b.usb ? UI_BAT_USB : 0));
+    if (v != s_bat_posted) {
+        s_bat_posted = v;
+        ui_post(&(ui_msg_t){ .type = UI_SET_BATTERY, .i = v });
+        devcon_event("battery", "\"mv\":%d,\"pct\":%d,\"charging\":%d,\"full\":%d,\"usb\":%d,\"sim\":%d", b.mv, b.pct,
+                     b.charging, b.full, b.usb, b.sim);
+    }
+    // ui.md 5.6 / 3.16: "Батарея 15 %" and "Батарея 5 %" once each while it discharges
+    if (b.pct < 0 || b.charging || b.full || b.pct > BAT_REARM_PCT) {
+        s_bat_warned = s_bat_crit = false;
+        return;
+    }
+    bool crit = b.pct <= BAT_CRIT_PCT && !s_bat_crit;
+    if (crit || (b.pct <= BAT_LOW_PCT && !s_bat_warned)) {
         s_bat_warned = true;
+        s_bat_crit |= crit;
         char t[40];
-        snprintf(t, sizeof(t), ui_str_lang() ? "Battery %d %%" : "Батарея %d %%", pct);
+        snprintf(t, sizeof(t), ui_s(S_BAT_LOW), b.pct);
         ui_post_text(UI_TOAST, 0, t);
-        devcon_event("battery_low", "\"mv\":%d,\"pct\":%d", mv, pct);
-    } else if (pct > BAT_WARN_PCT + 5) {
-        s_bat_warned = false;
+        devcon_event("battery_low", "\"mv\":%d,\"pct\":%d", b.mv, b.pct);
     }
 }
 
@@ -421,7 +443,7 @@ void app_io_tick(uint32_t now)
     if (!s_bat_polled || now - s_t_bat >= BAT_POLL_MS) {
         s_bat_polled = true;
         s_t_bat = now;
-        poll_battery();
+        app_io_battery(true);
     }
     if (now - s_t_heap >= HEAP_POLL_MS) {
         s_t_heap = now;
