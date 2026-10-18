@@ -450,6 +450,11 @@ static void set_langs(const char *s)
     if (!bar || bar == s || !bar[1]) {
         return;
     }
+    if (ui_save_pending("tr_lang_a") || ui_save_pending("tr_lang_b")) {
+        // the app mirrors every stored key, so the UI's own two-key write first comes back half old (a swap even
+        // as "fr|fr"): the UI copy is the newest until that write is done
+        return;
+    }
     char a[4], b[4];
     snprintf(a, sizeof(a), "%.*s", (int)LV_MIN(bar - s, 3), s);
     snprintf(b, sizeof(b), "%.3s", bar + 1);
