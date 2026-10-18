@@ -128,6 +128,8 @@ static void boot(void)
     s_portal = false;
     s_t_net = s_t_bat = s_t_heap = s_t_touch = s_t_amb = 0;
     s_bat_polled = s_bat_warned = s_low_mem = false;
+    s_bat_poll_ms = BAT_POLL_MS;
+    s_bat_vfull_seen = s_bl_seen = -1;
     s_audio_t = s_turn_t = s_screen_t = 0;
     s_ambient = VAD_NO_HINT;
     for (size_t i = 0; i < sizeof(s_save) / sizeof(s_save[0]); i++) {
@@ -1138,6 +1140,91 @@ static void t_power(void)
     CHECK(s_a.st == APP_UPLOADING);
 }
 
+// The battery model's side of the app (ui.md 3.16, model v3): its reading period, the learned v_full stored
+static void t_battery_io(void)
+{
+    boot();
+    CHECK(g_bat_vfull_set == 4150);         // bat_vfull handed to the model before the first reading
+    g_bat_mv = 3900;
+    // the model asks for a reading every 2 s while it measures a step, else every 5 s
+    g_bat_poll_ms = 2000;
+    step(BAT_POLL_MS + 100);                // the period in use runs out first
+    int n0 = g_bat_samples;
+    step(10000);
+    CHECK(g_bat_samples - n0 >= 4 && g_bat_samples - n0 <= 6);
+    g_bat_poll_ms = 0;                      // 0 = the app's own 5 s
+    step(2100);
+    n0 = g_bat_samples;
+    step(10000);
+    CHECK(g_bat_samples - n0 == 2);
+    // a plateau taught it v_full: saved once, when idle and 2 s later; the setting goes back to the model
+    int w0 = g_settings_writes;
+    g_bat_vfull_learn = 4090;
+    step(BAT_POLL_MS + 100);
+    step(APP_SAVE_DELAY_MS + 100);
+    CHECK(settings_get_int("bat_vfull") == 4090 && g_settings_writes == w0 + 1 && g_bat_vfull_set == 4090);
+    step(3 * BAT_POLL_MS);
+    CHECK(g_settings_writes == w0 + 1);     // the same value: no second write
+    // not during a turn: the flash write waits for idle
+    g_bat_vfull_learn = 4110;
+    say(600);                               // a turn: uploading
+    step(BAT_POLL_MS + APP_SAVE_DELAY_MS + 200);
+    CHECK(settings_get_int("bat_vfull") == 4090);
+    post_ev(EV_CANCEL, 0, 0);
+    step(BAT_POLL_MS + APP_SAVE_DELAY_MS + 200);
+    CHECK(settings_get_int("bat_vfull") == 4110 && g_bat_vfull_set == 4110);
+    // the console's "set bat_vfull" reaches the model too, and wins over what it learned before
+    settings_set_int("bat_vfull", 4120);
+    pump();
+    CHECK(g_bat_vfull_set == 4120 && g_bat_vfull_learn == -1);
+    step(BAT_POLL_MS + APP_SAVE_DELAY_MS + 200);
+    CHECK(settings_get_int("bat_vfull") == 4120);
+    // ... and a later charge that comes back to the old level is stored again
+    w0 = g_settings_writes;
+    g_bat_vfull_learn = 4110;
+    step(BAT_POLL_MS + APP_SAVE_DELAY_MS + 200);
+    CHECK(settings_get_int("bat_vfull") == 4110 && g_settings_writes == w0 + 1);
+    // the battery event names the external power
+    g_bat_chg = true;
+    step(BAT_POLL_MS + 100);
+    CHECK(strstr(ev_last("battery"), "\"ext\":\"usb\"") != NULL);
+    g_bat_chg = false;
+    // loads the app does not run itself are load steps too (no voltage step is measured across them, so their end
+    // is no charger): any backlight change (the UI's brightness adjuster, a QR), the Wi-Fi state, the portal
+    step(BAT_SETTLE_MS + BAT_POLL_MS);
+    CHECK(g_bat_last_settled);
+    board_backlight_set(30);
+    step(BAT_POLL_MS + 100);
+    CHECK(g_bat_last_q == BOARD_BAT_SKIP);
+    step(2 * BAT_POLL_MS);
+    CHECK(g_bat_last_q == BOARD_BAT_LOADED);
+    step(BAT_SETTLE_MS);
+    CHECK(g_bat_last_settled);
+    g_net_state = NET_CONNECTING;
+    step(BAT_POLL_MS + 100);
+    CHECK(!g_bat_last_settled);
+    // the retries without a network (connecting / failed every minute) are not: the readings still settle
+    step(BAT_SETTLE_MS);
+    g_net_state = NET_FAILED;
+    step(BAT_POLL_MS + 100);
+    g_net_state = NET_CONNECTING;
+    step(BAT_POLL_MS + 100);
+    CHECK(g_bat_last_settled);
+    g_net_state = NET_UP;
+    step(BAT_POLL_MS + 100);
+    CHECK(!g_bat_last_settled);
+    step(BAT_SETTLE_MS);
+    CHECK(g_bat_last_settled);
+    g_portal = true;
+    step(BAT_POLL_MS + 100);
+    CHECK(!g_bat_last_settled);
+    g_portal = false;
+    step(BAT_POLL_MS + 100);
+    CHECK(!g_bat_last_settled);
+    g_bat_mv = -1;
+    g_bat_vfull_learn = -1;
+}
+
 static void t_misc(void)
 {
     printf("t_misc\n");
@@ -1361,6 +1448,7 @@ int main(void)
     t_translator();
     t_text();
     t_power();
+    t_battery_io();
     t_misc();
     t_web();
     printf("%d checks, %d failures\n", s_checks, s_fail);

@@ -2,7 +2,8 @@
 //   app state | say <text> | wait [state] [ms] | vad [snr_db min_ms heard_ms] | dir 0|1|2 | wake   (state = app state)
 //   ptt down [a|b] | up [held_ms] | tap      cancel      mode assistant|translator      textonly 0|1
 //   btn boot|pwr click|long|down|up | btn boot double   (simulated keys, through the button driver's debounce)
-//   lock | unlock      bat | bat sim <pct> [battery|charging|full|drain] | bat sim off   (ui.md 3.16)
+//   lock | unlock      bat | bat sim <pct> [battery|charging|full|drain] | bat sim off | bat log [n|all|clear]
+//   (ui.md 3.16)
 // With injected audio: "mic load ..." + "mic src inject fast", then "ptt tap" (latched; the end of the
 // clip sends it) or "ptt down" / "ptt up 800".
 #include "app_priv.h"
@@ -346,7 +347,87 @@ static int cmd_lock(int argc, char **argv)
     return 0;
 }
 
-#define BAT_USAGE "usage: bat | bat sim <0-100> [battery|charging|full|drain|0-3] | bat sim off"
+#define BAT_USAGE "usage: bat | bat sim <0-100> [battery|charging|full|drain|0-3] | bat sim off | bat log [n|all|clear]"
+#define BAT_LOG_DEF     30          // bat log: the last records printed
+#define BAT_LOG_LINES   120         // ... at most (the console's 24 KB answer); "bat log all" sends them all as a blob
+#define BAT_LINE_MAX    192
+
+// One battery-log record as a JSON line (ui.md 3.16): a minute's record or an event
+static int bat_log_line(char *buf, size_t n, const board_bat_log_t *r)
+{
+    unsigned t = (unsigned)r->t_s;
+    bool ext = r->ext != BOARD_EXT_NONE;
+    if (r->ev == BOARD_BEV_MINUTE) {
+        return snprintf(buf, n,
+                        "{\"min\":%u,\"t\":%u,\"mv\":%d,\"raw\":%d,\"power\":\"%s\",\"usb\":%d,\"ext\":%d,\"src\":\"%s\","
+                        "\"pct\":%d}",
+                        t / 60, t, r->mv, r->d, board_power_name((board_power_t)r->power), r->usb, ext,
+                        board_ext_name((board_ext_t)r->ext), r->pct);
+    }
+    return snprintf(buf, n,
+                    "{\"min\":%u,\"t\":%u,\"ev\":\"%s\",\"from\":\"%s\",\"power\":\"%s\",\"mv\":%d,\"d\":%d,\"usb\":%d,"
+                    "\"ext\":%d,\"src\":\"%s\",\"pct\":%d}",
+                    t / 60, t, board_bat_ev_name((board_bat_ev_t)r->ev), board_power_name((board_power_t)r->from),
+                    board_power_name((board_power_t)r->power), r->mv, r->d, r->usb, ext,
+                    board_ext_name((board_ext_t)r->ext), r->pct);
+}
+
+// bat log [n]: the last n records as JSON lines; bat log all: every record kept, as a "batlog" blob of JSON lines
+// (python tools/dev.py --out bat.jsonl bat log all); bat log clear
+static int cmd_bat_log(int argc, char **argv)
+{
+    uint32_t first, next = board_battery_log_range(&first);
+    const char *a = argc > 2 ? argv[2] : "";
+    if (!strcmp(a, "clear")) {
+        board_battery_log_clear();
+        printf("{\"cleared\":%u,\"next\":%u}\n", (unsigned)(next - first), (unsigned)next);
+        return 0;
+    }
+    char line[BAT_LINE_MAX];
+    board_bat_log_t r;
+    if (!strcmp(a, "all")) {
+        size_t cap = (size_t)(next - first) * BAT_LINE_MAX + 1, len = 0;
+        char *buf = heap_caps_malloc(cap, MALLOC_CAP_SPIRAM);
+        if (!buf) {
+            return dc_fail("no memory for %u records", (unsigned)(next - first));
+        }
+        unsigned n = 0;
+        for (uint32_t i = first; i < next; i++) {
+            if (board_battery_log_get(i, &r)) {
+                int k = bat_log_line(buf + len, cap - len - 1, &r);
+                if (k > 0 && (size_t)k < cap - len - 1) {
+                    len += (size_t)k;
+                    buf[len++] = '\n';
+                    n++;
+                }
+            }
+        }
+        char meta[48];
+        snprintf(meta, sizeof(meta), "\"records\":%u,\"next\":%u", n, (unsigned)next);
+        int rc = dc_blob("batlog", buf, len, meta);
+        heap_caps_free(buf);
+        return rc;
+    }
+    int want = argc > 2 ? atoi(a) : BAT_LOG_DEF;
+    if (argc > 3 || want <= 0) {
+        return dc_fail(BAT_USAGE);
+    }
+    if (want > BAT_LOG_LINES) {
+        want = BAT_LOG_LINES;
+    }
+    uint32_t from = next - first > (uint32_t)want ? next - (uint32_t)want : first;
+    unsigned n = 0;
+    for (uint32_t i = from; i < next; i++) {
+        if (board_battery_log_get(i, &r) && bat_log_line(line, sizeof(line), &r) > 0) {
+            printf("%s\n", line);
+            n++;
+        }
+    }
+    // the last line is the answer's payload: how much more there is
+    printf("{\"log\":%u,\"kept\":%u,\"next\":%u,\"cap\":%d}\n", n, (unsigned)(next - first), (unsigned)next,
+           BOARD_BAT_LOG_N);
+    return 0;
+}
 
 // "battery" / "charging" / "full" / "drain" or the board_power_t number (0 / 1 also as the old "charging 0|1")
 static int power_arg(const char *s)
@@ -360,9 +441,12 @@ static int power_arg(const char *s)
 }
 
 // bat: the battery model (board_battery_state, ui.md 3.16); bat sim <pct> [state] overrides it for UI tests (FULL
-// shows 100), bat sim off ends that
+// shows 100), bat sim off ends that; bat log: the battery log
 static int cmd_bat(int argc, char **argv)
 {
+    if (argc > 1 && !strcmp(argv[1], "log")) {
+        return cmd_bat_log(argc, argv);
+    }
     if (argc > 1 && !strcmp(argv[1], "sim")) {
         int pw = argc > 3 ? power_arg(argv[3]) : BOARD_PWR_BATTERY;
         if (argc == 3 && !strcmp(argv[2], "off")) {
@@ -383,16 +467,23 @@ static int cmd_bat(int argc, char **argv)
     }
     board_bat_t b;
     board_battery_state(&b);
-    // d3: the settled voltage against 3 min ago (USB_DRAIN at <= -20 mV, FULL holds at < +8 mV above 4.15 V);
-    // ofs: the charging offset taken off the reading on USB power; skipped: readings not taken under load
-    char d3[12] = "null";
+    // ext / src: external power and where it is known from; d3: the settled voltage against 3 min ago (USB_DRAIN at
+    // <= -20 mV); d4: against 4 min ago, calm all the time (FULL at -15..+5 mV and >= 3.95 V); ofs: the charging
+    // offset taken off the reading on external power; vfull: the reading taken as 100 % (learned: this boot's
+    // plateau, -1 none); poll: ms to the next reading; why: the last event (bat log); skipped: readings not taken
+    char d3[12] = "null", d4[12] = "null";
     if (b.d3_ok) {
         snprintf(d3, sizeof(d3), "%d", b.d3);
     }
+    if (b.d4_ok) {
+        snprintf(d4, sizeof(d4), "%d", b.d4);
+    }
     printf("{\"pct\":%d,\"mv\":%d,\"raw\":%d,\"power\":\"%s\",\"charging\":%d,\"full\":%d,\"drain\":%d,\"usb\":%d,"
-           "\"d3\":%s,\"ofs\":%d,\"skipped\":%u,\"sim\":%d}\n",
+           "\"ext\":%d,\"src\":\"%s\",\"d3\":%s,\"d4\":%s,\"ofs\":%d,\"vfull\":%d,\"learned\":%d,\"poll\":%d,"
+           "\"why\":\"%s\",\"skipped\":%u,\"sim\":%d}\n",
            b.pct, b.mv, b.raw, board_power_name(b.power), b.charging, b.full, b.power == BOARD_PWR_USB_DRAIN, b.usb,
-           d3, b.ofs, b.skipped, b.sim);
+           b.ext != BOARD_EXT_NONE, board_ext_name(b.ext), d3, d4, b.ofs, b.vfull, b.vfull_learn, b.poll_ms,
+           board_bat_ev_name(b.why), b.skipped, b.sim);
     return 0;
 }
 
@@ -409,6 +500,8 @@ void app_console_register(void)
     devconsole_register("btn", "btn boot|pwr click|long|down|up | btn boot double - simulated keys", cmd_btn);
     devconsole_register("lock", "lock - lock screen (as PWR)", cmd_lock);
     devconsole_register("unlock", "unlock - leave the lock screen (as PWR)", cmd_lock);
-    devconsole_register("bat", "bat | bat sim <pct> [battery|charging|full|drain] | bat sim off - battery model",
+    devconsole_register("bat",
+                        "bat | bat sim <pct> [battery|charging|full|drain] | bat sim off | bat log [n|all|clear] - "
+                        "battery model and its log",
                         cmd_bat);
 }

@@ -98,6 +98,9 @@ extern bool g_bat_drain;        // ... on USB but draining (wins over g_bat_chg)
 extern int g_bat_samples, g_bat_settled;    // board_battery_sample() calls, and those with BOARD_BAT_SETTLED
 extern bool g_bat_last_settled;
 extern int g_bat_last_q;        // board_bat_q_t of the last call, -1 = none
+extern int g_bat_poll_ms;       // board_battery_state(): poll_ms (0 = the app's default)
+extern int g_bat_vfull_learn;   // ... vfull_learn (-1 none)
+extern int g_bat_vfull_set;     // last board_battery_set_vfull() (-1 none)
 extern int g_net_state;
 extern bool g_portal;
 
