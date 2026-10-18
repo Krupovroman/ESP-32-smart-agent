@@ -216,9 +216,11 @@ void ui_rim_attach_scroll(lv_obj_t *scroller)
         return;
     }
     if (s_scroller) {
-        // registered for SCROLL and DELETE; lv_obj_remove_event_cb() removes one entry per call
-        while (lv_obj_remove_event_cb(s_scroller, scroll_cb)) {
-        }
+        // One call removes both entries (SCROLL and DELETE). Never loop on its return value: while the
+        // object's event list is being traversed (we are often called from a click on a child),
+        // LVGL 9.5 only marks the entries for deletion and keeps reporting them as removed, so a
+        // `while` here spins forever on taskLVGL (the "freeze after tapping a chat message" bug).
+        lv_obj_remove_event_cb(s_scroller, scroll_cb);
     }
     s_scroller = scroller;
     lv_anim_delete(&s_th_opa, thumb_opa_exec);
