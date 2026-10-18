@@ -61,8 +61,15 @@ static int cmd_settings(int argc, char **argv)
         printf("%-12s %s\n", t[i].key, v);
     }
     if (argc > 1 && !strcmp(argv[1], "reset")) {
-        settings_reset();
-        printf("settings reset to defaults\n");
+        bool keep_wifi = argc > 2 && !strcmp(argv[2], "keep_wifi");
+        if (!keep_wifi) {
+            net_forget_all();     // the RAM list would otherwise be written back on the next save
+        }
+        esp_err_t e = settings_reset(keep_wifi);
+        if (e != ESP_OK) {
+            return err(esp_err_to_name(e));
+        }
+        printf("settings reset to defaults%s\n", keep_wifi ? " (Wi-Fi networks kept)" : ", Wi-Fi networks erased");
     }
     return ok();
 }
@@ -169,7 +176,7 @@ void cmd_net_register(void)
     // settings are loaded before the console starts, so these work during boot
     dc_register_early("get", "get <key> - read a setting (secrets masked)", cmd_get);
     dc_register_early("set", "set <key> [value] - write a setting", cmd_set);
-    dc_register_early("settings", "settings [reset] - list all settings", cmd_settings);
+    dc_register_early("settings", "settings [reset [keep_wifi]] - list all settings (reset: erase NVS)", cmd_settings);
     reg("wifi", "wifi scan | connect <ssid> [pass] | disconnect | forget <ssid> | saved | status", cmd_wifi);
     reg("portal", "portal start | stop | status - phone setup network", cmd_portal);
     reg("net", "net get <https-url> [auth] - HTTPS check", cmd_net);

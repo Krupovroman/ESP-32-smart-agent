@@ -214,7 +214,13 @@ size_t settings_get_str(const char *key, char *buf, size_t len)
 bool settings_is_set(const char *key)
 {
     int i = index_of(key);
-    return i >= 0 && s_table[i].type == ST_STR && s_val[i].str && s_val[i].str[0];
+    if (i < 0 || s_table[i].type != ST_STR) {
+        return false;
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    bool set = s_val[i].str && s_val[i].str[0];
+    xSemaphoreGive(s_lock);
+    return set;
 }
 
 static void notify(const char *key)
@@ -314,24 +320,49 @@ void settings_format(const char *key, char *buf, size_t len)
     memset(tmp, 0, sizeof(tmp));
 }
 
-esp_err_t settings_reset(void)
+esp_err_t settings_reset(bool keep_wifi)
 {
-    nvs_handle_t h;
-    ESP_RETURN_ON_ERROR(nvs_open(NS, NVS_READWRITE, &h), TAG, "open");
-    nvs_erase_all(h);
-    nvs_commit(h);
-    nvs_close(h);
+    esp_err_t err;
+    if (keep_wifi) {
+        nvs_handle_t h;
+        ESP_RETURN_ON_ERROR(nvs_open(NS, NVS_READWRITE, &h), TAG, "open");
+        err = nvs_erase_all(h);
+        if (err == ESP_OK) {
+            err = nvs_commit(h);
+        }
+        nvs_close(h);
+    } else {
+        // Factory reset: erase the whole partition. nvs_erase_all() only marks entries erased, so
+        // the key and the relay URL would stay readable in flash; this also removes the Wi-Fi
+        // networks (namespace "wifi") and the boot notes ("sys"). Wi-Fi keeps no NVS handle
+        // (CONFIG_ESP_WIFI_NVS_ENABLED is off) and every other user opens one per access.
+        ESP_LOGW(TAG, "factory reset: erasing the NVS partition");
+        nvs_flash_deinit();
+        err = nvs_flash_erase();
+        esp_err_t e2 = nvs_flash_init();
+        if (err == ESP_OK) {
+            err = e2;
+        }
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "reset: %s", esp_err_to_name(err));
+    }
     for (int i = 0; i < (int)N_SETTINGS; i++) {
         if (s_table[i].type == ST_STR) {
+            // swapped under the lock like settings_set_str(): readers copy under it, and a
+            // concurrent set frees only the pointer it replaced itself
+            char *fresh = dup_str(s_table[i].def_str ? s_table[i].def_str : "");
+            xSemaphoreTake(s_lock, portMAX_DELAY);
             char *old = s_val[i].str;
-            s_val[i].str = dup_str(s_table[i].def_str ? s_table[i].def_str : "");
+            s_val[i].str = fresh;
+            xSemaphoreGive(s_lock);
             free(old);
         } else {
             s_val[i].num = (int32_t)s_table[i].def_num;
         }
     }
     notify("*");
-    return ESP_OK;
+    return err;
 }
 
 void settings_on_change(void (*cb)(const char *key, void *ctx), void *ctx)

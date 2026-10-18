@@ -335,6 +335,18 @@ esp_err_t net_forget(const char *ssid)
     return store_saved();
 }
 
+esp_err_t net_forget_all(void)
+{
+    if (!s_lock) {
+        return ESP_ERR_INVALID_STATE;     // net_init() not run (safe mode): no list in RAM
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    memset(s_saved, 0, sizeof(s_saved));
+    s_n_saved = 0;
+    xSemaphoreGive(s_lock);
+    return store_saved();
+}
+
 esp_err_t net_scan(uint32_t timeout_ms, net_ap_t *out, int max, int *n)
 {
     *n = 0;

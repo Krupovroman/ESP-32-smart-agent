@@ -35,6 +35,8 @@ esp_err_t net_connect(const char *ssid, const char *pass, bool save);
 esp_err_t net_connect_saved(const char *ssid);
 esp_err_t net_disconnect(void);
 esp_err_t net_forget(const char *ssid);
+// Drops every saved network (RAM list and NVS "wifi"); the current connection stays up.
+esp_err_t net_forget_all(void);
 esp_err_t net_scan(uint32_t timeout_ms, net_ap_t *out, int max, int *n);
 void net_status(net_status_t *out);
 bool net_wait_up(uint32_t timeout_ms);
