@@ -70,6 +70,8 @@
 #define PART_X1         222     // (|(42,144)| = 150), between the battery line (y 275) and the ring (r 160)
 #define PART_Y_TOP      278
 #define PART_Y_BOT      324
+#define CHG_WRAP_MS     14400   // the clock steps back by this (9 pulses, 8 particle lives: the same frame) so that
+                                // a lock screen left on the charger for weeks never overflows it
 #define FULL_GLOW_MS    2400    // full: the ring mixes up to 40 % toward white and back, once
 #define FULL_GLOW_MAX   100
 #define FULL_STEPS      16
@@ -720,6 +722,10 @@ static void anim_tick(lv_timer_t *t)
     }
     uint32_t now = lv_tick_get();
     if (chg && s_anim_hold < 0) {
+        uint32_t el = now - s_anim_t0;
+        if (el >= 2 * CHG_WRAP_MS) {
+            s_anim_t0 += (el / CHG_WRAP_MS - 1) * CHG_WRAP_MS;     // stays past the first pulse (no dissolve there)
+        }
         charge_frame((int32_t)(now - s_anim_t0));
     }
     if (s_glow_t0 && s_glow_hold < 0) {
@@ -839,8 +845,14 @@ static void bat_refresh(void)
         break;
     }
     case BK_DRAIN:
-        // on USB power that does not keep up (the speaker loud on a PC port): a still plug, the note below
-        snprintf(buf, sizeof(buf), "#%06lX " SYM_PLUG "# %s", (unsigned long)ui_accent(UI_ACC_WARNING)->top, num);
+        // on USB power that does not keep up (the speaker loud on a PC port): a still plug, the note below; the
+        // percent red below 15 % as on battery (it is a discharge)
+        if (pct < 15) {
+            snprintf(buf, sizeof(buf), "#%06lX " SYM_PLUG "# #%06lX %s#", (unsigned long)ui_accent(UI_ACC_WARNING)->top,
+                     (unsigned long)ui_accent(UI_ACC_ERROR)->top, num);
+        } else {
+            snprintf(buf, sizeof(buf), "#%06lX " SYM_PLUG "# %s", (unsigned long)ui_accent(UI_ACC_WARNING)->top, num);
+        }
         break;
     default:
         if (pct < 15) {
