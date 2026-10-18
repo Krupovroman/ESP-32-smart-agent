@@ -1,4 +1,4 @@
-﻿// Phone setup portal: SoftAP "RoundAI-XXXX" + captive DNS + a small web form for Wi-Fi and the AI key.
+// Phone setup portal: SoftAP "RoundAI-XXXX" + captive DNS + a small web form for Wi-Fi and the AI key.
 #include "portal.h"
 #include "net.h"
 #include "settings.h"
@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/socket.h>
 #include "esp_netif.h"   // dns_server.h needs esp_ip4_addr_t
 #include "dns_server.h"
@@ -32,21 +33,58 @@ static char s_ssid[33];
 static char s_pass[12];
 static uint32_t s_ap_ip;
 
-// Only clients of the setup network may use the portal (not the home LAN).
-static bool from_ap(httpd_req_t *req)
+// IPv4 address (network order) the client connected to.
+static bool local_ip(httpd_req_t *req, uint32_t *ip)
 {
     struct sockaddr_in6 addr;
     socklen_t len = sizeof(addr);
     if (getsockname(httpd_req_to_sockfd(req), (struct sockaddr *)&addr, &len) != 0) {
         return false;
     }
-    uint32_t ip = addr.sin6_family == AF_INET6 ? addr.sin6_addr.un.u32_addr[3]
-                                               : ((struct sockaddr_in *)&addr)->sin_addr.s_addr;
+    *ip = addr.sin6_family == AF_INET6 ? addr.sin6_addr.un.u32_addr[3] : ((struct sockaddr_in *)&addr)->sin_addr.s_addr;
+    return true;
+}
+
+// Only clients of the setup network may use the portal (not the home LAN).
+static bool from_ap(httpd_req_t *req)
+{
+    uint32_t ip;
+    if (!local_ip(req, &ip)) {
+        return false;
+    }
     if (ip == s_ap_ip || (settings_get_int("dev_flags") & 4)) {
         return true;
     }
     httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "setup is only available on the device network");
     return false;
+}
+
+// "192.168.4.1" or "192.168.4.1:80"
+static bool is_addr(const char *v, const char *ip)
+{
+    size_t n = strlen(ip);
+    return !strncmp(v, ip, n) && (v[n] == 0 || !strcmp(v + n, ":80"));
+}
+
+// /save only from the portal page itself: Host must be the literal address the request came in on
+// (a rebound DNS name fails), and a browser's Origin must be that page (a cross-site form fails).
+static bool same_origin(httpd_req_t *req)
+{
+    uint32_t ip = 0;
+    char addr[24], v[64];
+    bool ok = local_ip(req, &ip);
+    esp_ip4_addr_t a = { .addr = ip };
+    snprintf(addr, sizeof(addr), IPSTR, IP2STR(&a));
+    ok = ok && httpd_req_get_hdr_value_str(req, "Host", v, sizeof(v)) == ESP_OK && is_addr(v, addr);
+    if (ok && httpd_req_get_hdr_value_len(req, "Origin") > 0) {
+        ok = httpd_req_get_hdr_value_str(req, "Origin", v, sizeof(v)) == ESP_OK && !strncmp(v, "http://", 7) &&
+             is_addr(v + 7, addr);
+    }
+    if (!ok) {
+        ESP_LOGW(TAG, "/save refused: not from the setup page");
+        httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "open the setup page at http://192.168.4.1/");
+    }
+    return ok;
 }
 
 static void json_str(char *out, size_t cap, const char *s)
@@ -165,6 +203,27 @@ static bool form_get(const char *body, const char *key, char *out, size_t cap)
     return false;
 }
 
+// Length of "https://host:port" (scheme and authority) at the start of u.
+static size_t origin_len(const char *u)
+{
+    const char *p = strstr(u, "://");
+    p = p ? p + 3 : u;
+    return (size_t)(p - u) + strcspn(p, "/?#");
+}
+
+// True when url points at another host than the stored ai_url.
+static bool ai_host_changes(const char *url)
+{
+    char cur[136];
+    settings_get_str("ai_url", cur, sizeof(cur));
+    const char *c = cur[0] ? cur : "https://openrouter.ai/api/v1";
+    while (*url == ' ') {
+        url++;                 // the settings layer trims the same way
+    }
+    size_t n = origin_len(url);
+    return n != origin_len(c) || strncasecmp(url, c, n);
+}
+
 typedef struct {
     char ssid[33];
     char pass[65];
@@ -182,7 +241,7 @@ static void connect_task(void *arg)
 
 static esp_err_t h_save(httpd_req_t *req)
 {
-    if (!from_ap(req)) {
+    if (!from_ap(req) || !same_origin(req)) {
         return ESP_OK;
     }
     if (req->content_len > 4096) {
@@ -201,14 +260,20 @@ static esp_err_t h_save(httpd_req_t *req)
         }
         got += r;
     }
-    char val[256];
+    enum { K_KEY, K_MODEL, K_URL, K_N };
+    static const char *const keys[K_N] = { "ai_key", "ai_model", "ai_url" };
+    char val[K_N][256];
+    bool has[K_N];
+    for (int i = 0; i < K_N; i++) {
+        has[i] = form_get(body, keys[i], val[i], sizeof(val[i])) && val[i][0];
+    }
     const char *problem = NULL;
-    static const char *const keys[] = { "ai_key", "ai_model", "ai_url" };
-    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
-        if (form_get(body, keys[i], val, sizeof(val)) && val[0]) {
-            if (settings_set_str(keys[i], val) != ESP_OK) {
-                problem = keys[i];
-            }
+    // The stored key never follows ai_url to a new host: that host must come with its own key.
+    bool need_key = has[K_URL] && !has[K_KEY] && settings_is_set("ai_key") && ai_host_changes(val[K_URL]);
+    for (int i = 0; i < K_N && !need_key && !problem; i++) {
+        // stop at the first error: a failed key must not leave the old key with a new ai_url
+        if (has[i] && settings_set_str(keys[i], val[i]) != ESP_OK) {
+            problem = keys[i];
         }
     }
     conn_job_t *job = calloc(1, sizeof(conn_job_t));
@@ -221,22 +286,29 @@ static esp_err_t h_save(httpd_req_t *req)
     free(body);
 
     httpd_resp_set_type(req, "text/plain; charset=utf-8");
-    if (problem) {
+    if (need_key || problem) {
+        if (job) {
+            memset(job, 0, sizeof(*job));
+        }
         free(job);
-        char msg[96];
-        snprintf(msg, sizeof(msg), "РћС€РёР±РєР° РІ РїРѕР»Рµ %s", problem);
+        char msg[128];
+        if (need_key) {
+            strlcpy(msg, "Для нового адреса API введите ключ.", sizeof(msg));
+        } else {
+            snprintf(msg, sizeof(msg), "Ошибка в поле %s", problem);
+        }
         httpd_resp_set_status(req, "400 Bad Request");
         return httpd_resp_sendstr(req, msg);
     }
     if (wifi) {
         char msg[192];
-        snprintf(msg, sizeof(msg), "РЎРѕС…СЂР°РЅРµРЅРѕ. РџРѕРґРєР»СЋС‡Р°СЋСЃСЊ Рє В«%sВ»вЂ¦", job->ssid);
+        snprintf(msg, sizeof(msg), "Сохранено. Подключаюсь к «%s»…", job->ssid);
         httpd_resp_sendstr(req, msg);
         xTaskCreate(connect_task, "portal_conn", 4096, job, 5, NULL);
         return ESP_OK;
     }
     free(job);
-    return httpd_resp_sendstr(req, "РЎРѕС…СЂР°РЅРµРЅРѕ.");
+    return httpd_resp_sendstr(req, "Сохранено.");
 }
 
 static esp_err_t h_redirect(httpd_req_t *req)
