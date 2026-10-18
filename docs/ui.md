@@ -582,6 +582,7 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
   - Распознавание ("как чат (аудио в модель)");
   - Озвучка (host · model);
   - Ключ API ("sk-or-…a9f3");
+  - "Поиск в сети" (globe icon, no right slot), subtitle "Авто" / "Всегда" / "Выкл" (`ai_web` 1 / 2 / 0, protocol §2.8). A tap cycles Авто → Всегда → Выкл, like "Динамик" in S, and the value is saved through the debounced writer. "Поиск в интернете" is 187 px in `ui_20`, over the 164 px row title, hence the shorter title. Implemented order: Адрес, Ключ API, Модель ИИ, Поиск в сети, Проверить ключ, С телефона;
   - "Настроить с телефона";
   - "Проверить ключ": `GET /api/v1/key` shows "Лимит: осталось $4.20" or "Лимит не задан". Never the account balance: that needs a management key.
 - **PE:** Адрес (URL), Ключ, Модель, "Как у чата" (toggle).
@@ -1149,7 +1150,7 @@ Orb states:
 | LISTENING | `#34E0C3` → `#29AF98`, r 70 + 4L [30 + 2L] | h1 `#10433B` r 80; h2 hidden | 24 bars [16], width 6 [4], round caps, `#34E0C3`; r_in 78 [34]; length 4 + 16·Lᵢ [3 + 7·Lᵢ], so r_out ≤ 98 [44] | WIDE. Latched: ■ (F04D, `ui_20`, `ink`) at (cx, cy + 30); compact: ■ replaces the eyes | "Слушаю…" / "Нажмите — отправлю" / "Ещё 5 с"; rim RECORD |
 | CANCEL-ARMED | `#6B7380` flat | hidden | bars `#6B7380` | ✕ `ui_28` `ink` | "Отпустите — отмена" |
 | UPLOADING | mode mid (`#44568C` / `#8C5D2A`) | h1 = mode dim | progress arc r 82 [36], width 4 [3], mode accent, from 270° clockwise to `s_upload_pct`; track `surface-2` | NEUTRAL, gaze (0, −6k), eyes `text-1` | "Отправляю 62 %" |
-| THINKING | mode mid, r 66↔70 over 1.2 s | h1 mode dim | arc A r 82 [36] w 4, 70°, +300°/s; arc B r 90 [41] w 3 [2], 40°, −200°/s; opa 255 / 140 | LOOK | "Думаю…" → 6 s "Ещё немного…" → 20 s "Долго… PWR — отмена" |
+| THINKING | mode mid, r 66↔70 over 1.2 s | h1 mode dim | arc A r 82 [36] w 4, 70°, +300°/s; arc B r 90 [41] w 3 [2], 40°, −200°/s; opa 255 / 140 | LOOK | "Думаю…" → 6 s "Ещё немного…" → 20 s "Долго… PWR — отмена". While the assistant searches the web (`UI_WEB` 1, protocol §2.8): "Ищу в интернете…" (149 px in `ui_16`), then "Долго… PWR — отмена" 20 s after the search began; `UI_WEB` 0 (or leaving THINKING) restarts the normal stages |
 | SPEAKING | `#B794FF` → `#8F73C7`, r 70 + 4T [30 + 2T] | h1 `#372C4D` | echo rings r 76 + 12T (w 3, opa 160) and r 84 + 14T (w 2, opa 90) [32 + 6T / 37 + 7T] | mood expression for 1.5 s, then NEUTRAL + mouth; translator: gaze toward the target chip (gy + 6k), target chip pulses (A19) | "Нажмите — стоп" (first uses) |
 | ANSWER-READY (text-only) | mode accent | h1 flashes to mode mid 300 ms, back in 600 ms | – | HAPPY for 600 ms, gaze down (gy + 6k) | – |
 | ERROR | `#FF5C5C` → `#C74848`, shake | h1 `#4D1C1C` | – | ⚠ `ui_28` `ink` | short error in coral |
@@ -1184,6 +1185,7 @@ Interaction and mood:
 6. **Separate histories per mode.** Switching mode rebuilds the chat children (≤ 20, < 10 ms) and picks the empty or conversation layout.
 7. **Typed question** (M → "Написать текстом" → K): the FSM goes straight to THINKING with a text request, and the bubble shows the typed text with no waveform. In translator mode, typed text is auto-detected between A and B.
 8. **Tapping a message** opens HIST (assistant) or RD (translator), never during or within 300 ms of a scroll.
+9. **Web replies** (protocol §2.8): `UI_BOT_SOURCE` right after `UI_BOT_MSG` gives the host of the first source. The reply's `ui_16` `text-3` note line then reads "Источник: gismeteo.ru" (with "голос недоступен · " in front when TTS failed too) and wraps on a long host. It is shown on H and in HIST and never spoken. When the search failed, the first answer is shown with "(не удалось найти в интернете)" on its last line, the way "(ответ обрезан)" is.
 
 ### 5.5 Translator turn-taking: one auto-detect control, plus a forced override on the chips
 

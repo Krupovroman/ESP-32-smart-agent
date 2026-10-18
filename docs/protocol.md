@@ -34,6 +34,7 @@ Corrections from `stack_2026-10-17.json` `verify:*` are already applied:
 | Streaming | **Non-streaming in v1** for chat and STT (reasons in §2.6). The TTS body is always read progressively. The SSE parser in §2.7 is for v1.1. |
 | TTS | `microsoft/mai-voice-2.1-flash` with `response_format:"pcm"` and one voice per language (§5.5). For languages MAI lacks: `google/gemini-3.8-flash-lite-tts` for ja, ar and other; `elevenlabs/eleven-flash-v2.5` for uk; `x-ai/grok-voice-tts-1.0` when Google is unavailable. |
 | STT fallback | `openai/whisper-large-v3-turbo` via JSON `/audio/transcriptions`. |
+| Web search | OpenRouter's `web` plugin, `max_results` 3 (§2.8). Default **auto**: the assistant schema has `needs_web`; when the model sets it, the transcript goes again as one text request with the plugin. About $0.014 per searched turn against $0.00012 for a normal one, so it is never on for every turn by default. |
 | Transport | HTTP/1.1. One `esp_http_client` handle per host, kept alive. ESP-IDF CMN cert bundle. Request body streamed with an exact `Content-Length`. |
 
 ---
@@ -196,7 +197,7 @@ Error shape:
 {
   "models": ["google/gemini-3.1-flash-lite", "google/gemini-3.5-flash-lite"],
   "messages": [
-    {"role": "system", "content": "<SYSTEM_ASSISTANT_RU from §4.1, {DATETIME} substituted>"},
+    {"role": "system", "content": "<SYSTEM_ASSISTANT_RU from §4.1, {WEB} and {DATETIME} substituted>"},
     {"role": "user", "content": "Сколько будет двадцать пять процентов от восьмисот?"},
     {"role": "assistant", "content": "Двадцать пять процентов от восьмисот — это двести."},
     {"role": "user", "content": [
@@ -213,10 +214,11 @@ Error shape:
         "type": "object",
         "properties": {
           "transcript": {"type": "string", "description": "Verbatim transcript of the user's latest message in its original language. Empty string if there is no intelligible speech."},
+          "needs_web": {"type": "boolean", "description": "true when a correct answer needs current or live information: weather, news, exchange rates, prices, schedules, sports results, today's events, anything after your knowledge cutoff. Then reply is only a very short holding phrase: the device searches the web and asks again."},
           "reply": {"type": "string", "description": "Answer shown on screen and read aloud: plain speakable text, no markdown, no emoji, numbers written as words. Empty string if transcript is empty."},
           "lang": {"type": "string", "enum": ["ru","en","de","fr","es","it","pt","pl","tr","uk","zh","ja","ko","ar","other"], "description": "ISO 639-1 code of the language of reply."}
         },
-        "required": ["transcript", "reply", "lang"],
+        "required": ["transcript", "needs_web", "reply", "lang"],
         "additionalProperties": false
       }
     }
@@ -228,7 +230,7 @@ Error shape:
 }
 ```
 
-The base64 prefix shown is the real start of a 10 s, 16 kHz mono 16-bit WAV (`pcm_len` = 320000).
+The base64 prefix shown is the real start of a 10 s, 16 kHz mono 16-bit WAV (`pcm_len` = 320000). This is the default **auto** web mode (§2.8): with `ai_web` off, on another provider, and on requests that already carry the web plugin, `needs_web` is not in the schema (neither in `properties` nor in `required`). It comes before `reply` so the model decides first and then writes either the answer or the holding phrase.
 
 **Body rules:**
 
@@ -245,6 +247,7 @@ The base64 prefix shown is the real start of a 10 s, 16 kHz mono 16-bit WAV (`pc
 4. **`provider`.** Do not set `sort`. Default routing load-balances standard-tier endpoints by price. Flex and priority tiers are used only with `:floor`/`:nitro` or `service_tier`. Don't use those for voice: `google-vertex/global/flex` showed status −5 and 25% uptime over the last 30 minutes during this check.
 5. **Do not send** `temperature`, `top_k`, `stream_options` (deprecated, no effect), `usage` or `transforms`. With `require_parameters:true`, every parameter you send must be in the endpoint's `supported_parameters`.
 6. **Content-Length** is computed as in §1.4. For a 10 s clip the body is about 430 KB plus the prefix (system prompt and history, at most about 10 KB).
+7. **Web search** (§2.8, OpenRouter hosts only). Always mode, a forced search (console `ai ask -w`) and the auto-mode re-run add `"plugins":[{"id":"web","max_results":<ai_web_n>}]`. Nothing else in the body changes: `response_format` (strict), `reasoning` and `provider.require_parameters` stay.
 
 ### 2.2 Example response (non-streaming)
 
@@ -294,7 +297,7 @@ This example is illustrative and built from the OpenAPI `ChatResult`/`ChatUsage`
    - `content_filter` (or `message.refusal` is non-null): message P5 in §9.1.
    - `error`: error path.
 4. `content = message.content`, a string (null means failure). Trim whitespace. If it starts with a code fence, drop the first line and the trailing fence. Take the substring from the first `{` to the last `}`. This is defensive only; strict mode should prevent it.
-5. Parse with `cJSON_Parse(content)`. `transcript` and `reply` must be strings. `lang` is normalised to lowercase; anything outside the enum becomes `other`.
+5. Parse with `cJSON_Parse(content)`. `transcript` and `reply` must be strings. `lang` is normalised to lowercase; anything outside the enum becomes `other`. `needs_web` counts only as JSON `true` (absent = false, §2.8). The first `url_citation` of `message.annotations` gives the source host.
 6. `transcript == ""`: show "Не расслышал. Повторите, пожалуйста." No TTS, no history entry.
 7. Add `usage.cost` (a double, in USD) to the session and day counters. Log `X-Generation-Id`, `provider` and `model`.
 8. If parsing fails, retry once with the same body, then show error P2.
@@ -343,6 +346,50 @@ The text part `"Голосовое сообщение пользователя."
    - When a depth-1 key string equal to `reply` is followed by `:` and `"`, switch to emit mode.
    - In emit mode, decode `\" \\ \/ \b \f \n \r \t` and `\uXXXX` (including surrogate pairs) to UTF-8, and push the decoded bytes into the TTS sentence splitter (§5.4) until the closing unescaped `"`.
    - Keys arrive in schema order (`transcript`, `reply`, `lang`), so the transcript can be shown first.
+
+### 2.8 Web search (OpenRouter `web` plugin)
+
+Without fresh data the model either says it has no internet (the old prompt rule) or invents an answer. Measured on 2026-10-18 through the relay with `google/gemini-3.1-flash-lite`, one typed question:
+
+| Request | Cost | Time | Answer |
+|---|---|---|---|
+| Normal turn | about $0.00012 | 1.1 s | invented, or "no internet" |
+| Same body + `"plugins":[{"id":"web","max_results":3}]` | about $0.014 | 2.0 s | real current data |
+
+The plugin works together with `response_format` `json_schema` `strict:true` and `provider.require_parameters:true`. Its price is mostly the search results (about $0.004 each), so `max_results` stays small.
+
+**Settings.** `ai_web`: 0 off, 1 auto (default), 2 always. `ai_web_n`: `max_results`, 1–5, default 3. UI: P → "Поиск в сети" (ui.md §3.7). Console: `get ai_web`, `set ai_web 2`, `ai ask -w <text>` forces a search on one turn.
+
+**Scope.** Only for OpenRouter and the relays that keep its `/api/v1` path (`or_is_openrouter`). Other providers ignore the setting and get the "no internet" rule. Translator turns never search.
+
+**Request shape per mode:**
+
+| Mode | First request | Second request |
+|---|---|---|
+| Off (or another provider) | no `needs_web`, no plugin; `{WEB}` = "нет доступа к интернету" rule | never |
+| Auto | `needs_web` in the schema (§2.1); `{WEB}` = the `needs_web` rule; no plugin | when the first answer has `needs_web:true` |
+| Always, or `ai ask -w` | plugin attached (voice included); no `needs_web`; `{WEB}` = "results attached" rule | never |
+
+**Auto-mode re-run:**
+
+1. **Trigger.** The first answer parsed (§2.3), `needs_web` is `true`, it is not truncated (P3), and the transcript is not empty. The model's `reply` is then only a holding phrase ("Сейчас посмотрю.").
+2. The ai task emits `AI_EV_WEB` (i = 1). The status line shows "Ищу в интернете…" (ui.md §5.3), and the app's turn deadline gets 35 s from this moment on top of its 75 s.
+3. **Body.** Same `models`/`model`, `reasoning`, `max_tokens`, `provider` and history as the first request. The system prompt has the "results attached" `{WEB}` line. The last user message is the transcript as a plain string: the typed text, the Whisper text (§6), or the model's `transcript` of the clip. **The clip is not uploaded again.** The schema has no `needs_web`. The plugin is attached with `max_results` = `ai_web_n`.
+4. **One attempt**, with the "web" timeouts of §9.2 (30 s in total). No retries: a failure falls back at once.
+5. **Success** (a reply that parses and is not empty): the reply, `lang`, `finish_reason`, `model`, `provider` and generation id come from the re-run; the transcript stays the first one. `usage.cost` and the token counts of **both** requests are added to the turn and the session. The history stores the transcript with the web reply.
+6. **Failure** (any transport or HTTP error, a 200 with `error`, P2, an empty reply): the first answer is used, with the note "(не удалось найти в интернете)" on screen. It is spoken (TTS reads the reply only) and not stored in the history. No error card. The cost of a re-run that was billed but did not parse is still counted. Only when the first request fails too is there an error, through the normal §9 path. A cancel (barge-in, PWR) during the re-run ends the turn silently (AB).
+
+**Always mode** sends the plugin on the normal request, retried by the normal policy (§9.1). If that request gets a 400 or 404 whose message mentions `plugin` or `web search`, it is sent again once without the plugin and with the "no internet" rule. This is an automatic fix like the reasoning and schema fixes, not a retry. The ai task emits `AI_EV_WEB` with i = 0 before the first attempt.
+
+**Response.** The plugin adds `choices[0].message.annotations[]`:
+
+```json
+{"type": "url_citation", "url_citation": {"url": "https://www.gismeteo.ru/weather-moscow-4368/now/", "title": "…", "content": "…", "start_index": 0, "end_index": 0}}
+```
+
+- The host of the first `url_citation` (lowercase, without `www.` and the port) is the source hint: `ai_result_t.source`, shown under the reply in `ui_16` `text-3` as "Источник: gismeteo.ru". It is never spoken.
+- The plugin's own search prompt asks for markdown citations (`[gismeteo.ru](https://…)`). On web replies the device removes them before the text is shown, spoken or stored: a link whose label looks like a host goes completely, any other label stays as text, bare `http(s)://` URLs go, and so do the empty brackets, doubled spaces and orphaned commas they leave. When there is no annotation, the host of the first removed link becomes the source.
+- `usage.cost` already includes the search.
 
 ---
 
@@ -426,13 +473,21 @@ Stored in NVS key `sys_prompt`, at most 4000 bytes including the NUL; the defaul
 - Только простой разговорный текст для чтения вслух: без markdown, списков, заголовков, таблиц, ссылок, кода, эмодзи и спецсимволов.
 - Числа, даты, время, проценты, деньги и единицы измерения пиши словами, как их произносят: «двадцать пятого октября», «пятнадцать градусов», «три с половиной километра».
 - Не используй сокращения вроде «т. е.», «г.», «руб.» — пиши слова полностью. Латиницу — только в именах и названиях.
-- У тебя нет доступа к интернету: если спрашивают о свежих новостях, погоде или курсах, скажи об этом одной фразой.
+{WEB}
 - Если просьба неясна, переспроси одной короткой фразой.
 
 Сейчас {DATETIME}.
 ```
 
 `{DATETIME}` is filled in as, for example, `суббота, 17 октября 2026 года, 17:31 (UTC+3)`. If SNTP is not synced, remove the whole last line.
+
+`{WEB}` is replaced by one line that depends on the web search shape of the request (§2.8). A user prompt (`sys_prompt` / `ai_sys`) gets the same substitution; without `{WEB}` in it nothing is added, and the `needs_web` field description still tells the model what to do.
+
+| Request | `{WEB}` line |
+|---|---|
+| Off, or another provider | `- У тебя нет доступа к интернету: если спрашивают о свежих новостях, погоде или курсах, скажи об этом одной фразой.` |
+| Auto (first request) | `- Если для точного ответа нужны свежие или текущие данные — погода, новости, курсы валют, цены, расписания, результаты матчей, события сегодняшнего дня или что-то позже твоих знаний, — поставь needs_web = true, а в reply напиши только очень короткую фразу ожидания, например «Сейчас посмотрю.». Устройство найдёт данные в интернете и спросит тебя снова. Не выдумывай свежие данные. В остальных случаях needs_web = false.` |
+| With the plugin (always, re-run) | `- К запросу приложены результаты поиска в интернете: свежие данные бери из них и отвечай своими словами. Не пиши ссылки, адреса сайтов и сноски. Если нужного в результатах нет, скажи об этом одной фразой.` |
 
 ### 4.2 Translator system prompt (internal template, English)
 
@@ -894,6 +949,7 @@ How to read the "Detection" column:
 | P3 | `finish_reason:"length"` | no | partial text + «(ответ обрезан)» | not stored in history |
 | P4 | `transcript == ""` | no | «Не расслышал. Повторите, пожалуйста.» | no TTS |
 | P5 | `finish_reason:"content_filter"` or `message.refusal` | no | «ИИ отказался отвечать на этот запрос.» | |
+| W1 | Auto-mode web re-run (§2.8) failed for any reason above, the first request succeeded | no | none: the first answer + «(не удалось найти в интернете)» | No card; not stored in history. Always mode: a 400/404 about the plugin resends once without it |
 | T1 | TTS still failing after retries and fallback routes | none | text stays + toast «Озвучка недоступна» | continue text-only |
 | T2 | TTS response is not PCM (`audio/mpeg` etc.) | no | «Этот голос отдаёт неподдерживаемый формат.» | try the next route (§5.6) |
 
@@ -916,13 +972,15 @@ How to read the "Detection" column:
 
 Enforce the total with `esp_timer_get_time()` after every read and write, and abort with `esp_http_client_close()`.
 
-| Phase | Chat (non-stream) | Chat SSE (v1.1) | TTS chunk | STT | GET models / key |
-|---|---|---|---|---|---|
-| Connect (DNS + TCP + TLS) | 10 s | 10 s | 10 s | 10 s | 10 s |
-| Each upload write | 10 s | 10 s | 10 s | 10 s | n/a |
-| First byte after the body is sent | 30 s | 30 s (comments count) | 15 s | 30 s | 10 s |
-| Stall between reads | 15 s | 20 s (comments reset it) | 10 s | 15 s | 10 s |
-| Total wall clock, upload included | 45 s | 60 s | 60 s | 45 s | 20 s |
+| Phase | Chat (non-stream) | Web re-run (§2.8) | Chat SSE (v1.1) | TTS chunk | STT | GET models / key |
+|---|---|---|---|---|---|---|
+| Connect (DNS + TCP + TLS) | 10 s | 10 s | 10 s | 10 s | 10 s | 10 s |
+| Each upload write | 10 s | 10 s | 10 s | 10 s | 10 s | n/a |
+| First byte after the body is sent | 30 s | 30 s | 30 s (comments count) | 15 s | 30 s | 10 s |
+| Stall between reads | 15 s | 15 s | 20 s (comments reset it) | 10 s | 15 s | 10 s |
+| Total wall clock, upload included | 45 s | 30 s, one attempt | 60 s | 60 s | 45 s | 20 s |
+
+The web re-run runs after the first request (up to 45 s per attempt plus 20 s of retries), so a searched turn can take up to about 95 s. The app's "no result" deadline (75 s from the submit) is therefore extended to 35 s after `AI_EV_WEB`. Always mode uses the chat column: the search adds about 1 s to the request.
 
 ---
 
@@ -945,6 +1003,7 @@ Enforce the total with `esp_timer_get_time()` after every read and write, and ab
 | Translator utterance (spoken translation) | $0.00031 | $0.0012 | $0.00087 | **$0.0015** | **$0.0012** |
 | Translator, text-only | $0.00031 | n/a | n/a | $0.00031 | same |
 | Worst-case assistant LLM (30 s audio, full 3000-char history, 800-char reply) | $0.0015 | $0.012 | $0.008 | $0.014 | $0.010 |
+| Assistant with web search (§2.8, auto: first answer + re-run with 3 results), typed, text-only | about $0.014 (measured: $0.00012 + about $0.0136) | n/a | n/a | about $0.014 | same |
 
 **Monthly figures:**
 
