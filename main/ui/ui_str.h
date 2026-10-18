@@ -45,6 +45,8 @@ typedef enum {
     S_T_SPEED, S_T_LANGS, S_T_LANG_A, S_T_LANG_B, S_T_DIR, S_T_DISPLAY, S_T_ABOUT, S_T_LICENSES, S_T_PHONE,
     // mode sheet
     S_M_ASSISTANT_SUB, S_M_TYPE, S_M_NEW_SUB, S_M_FIX, S_VOLUME, S_BRIGHT, S_VOICE_REPLY, S_VOICE_TR,
+    // language picker without the CJK font pack
+    S_LP_NO_FONT_FMT, S_NO_FONT_PACK,
     // settings
     S_S_NOT_CONNECTED, S_S_CONNECTING, S_S_PHONE_SUB, S_S_SPEAKER, S_S_SPK_YES, S_S_SPK_NO, S_S_DIM_FMT,
     S_S_DIM_NEVER, S_S_FACE, S_S_UILANG, S_LANG_SELF, S_S_CLEAR,
@@ -119,5 +121,8 @@ size_t ui_str_sanitize(const char *in, char *out, size_t out_len, const lv_font_
 bool ui_str_font_has_all(const char *s, const lv_font_t *font);
 // Number of UTF-8 code points in s.
 size_t ui_str_cp_count(const char *s);
+// Text columns of s: 2 for a CJK (East Asian wide or full-width) code point, 1 for any other. A hanzi at 28 px is
+// about twice as wide as an average Latin or Cyrillic letter.
+size_t ui_str_cols(const char *s);
 // Copies src into dst (always NUL-terminated), cutting only at a code point boundary; returns the length.
 size_t ui_str_copy(char *dst, size_t len, const char *src);

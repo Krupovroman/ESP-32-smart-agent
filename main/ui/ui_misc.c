@@ -1,5 +1,6 @@
 // Small helpers shared by the second-half screens (ui_scr.h): id shortening, the translator language table of
 // protocol 4.2, the translator pair, the reference-counted rim comet.
+#include "ui_font.h"
 #include "ui_internal.h"
 #include "ui_rim.h"
 #include "ui_scr.h"
@@ -48,15 +49,20 @@ void ui_url_host(const char *url, char *out, size_t len)
 }
 
 // Protocol 4.2: code, Russian UI name, English UI name. Only scripts ui_16/20/28 can draw (Latin, Latin
-// Extended-A, Cyrillic: ui.md 1.3): zh/ja/ko/ar stay out until a font or a romanised line covers them, because the
-// sanitiser would erase their transcripts and translations
+// Extended-A, Cyrillic, ui.md 1.3), plus Chinese, Japanese and Korean through the CJK fallback of the storage font
+// pack (ui_font.h). Without the pack those three cannot be picked: the sanitiser would erase their transcripts and
+// translations. Arabic stays out (right-to-left shaping).
 static const struct {
     const char *code, *ru, *en;
+    bool cjk;
 } s_langs[] = {
-    { "ru", "Русский", "Russian" }, { "en", "Английский", "English" }, { "de", "Немецкий", "German" },
-    { "fr", "Французский", "French" }, { "es", "Испанский", "Spanish" }, { "it", "Итальянский", "Italian" },
-    { "pt", "Португальский", "Portuguese" }, { "pl", "Польский", "Polish" }, { "tr", "Турецкий", "Turkish" },
-    { "uk", "Украинский", "Ukrainian" },
+    { "ru", "Русский", "Russian", false }, { "en", "Английский", "English", false },
+    { "de", "Немецкий", "German", false }, { "fr", "Французский", "French", false },
+    { "es", "Испанский", "Spanish", false }, { "it", "Итальянский", "Italian", false },
+    { "pt", "Португальский", "Portuguese", false }, { "pl", "Польский", "Polish", false },
+    { "tr", "Турецкий", "Turkish", false }, { "uk", "Украинский", "Ukrainian", false },
+    { "zh", "Китайский", "Chinese", true }, { "ja", "Японский", "Japanese", true },
+    { "ko", "Корейский", "Korean", true },
 };
 
 int ui_lang_count(void)
@@ -69,11 +75,16 @@ const char *ui_lang_code(int i)
     return i >= 0 && i < ui_lang_count() ? s_langs[i].code : "";
 }
 
+bool ui_lang_available(int i)
+{
+    return i >= 0 && i < ui_lang_count() && (!s_langs[i].cjk || ui_cjk_offered());
+}
+
 static bool lang_offered(const char *code)
 {
     for (int i = 0; i < ui_lang_count(); i++) {
         if (code && !strcmp(code, s_langs[i].code)) {
-            return true;
+            return ui_lang_available(i);
         }
     }
     return false;

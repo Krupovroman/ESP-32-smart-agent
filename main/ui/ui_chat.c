@@ -474,8 +474,9 @@ static void refresh_turn(lv_obj_t *w, const cm_entry_t *e, bool animate)
     lv_label_set_text(l1, buf);
     lv_label_set_text(l2, e->text ? e->text : "");
     const char *tr = e->text2 ? e->text2 : "";
-    // short translations in ui_28 when every glyph exists there (3.4)
-    bool big = ui_str_cp_count(tr) <= 48 && ui_str_font_has_all(tr, &ui_28);
+    // short translations in ui_28 when every glyph exists there, its CJK fallback included (3.4): at most 48
+    // columns, a hanzi counting 2, so a 24-hanzi translation keeps the 4 lines a 48-letter one takes
+    bool big = ui_str_cols(tr) <= 48 && ui_str_font_has_all(tr, &ui_28);
     lv_obj_remove_style(l3, &st_text28, 0);
     lv_obj_remove_style(l3, &st_text20, 0);
     lv_obj_add_style(l3, big ? &st_text28 : &st_text20, 0);

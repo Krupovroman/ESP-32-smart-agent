@@ -144,6 +144,9 @@ static const str_def_t s_tab[S__N] = {
     E(S_BRIGHT, "Яркость", "Brightness", SLOT_ROW),
     E(S_VOICE_REPLY, "Озвучка", "Voice", SLOT_ROW),
     E(S_VOICE_TR, "Перевод вслух", "Speak aloud", SLOT_ROW),
+    // LP row of zh / ja / ko without the storage font pack (ui.md 1.3); %s = "ZH"
+    E(S_LP_NO_FONT_FMT, "%s " TXT_MIDDOT " нет шрифта", "%s " TXT_MIDDOT " no font", SLOT_ROW_SUB),
+    E(S_NO_FONT_PACK, "Нет пакета шрифтов", "Font pack missing", SLOT_TOAST_WIDE),
 
     E(S_S_NOT_CONNECTED, "Не подключено", "Not connected", SLOT_ROW_SUB),
     E(S_S_CONNECTING, "Подключаюсь" TXT_ELLIPSIS, "Connecting" TXT_ELLIPSIS, SLOT_QR1),
@@ -445,6 +448,24 @@ size_t ui_str_cp_count(const char *s)
     size_t n = 0;
     for (; s && *s; s++) {
         n += ((uint8_t)*s & 0xC0) != 0x80;
+    }
+    return n;
+}
+
+// East Asian wide and full-width code points (UAX #11, the blocks the CJK pack covers)
+static bool is_wide(uint32_t c)
+{
+    return (c >= 0x1100 && c <= 0x115F) || (c >= 0x2E80 && c <= 0x303E) || (c >= 0x3041 && c <= 0x33FF) ||
+           (c >= 0x3400 && c <= 0x4DBF) || (c >= 0x4E00 && c <= 0x9FFF) || (c >= 0xA000 && c <= 0xA4CF) ||
+           (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFE30 && c <= 0xFE4F) ||
+           (c >= 0xFF00 && c <= 0xFF60) || (c >= 0xFFE0 && c <= 0xFFE6);
+}
+
+size_t ui_str_cols(const char *s)
+{
+    size_t n = 0, i = 0;
+    while (s && s[i]) {
+        n += is_wide(utf8_next(s, &i)) ? 2 : 1;
     }
     return n;
 }
