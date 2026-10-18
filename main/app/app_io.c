@@ -216,6 +216,7 @@ void app_io_setting(const char *key)
     }
     if (all || !strcmp(key, "dim_s")) {
         s_dim_s = settings_get_int("dim_s");
+        app_io_activity();          // a new timeout counts from now ("never" also lights a dimmed screen)
     }
     if (all || !strcmp(key, "ui_lang")) {
         char l[8];

@@ -769,6 +769,16 @@ static void t_power(void)
     say(1000);
     step(70000);
     CHECK(app_io_screen() == APP_SCREEN_ON);
+    // "set dim_s 0" on a dimmed screen lights it, and it then stays on
+    post_ev(EV_CANCEL, 0, 0);
+    step(61000);
+    CHECK(app_io_screen() == APP_SCREEN_DIM);
+    settings_set_int("dim_s", 0);
+    pump();
+    step(400000);
+    CHECK(app_io_screen() == APP_SCREEN_ON && g_backlight == 80);
+    settings_set_int("dim_s", 60);
+    pump();
     // battery: toast at 10 %
     boot();
     g_bat_mv = 3360;
