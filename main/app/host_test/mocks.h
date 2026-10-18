@@ -81,7 +81,7 @@ const char *ev_last(const char *name);
 // ---- board, net
 extern int g_backlight;
 extern int g_power_off, g_latch_on;
-extern bool g_boot_down;
+extern bool g_boot_down, g_pwr_held;
 extern int g_bat_mv;
 extern int g_net_state;
 extern bool g_portal;

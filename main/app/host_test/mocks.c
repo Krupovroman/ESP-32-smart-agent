@@ -606,7 +606,7 @@ uint32_t lv_display_get_inactive_time(const lv_display_t *d)
 
 int g_backlight = -1;
 int g_power_off, g_latch_on;
-bool g_boot_down;
+bool g_boot_down, g_pwr_held;
 int g_bat_mv = -1;
 int g_net_state = NET_UP;
 bool g_portal;
@@ -635,7 +635,7 @@ esp_err_t board_buttons_start(board_btn_cb_t cb, void *ctx)
 
 bool board_button_down(board_btn_t b)
 {
-    return b == BOARD_BTN_BOOT && g_boot_down;
+    return b == BOARD_BTN_BOOT ? g_boot_down : g_pwr_held;
 }
 
 const char *board_btn_name(board_btn_t b)
@@ -703,7 +703,7 @@ void mocks_reset(void)
     g_wait_release = 0;
     g_backlight = -1;
     g_power_off = g_latch_on = 0;
-    g_boot_down = false;
+    g_boot_down = g_pwr_held = false;
     g_bat_mv = -1;
     g_net_state = NET_UP;
     g_portal = false;

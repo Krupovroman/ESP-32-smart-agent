@@ -116,7 +116,7 @@ static void boot(void)
     atomic_store(&s_screen, APP_SCREEN_ON);
     atomic_store(&s_bat_mv, -1);
     s_last_act = 0;
-    s_pwr_woke = s_latch_off = false;
+    s_pwr_woke = s_latch_off = s_off_wait_up = false;
     s_off_check = s_note_until = 0;
     s_net = -1;
     s_portal = false;
@@ -332,6 +332,61 @@ static void t_voice(void)
     pump();
     CHECK(s_a.st == APP_IDLE && ui_last(UI_BOT_MSG) && ui_last(UI_BOT_MSG)->i == 1);
 
+    // PWR while the reply waits for its audio: the text is shown, nothing is spoken, no "Отменено"
+    boot();
+    set_int("text_only", 0);
+    s_a.text_only = false;
+    say(1000);
+    turn = s_a.turn;
+    emit_result(turn, AI_MODE_ASSISTANT, "Тест", "Ответ.", "ru", "", "ru", false);
+    pump();
+    int st0 = ui_count(UI_STATUS);
+    btn(BOARD_BTN_PWR, BTN_EV_DOWN, 0);
+    btn(BOARD_BTN_PWR, BTN_EV_UP, 120);
+    btn(BOARD_BTN_PWR, BTN_EV_CLICK, 120);
+    CHECK(s_a.st == APP_IDLE && g_tts_cancel_upto >= turn && ui_count(UI_BOT_MSG) == 1);
+    CHECK(!strcmp(ui_last(UI_BOT_MSG)->s, "Ответ.") && ui_count(UI_STATUS) == st0);
+
+    // a hold barge-in in that phase keeps the reply on screen too
+    say(1000);
+    turn = s_a.turn;
+    emit_result(turn, AI_MODE_ASSISTANT, "Тест 2", "Ответ 2.", "ru", "", "ru", false);
+    pump();
+    post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_ORB);
+    step(420);
+    CHECK(s_a.st == APP_LISTENING && s_a.turn != turn && !strcmp(ui_last(UI_BOT_MSG)->s, "Ответ 2."));
+    CHECK(g_preroll == 500);            // nothing was played: the full pre-roll
+    post_ev(EV_CANCEL, 0, 0);
+    post_ev(EV_PTT_UP, 600, APP_SRC_ORB);
+
+    // Wi-Fi drops after the reply arrived: no "Нет Wi-Fi" error over an answer in hand
+    say(1000);
+    turn = s_a.turn;
+    emit_result(turn, AI_MODE_ASSISTANT, "Тест 3", "Ответ 3.", "ru", "", "ru", false);
+    pump();
+    int cards = ui_count(UI_ERROR);
+    g_net_state = NET_CONNECTING;
+    step(600);
+    CHECK(s_a.st == APP_THINKING && ui_count(UI_ERROR) == cards);
+    emit_error(AI_EV_TTS_ERROR, turn, "T1", "Озвучка недоступна");
+    pump();
+    CHECK(s_a.st == APP_IDLE && !strcmp(ui_last(UI_BOT_MSG)->s, "Ответ 3.") && ui_last(UI_BOT_MSG)->i == 1);
+    g_net_state = NET_UP;
+    step(600);
+
+    // the first-audio event was lost (queue full): "done" with the speaker playing still means SPEAKING
+    say(1000);
+    turn = s_a.turn;
+    emit_result(turn, AI_MODE_ASSISTANT, "Тест 4", "Ответ 4.", "ru", "", "ru", false);
+    pump();
+    g_out_busy = true;
+    emit_simple(AI_EV_TTS_DONE, turn, 1);
+    pump();
+    CHECK(s_a.st == APP_SPEAKING && !strcmp(ui_last(UI_BOT_MSG)->s, "Ответ 4.") && last_state_is(UI_ST_SPEAK));
+    g_out_busy = false;
+    step(40);
+    CHECK(s_a.st == APP_IDLE);
+
     // volume 0 behaves like text_only
     boot();
     set_int("text_only", 0);
@@ -365,7 +420,8 @@ static void t_barge(void)
     step(400);
     CHECK(s_a.st == APP_IDLE && g_rec_starts == starts);
 
-    // a hold stops it and records after 400 ms, with no pre-roll (no tail of the speech)
+    // a hold stops it and records after 400 ms; the pre-roll holds what followed the flush (the user's
+    // first words), never the tail of the speech
     boot();
     set_int("text_only", 0);
     s_a.text_only = false;
@@ -378,11 +434,53 @@ static void t_barge(void)
     step(300);
     CHECK(s_a.st == APP_IDLE);
     step(140);
-    CHECK(s_a.st == APP_LISTENING && g_preroll == 0 && s_a.turn != turn);
+    CHECK(s_a.st == APP_LISTENING && s_a.turn != turn);
+    CHECK(g_preroll >= 400 - APP_SPK_TAIL_MS && g_preroll <= 440 - APP_SPK_TAIL_MS);
     audio(1000, 1);
     audio(200, 0);
     post_ev(EV_PTT_UP, 1700, APP_SRC_BOOT);
     CHECK(s_a.st == APP_UPLOADING);
+
+    // right after the speech drained, a new press keeps no speech tail in its pre-roll
+    boot();
+    set_int("text_only", 0);
+    s_a.text_only = false;
+    say(1000);
+    turn = s_a.turn;
+    emit_result(turn, AI_MODE_ASSISTANT, "Тест", "Ответ.", "ru", "", "ru", false);
+    emit_simple(AI_EV_TTS_FIRST_AUDIO, turn, 600);
+    emit_simple(AI_EV_TTS_DONE, turn, 1);
+    pump();
+    step(100);
+    CHECK(s_a.st == APP_IDLE);
+    post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_ORB);
+    CHECK(s_a.st == APP_LISTENING && g_preroll == 0);
+    post_ev(EV_CANCEL, 0, 0);
+    post_ev(EV_PTT_UP, 100, APP_SRC_ORB);
+    step(400);                          // 250 ms + the tail after the speech: the normal pre-roll again
+    post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_ORB);
+    CHECK(s_a.st == APP_LISTENING && g_preroll == 250);
+    post_ev(EV_CANCEL, 0, 0);
+    post_ev(EV_PTT_UP, 100, APP_SRC_ORB);
+
+    // pressed while uploading, the answer starts to play before 400 ms: the hold still barges in
+    boot();
+    set_int("text_only", 0);
+    s_a.text_only = false;
+    say(1000);
+    turn = s_a.turn;
+    post_ev(EV_PTT_DOWN, UI_SIDE_AUTO, APP_SRC_ORB);
+    step(100);
+    emit_result(turn, AI_MODE_ASSISTANT, "Тест", "Ответ.", "ru", "", "ru", false);
+    emit_simple(AI_EV_TTS_FIRST_AUDIO, turn, 600);
+    pump();
+    g_out_busy = true;
+    CHECK(s_a.st == APP_SPEAKING && ui_count(UI_BOT_MSG) == 1);
+    step(320);
+    CHECK(s_a.st == APP_LISTENING && s_a.turn != turn && g_tts_cancel_upto >= turn && g_preroll <= 20);
+    g_out_busy = false;
+    post_ev(EV_CANCEL, 0, 0);
+    post_ev(EV_PTT_UP, 800, APP_SRC_ORB);
 
     // pressed while thinking: a tap is ignored, a hold aborts and records (500 ms pre-roll)
     boot();
@@ -428,6 +526,12 @@ static void t_cancel(void)
     btn(BOARD_BTN_PWR, BTN_EV_CLICK, 120);
     CHECK(s_a.st == APP_IDLE && g_cancel_upto >= turn && ui_last(UI_STATUS)->i == S_ST_CANCELLED);
     CHECK(g_pwr_down == 1 && g_pwr_up == 1);
+    // the cancelled turn still reports that its audio is released (architecture test 4.6), nothing else
+    int nui = g_nui;
+    emit_simple(AI_EV_RELEASED, turn, 0);
+    emit_error(AI_EV_ERROR, turn, "N2", "late");
+    pump();
+    CHECK(strstr(ev_last("ai"), "\"phase\":\"released\"") && g_nui == nui && s_a.st == APP_IDLE);
     // PWR at H idle: screen off; BOOT wakes and talks at once
     btn(BOARD_BTN_PWR, BTN_EV_DOWN, 0);
     btn(BOARD_BTN_PWR, BTN_EV_CLICK, 100);
@@ -634,6 +738,21 @@ static void t_power(void)
     btn(BOARD_BTN_BOOT, BTN_EV_DOWN, 0);
     CHECK(g_latch_on == 1 && app_io_screen() == APP_SCREEN_ON && s_a.st == APP_LISTENING);
     btn(BOARD_BTN_BOOT, BTN_EV_UP, 3000);
+    // on battery the held key powers the board until it is released: no "USB" note while it is held
+    boot();
+    g_pwr_held = true;
+    btn(BOARD_BTN_PWR, BTN_EV_DOWN, 0);
+    btn(BOARD_BTN_PWR, BTN_EV_LONG, 3000);
+    step(1500);
+    CHECK(g_power_off == 1 && app_io_screen() == APP_SCREEN_OFF && ui_count(UI_TOAST) == 0);
+    g_pwr_held = false;                 // released and still alive: USB
+    btn(BOARD_BTN_PWR, BTN_EV_UP, 4500);
+    step(400);
+    CHECK(app_io_screen() == APP_SCREEN_OFF);
+    step(200);
+    CHECK(app_io_screen() == APP_SCREEN_ON && ui_last(UI_TOAST)->i == S_USB_POWER);
+    step(2100);
+    CHECK(app_io_screen() == APP_SCREEN_OFF);
     // dim after dim_s, off 300 s later; any input wakes
     boot();
     step(59000);

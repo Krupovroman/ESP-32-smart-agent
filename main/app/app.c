@@ -66,6 +66,7 @@ typedef struct {
     // turn in flight
     bool placeholder;               // a waveform bubble waits for its transcript
     bool want_tts, tts_first, tts_done, revealed;
+    uint32_t spk_quiet_t;           // when the speaker last went quiet after a turn's speech (0 = never)
     char *reply;                    // voice on: shown when its audio starts
     uint32_t t_submit, t_result, t_first;
     uint32_t est_upload_ms;
@@ -418,6 +419,9 @@ static void close_placeholder(void)
 
 static void turn_reset(void)
 {
+    if (s_a.want_tts && (s_a.tts_first || audio_out_busy())) {
+        s_a.spk_quiet_t = app_now_ms();     // the speaker played: its tail must stay out of the next pre-roll
+    }
     free(s_a.reply);
     s_a.reply = NULL;
     s_a.want_tts = s_a.tts_first = s_a.tts_done = s_a.revealed = false;
@@ -448,6 +452,14 @@ static void finish_turn(ui_state_t ui)
     set_state(APP_IDLE);
 }
 
+static void reveal(bool tts_failed)
+{
+    if (!s_a.revealed && s_a.reply) {
+        ui_post_text(UI_BOT_MSG, tts_failed ? 1 : 0, s_a.reply);
+        s_a.revealed = true;
+    }
+}
+
 // Stops every worker of the current turn: chat, speech, recording.
 static void cancel_turn(void)
 {
@@ -461,15 +473,8 @@ static void cancel_turn(void)
         audio_in_stop(NULL);
     }
     close_placeholder();
+    reveal(false);                  // a reply that already arrived (waiting for its audio) stays on screen
     turn_reset();
-}
-
-static void reveal(bool tts_failed)
-{
-    if (!s_a.revealed && s_a.reply) {
-        ui_post_text(UI_BOT_MSG, tts_failed ? 1 : 0, s_a.reply);
-        s_a.revealed = true;
-    }
 }
 
 // ui.md 3.3: after the idle time the model context resets and a divider marks the new conversation
@@ -498,6 +503,18 @@ static void maybe_divider(void)
 
 // ---- recording
 
+// ui.md 5.1: the pre-roll never holds the tail of the device's own speech; after a barge-in it holds what the
+// user said once the speech was flushed (the press itself is only decided at 400 ms)
+static uint32_t preroll_cap(uint32_t want)
+{
+    if (!s_a.spk_quiet_t) {
+        return want;
+    }
+    uint32_t since = app_now_ms() - s_a.spk_quiet_t;
+    uint32_t room = since > APP_SPK_TAIL_MS ? since - APP_SPK_TAIL_MS : 0;
+    return want < room ? want : room;
+}
+
 // preroll_ms: microphone audio from before the press that is kept (ui.md 5.1)
 static void start_recording(int8_t side, uint32_t preroll_ms)
 {
@@ -506,6 +523,7 @@ static void start_recording(int8_t side, uint32_t preroll_ms)
         show_not_ready(r);
         return;
     }
+    preroll_ms = preroll_cap(preroll_ms);
     maybe_divider();
     begin_turn(TURN_VOICE);
     s_a.t_submit = 0;
@@ -884,6 +902,16 @@ static void on_tts_error(const or_err_t *e)
     finish_turn(UI_ST_IDLE);
 }
 
+// The first audio of the reply plays: the text appears with it (ui.md 5.4)
+static void speaking_begin(void)
+{
+    s_a.tts_first = true;
+    s_a.t_first = app_now_ms();
+    reveal(false);
+    ui_state(UI_ST_SPEAK);
+    set_state(APP_SPEAKING);
+}
+
 static void stop_speaking(void)
 {
     if (s_a.turn) {
@@ -911,8 +939,13 @@ static bool cancel_any(bool notify)
     case APP_LISTENING:
         discard_recording(notify);
         return true;
-    case APP_UPLOADING:
     case APP_THINKING:
+        if (s_a.want_tts) {
+            stop_speaking();        // the reply is in and waits for its audio: show it, speak nothing
+            return true;
+        }
+        /* fall through */
+    case APP_UPLOADING:
         cancel_turn();
         if (notify) {
             ui_status_id(S_ST_CANCELLED);
@@ -1005,7 +1038,8 @@ void app_ptt_down(int8_t side, app_src_t src)
     case APP_SPEAKING:
         stop_speaking();            // any press stops speech; still held at 400 ms = barge-in
         s_a.pending = true;
-        s_a.pending_preroll = 0;    // no pre-roll: it would hold the tail of the speech
+        // preroll_cap() keeps only what followed the flush: the user's first words, not the speech tail
+        s_a.pending_preroll = 500;
         break;
     default:
         break;
@@ -1098,7 +1132,8 @@ static void new_chat(void)
 
 void app_net_changed(bool up)
 {
-    if (!up && (s_a.st == APP_UPLOADING || s_a.st == APP_THINKING)) {
+    // only a request in flight fails; a reply already received is shown (its speech fails or plays out)
+    if (!up && (s_a.st == APP_UPLOADING || (s_a.st == APP_THINKING && !s_a.want_tts))) {
         cancel_turn();
         show_local_error("N0");
     }
@@ -1220,23 +1255,23 @@ static void handle(app_evt_t *e)
         }
         break;
     case EV_AI_RELEASED:
+        // the clip's audio is no longer read (one recording buffer: nothing to hand back)
+        devcon_event("ai", "\"turn\":%u,\"phase\":\"released\"", (unsigned)e->turn);
         break;
     case EV_TTS_FIRST_AUDIO:
         if (mine && s_a.want_tts && !s_a.tts_first) {
-            s_a.tts_first = true;
-            s_a.t_first = app_now_ms();
             s_a.t_ttfb_ms = (uint32_t)e->i;
             devcon_event("tts", "\"turn\":%u,\"phase\":\"first_audio\",\"ttfb\":%d", (unsigned)e->turn, (int)e->i);
-            reveal(false);
-            ui_state(UI_ST_SPEAK);
-            set_state(APP_SPEAKING);
+            speaking_begin();
         }
         break;
     case EV_TTS_DONE:
         if (mine && s_a.want_tts) {
             s_a.tts_done = true;
             devcon_event("tts", "\"turn\":%u,\"phase\":\"done\"", (unsigned)e->turn);
-            if (!s_a.tts_first) {
+            if (!s_a.tts_first && audio_out_busy()) {
+                speaking_begin();   // its first-audio event was lost (queue full): the speaker plays
+            } else if (!s_a.tts_first) {
                 reveal(false);      // nothing was played
                 finish_turn(UI_ST_ANSWERED);
             }
@@ -1260,7 +1295,11 @@ static void handle(app_evt_t *e)
         ui_i(UI_SET_TR_DIR, s_a.tr_dir);
         publish();
         break;
-    case EV_SETTING: on_setting(e->p); break;
+    case EV_SETTING:
+        if (e->p) {
+            on_setting(e->p);
+        }
+        break;
     case EV_BUTTON: app_io_button((board_btn_t)e->i, (board_btn_ev_t)e->j, (uint32_t)e->k); break;
     case EV_UI:
         app_io_activity();
@@ -1287,6 +1326,8 @@ static void fsm_tick(uint32_t now)
             devcon_event("barge", "\"turn\":%u", (unsigned)s_a.turn);
             cancel_turn();
             set_state(APP_IDLE);
+        } else if (s_a.st == APP_SPEAKING) {
+            stop_speaking();        // the reply began to play while the press was pending: still a barge-in
         }
         if (s_a.st == APP_IDLE || s_a.st == APP_ERROR) {
             start_recording(s_a.press_side, s_a.pending_preroll);
@@ -1476,8 +1517,10 @@ static or_err_t *err_copy(const or_err_t *e)
 static void ai_listener(const ai_event_t *ev, void *ctx)
 {
     (void)ctx;
-    if (!ev->turn || ev->turn != atomic_load(&s_turn_pub)) {
-        return;                     // console turns ("ai ask") and turns the app already left
+    // console turns ("ai ask") and turns the app already left are dropped; "released" still reaches the
+    // console log for a cancelled turn (architecture test 4.6)
+    if (!ev->turn || (ev->turn != atomic_load(&s_turn_pub) && ev->type != AI_EV_RELEASED)) {
+        return;
     }
     app_evt_t e = { .turn = ev->turn, .i = ev->i };
     switch (ev->type) {

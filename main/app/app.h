@@ -43,5 +43,5 @@ app_state_t app_state(void);
 const char *app_state_name(app_state_t s);
 // Snapshot for the console (any task).
 void app_status(app_status_t *out);
-// Registers the app dev-console commands: app, ptt, cancel, mode, textonly, btn.
+// Registers the app dev-console commands: app, state, ptt, cancel, mode, textonly, btn.
 void app_console_register(void);

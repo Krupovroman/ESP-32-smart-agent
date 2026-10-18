@@ -46,6 +46,7 @@ static uint32_t s_last_act;
 static int s_bright = 80, s_dim_s = 60;
 static bool s_pwr_woke;                  // this PWR press woke the screen: its click does nothing else
 static bool s_latch_off;                 // power latch released (power off while on USB)
+static bool s_off_wait_up;               // ... and PWR still held: on battery the key itself keeps the board on
 static uint32_t s_off_check, s_note_until;
 static int s_net = -1;
 static bool s_portal;
@@ -113,7 +114,7 @@ bool app_io_activity(void)
     s_last_act = app_now_ms();
     if (s_latch_off) {
         board_power_latch_on();     // used again after a power off on USB: stay on when unplugged
-        s_latch_off = false;
+        s_latch_off = s_off_wait_up = false;
         s_off_check = s_note_until = 0;
     }
     if (app_io_screen() == APP_SCREEN_ON) {
@@ -136,8 +137,9 @@ void app_io_power_off(void)
     board_power_off();              // backlight 0, latch released: on battery the board switches off here
     s_latch_off = true;
     atomic_store(&s_screen, APP_SCREEN_OFF);
-    s_off_check = app_now_ms() + USB_CHECK_MS;
-    s_note_until = 0;
+    // on battery the held key powers the board until it is released: "still running" means USB only after that
+    s_off_wait_up = true;
+    s_off_check = s_note_until = 0;
 }
 
 // ---- buttons
@@ -351,6 +353,10 @@ static void dim_tick(uint32_t now)
 {
     if (!app_quiet()) {
         s_last_act = now;           // a turn keeps the screen awake
+    }
+    if (s_off_wait_up && !board_button_down(BOARD_BTN_PWR)) {
+        s_off_wait_up = false;
+        s_off_check = now + USB_CHECK_MS;
     }
     if (s_off_check && (int32_t)(now - s_off_check) >= 0) {
         // the latch was released and the board still runs: it is powered by USB (ui.md 5.8)

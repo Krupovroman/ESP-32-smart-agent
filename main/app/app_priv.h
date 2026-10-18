@@ -18,6 +18,8 @@
 #define APP_REVEAL_MS       2500    // voice on: the reply appears with its audio, at the latest after this
 #define APP_SPEAK_MAX_MS    180000  // playback watchdog
 #define APP_SAVE_DELAY_MS   2000    // UI-originated settings are written 2 s later, in IDLE
+#define APP_SPK_TAIL_MS     150     // speaker DMA (80 ms) + flush + room echo: the mic still hears the
+                                    // device's own speech this long after it was stopped
 
 typedef enum { APP_SCREEN_ON, APP_SCREEN_DIM, APP_SCREEN_OFF } app_screen_t;
 
