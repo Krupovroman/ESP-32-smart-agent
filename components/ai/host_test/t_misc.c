@@ -217,10 +217,79 @@ static void t_prompts(void)
           strstr(p, "translate into English; if \"en\", translate into German"));
     free(p);
     host_set("ai_sys", "Мой промпт.\nСейчас {DATETIME}.\nКонец.");
-    p = ai_prompt_assistant();
-    CHECK(strstr(p, "Мой промпт.") && !strstr(p, "{DATETIME}") && strstr(p, "Конец."));
+    p = ai_prompt_assistant(AI_WEB_AUTO);
+    CHECK(strstr(p, "Мой промпт.") && !strstr(p, "{DATETIME}") && strstr(p, "Конец.") && !strstr(p, "needs_web"));
+    free(p);
+    host_set("ai_sys", "Мой промпт.\n{WEB}\nКонец.");
+    p = ai_prompt_assistant(AI_WEB_ON);
+    CHECK(strstr(p, "Мой промпт.\n- К запросу приложены результаты поиска") && strstr(p, "\nКонец."));
     free(p);
     host_settings_reset();
+    // protocol §2.8: the {WEB} line of the built-in prompt per request shape
+    char *off = ai_prompt_assistant(AI_WEB_OFF), *aut = ai_prompt_assistant(AI_WEB_AUTO);
+    char *on = ai_prompt_assistant(AI_WEB_ON);
+    CHECK(off && aut && on);
+    CHECK(strstr(off, "нет доступа к интернету") && !strstr(off, "needs_web") && !strstr(off, "{WEB}"));
+    CHECK(strstr(aut, "поставь needs_web = true") && !strstr(aut, "нет доступа") && !strstr(aut, "{WEB}"));
+    CHECK(strstr(on, "результаты поиска в интернете") && !strstr(on, "needs_web") && !strstr(on, "нет доступа"));
+    CHECK(strstr(aut, "Латиницу") && strstr(aut, "Если просьба неясна") && strstr(aut, "Сейчас "));
+    free(off);
+    free(aut);
+    free(on);
+}
+
+static void t_links(void)
+{
+    printf("t_links\n");
+    char h[48];
+    ai_url_host("https://www.Gismeteo.ru/weather-moscow-4368/", h, sizeof(h));
+    CHECK(!strcmp(h, "gismeteo.ru"));
+    ai_url_host("http://rbc.ru:8080/x?y", h, sizeof(h));
+    CHECK(!strcmp(h, "rbc.ru"));
+    ai_url_host("ftp://x.ru/", h, sizeof(h));
+    CHECK(h[0] == 0);
+    ai_url_host("https://", h, sizeof(h));
+    CHECK(h[0] == 0);
+    ai_url_host("https://bad host/", h, sizeof(h));
+    CHECK(h[0] == 0);
+    ai_url_host("https://very-long-subdomain.of-a-very-long-domain.example.com/", h, 16);
+    CHECK(h[0] == 0);
+    static const struct {
+        const char *in, *out, *host;
+    } cases[] = {
+        { "Плюс пять градусов ([gismeteo.ru](https://www.gismeteo.ru/weather-moscow/)).", "Плюс пять градусов.",
+          "gismeteo.ru" },
+        { "Смотрите [прогноз погоды](https://meteo.ru/x) на сегодня.", "Смотрите прогноз погоды на сегодня.",
+          "meteo.ru" },
+        { "Курс девяносто рублей, источник https://cbr.ru/currency.", "Курс девяносто рублей, источник.", "cbr.ru" },
+        { "[a.ru](https://a.ru/1) [b.ru](https://b.ru/2)", "", "a.ru" },
+        { "Ничего ( без ссылок ) тут нет .", "Ничего ( без ссылок ) тут нет .", "" },
+        { "Итог: [rbc.ru](https://rbc.ru/a), [ria.ru](https://ria.ru/b).\nВторая строка.", "Итог.\nВторая строка.",
+          "rbc.ru" },
+        { "Погода хорошая, по данным [meteo.ru](https://meteo.ru), тепло.", "Погода хорошая, по данным, тепло.",
+          "meteo.ru" },
+        // numbered citations and footnote marks are not read aloud ("градусов один")
+        { "Плюс пять градусов [1](https://a.ru/x).", "Плюс пять градусов.", "a.ru" },
+        { "Курс девяносто рублей [1][2].", "Курс девяносто рублей.", "" },
+        { "Новый выпуск [2, 3] вышел вчера.", "Новый выпуск вышел вчера.", "" },
+        { "Выберите вариант [а] или [б].", "Выберите вариант [а] или [б].", "" },
+        // a link target with its own parentheses ends at the matching one
+        { "Смотрите [статью](https://ru.wikipedia.org/wiki/X_(y)) сегодня.", "Смотрите статью сегодня.",
+          "ru.wikipedia.org" },
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        char buf[256];
+        strlcpy(buf, cases[i].in, sizeof(buf));
+        h[0] = 0;
+        ai_strip_links(buf, h, sizeof(h));
+        printf("  [%s] -> [%s] host=%s\n", cases[i].in, buf, h);
+        CHECK(!strcmp(buf, cases[i].out) && !strcmp(h, cases[i].host));
+    }
+    char buf[64] = "Текст [x.ru](https://x.ru).";
+    strlcpy(h, "first.ru", sizeof(h));
+    ai_strip_links(buf, h, sizeof(h));         // a host from the annotations stays
+    CHECK(!strcmp(buf, "Текст.") && !strcmp(h, "first.ru"));
+    ai_strip_links(NULL, NULL, 0);
 }
 
 void test_misc(void)
@@ -231,4 +300,5 @@ void test_misc(void)
     t_url();
     t_classify();
     t_prompts();
+    t_links();
 }

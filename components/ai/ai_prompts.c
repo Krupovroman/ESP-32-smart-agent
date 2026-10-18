@@ -29,11 +29,25 @@ static const char SYSTEM_ASSISTANT_RU[] =
     "октября», «пятнадцать градусов», «три с половиной километра».\n"
     "- Не используй сокращения вроде «т. е.», «г.», «руб.» — пиши слова полностью. Латиницу — только в именах и "
     "названиях.\n"
-    "- У тебя нет доступа к интернету: если спрашивают о свежих новостях, погоде или курсах, скажи об этом одной "
-    "фразой.\n"
+    "{WEB}\n"
     "- Если просьба неясна, переспроси одной короткой фразой.\n"
     "\n"
     "Сейчас {DATETIME}.";
+
+// The {WEB} line per request shape (protocol §2.8): no search, auto (needs_web), results attached.
+static const char WEB_RULE_OFF[] =
+    "- У тебя нет доступа к интернету: если спрашивают о свежих новостях, погоде или курсах, скажи об этом одной "
+    "фразой.";
+static const char WEB_RULE_AUTO[] =
+    "- Если для точного ответа нужны свежие или текущие данные — погода, новости, курсы валют, цены, расписания, "
+    "результаты матчей, события сегодняшнего дня или то, что могло измениться после даты твоих знаний, — поставь "
+    "needs_web = true, а в reply напиши только очень короткую фразу ожидания, например «Сейчас посмотрю». "
+    "Устройство найдёт данные в интернете и спросит тебя снова. Свежие данные не выдумывай. Для вопросов о текущей "
+    "дате и времени поиск не нужен, если они указаны ниже. В остальных случаях needs_web = false.";
+static const char WEB_RULE_ON[] =
+    "- К запросу приложены результаты поиска в интернете. Свежие данные бери только из них и пересказывай своими "
+    "словами, без ссылок, адресов сайтов и сносок. Если нужных данных в результатах нет, честно скажи об этом одной "
+    "фразой и ничего не выдумывай. Если для ответа свежие данные не нужны, отвечай как обычно.";
 
 static const char SYSTEM_TRANSLATOR[] =
     "You are a professional two-way interpreter between {A_NAME} ({A}) and {B_NAME} ({B}).\n"
@@ -186,9 +200,10 @@ static void drop_datetime_line(char *s)
     }
 }
 
-char *ai_prompt_assistant(void)
+char *ai_prompt_assistant(ai_web_t web)
 {
-    // A user prompt (sys_prompt, or ai_sys in the current table) replaces the built-in one.
+    // A user prompt (sys_prompt, or ai_sys in the current table) replaces the built-in one; its {WEB} and
+    // {DATETIME} are filled the same way.
     char *user = ai_malloc(4001);
     if (!user) {
         return NULL;
@@ -200,15 +215,12 @@ char *ai_prompt_assistant(void)
     const char *tpl = user[0] ? user : SYSTEM_ASSISTANT_RU;
     char dt[96];
     ai_datetime_ru(dt, sizeof(dt));
-    char *out;
-    if (dt[0]) {
-        const char *vars[] = { "{DATETIME}", dt };
-        out = fill(tpl, vars, 1);
-    } else {
-        out = ai_strdup(tpl);
-        if (out) {
-            drop_datetime_line(out);
-        }
+    const char *rule = web == AI_WEB_ON ? WEB_RULE_ON : web == AI_WEB_AUTO ? WEB_RULE_AUTO : WEB_RULE_OFF;
+    // without a clock {DATETIME} stays in place and its line is dropped
+    const char *vars[] = { "{WEB}", rule, "{DATETIME}", dt };
+    char *out = fill(tpl, vars, dt[0] ? 2 : 1);
+    if (out && !dt[0]) {
+        drop_datetime_line(out);
     }
     free(user);
     return out;

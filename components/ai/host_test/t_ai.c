@@ -10,15 +10,21 @@ typedef struct {
     char id[8];
     char transcript[512], text[512], lang[8], src_lang[8], tts_lang[8];
     bool truncated, unheard, stt_used;
-    uint32_t retries;
+    bool web, web_failed;
+    char source[48], notice[64];
+    uint32_t retries, web_ms;
     double cost;
 } ev_t;
 static ev_t s_ev[64];
 static int s_nev;
+static uint32_t s_cancel_on_web;     // this turn is cancelled when its web search starts (barge-in)
 
 static void cap(const ai_event_t *e, void *ctx)
 {
     (void)ctx;
+    if (e->type == AI_EV_WEB && s_cancel_on_web && e->turn == s_cancel_on_web) {
+        ai_client_cancel(e->turn);
+    }
     ev_t *v = &s_ev[s_nev++ % 64];
     memset(v, 0, sizeof(*v));
     v->type = e->type;
@@ -34,7 +40,12 @@ static void cap(const ai_event_t *e, void *ctx)
         v->truncated = e->result->truncated;
         v->unheard = e->result->unheard;
         v->stt_used = e->result->stt_used;
+        v->web = e->result->web;
+        v->web_failed = e->result->web_failed;
+        strlcpy(v->source, e->result->source, sizeof(v->source));
+        strlcpy(v->notice, e->result->notice_ru ? e->result->notice_ru : "", sizeof(v->notice));
         v->retries = e->result->t.retries;
+        v->web_ms = e->result->t.web_ms;
         v->cost = e->result->cost;
     }
 }
@@ -593,6 +604,304 @@ static void t_unheard_voice(void)
     CHECK(hist_count() == 0);
 }
 
+// ---- web search (protocol §2.8) ----
+
+// A chat body in its own buffer (mock_push_json keeps the pointer; leaked on purpose): JSON-escaped content, cost
+// and an optional url_citation annotation.
+static const char *web_body(const char *content_esc, double cost, const char *cite_url)
+{
+    char ann[256] = "";
+    if (cite_url) {
+        snprintf(ann, sizeof(ann), ",\"annotations\":[{\"type\":\"url_citation\",\"url_citation\":{\"url\":\"%s\","
+                 "\"title\":\"t\",\"content\":\"c\",\"start_index\":0,\"end_index\":1}}]", cite_url);
+    }
+    char *b = malloc(4096);
+    snprintf(b, 4096,
+             "{\"id\":\"gen-w\",\"provider\":\"Google AI Studio\",\"model\":\"google/gemini-3.1-flash-lite\","
+             "\"choices\":[{\"index\":0,\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\","
+             "\"content\":\"%s\",\"refusal\":null%s}}],\"usage\":{\"prompt_tokens\":900,\"completion_tokens\":40,"
+             "\"cost\":%.6f}}", content_esc, ann, cost);
+    return b;
+}
+#define Q_WEATHER "Какая погода в Москве?"
+#define WEB_FIRST "{\\\"transcript\\\":\\\"" Q_WEATHER "\\\",\\\"needs_web\\\":true,\\\"reply\\\":\\\"Сейчас посмотрю.\\\"," \
+                  "\\\"lang\\\":\\\"ru\\\"}"
+#define WEB_ANSWER "{\\\"transcript\\\":\\\"" Q_WEATHER "\\\",\\\"reply\\\":\\\"Сейчас в Москве плюс пять градусов " \
+                   "([gismeteo.ru](https://www.gismeteo.ru/weather-moscow/)).\\\",\\\"lang\\\":\\\"ru\\\"}"
+#define WEB_CLEAN "Сейчас в Москве плюс пять градусов."
+
+static const char *sys_of(cJSON *root)
+{
+    cJSON *m = cJSON_GetArrayItem(cJSON_GetObjectItem(root, "messages"), 0);
+    cJSON *c = cJSON_GetObjectItem(m, "content");
+    return cJSON_IsString(c) ? c->valuestring : "";
+}
+
+static const char *last_user_text(cJSON *root)
+{
+    cJSON *msgs = cJSON_GetObjectItem(root, "messages");
+    cJSON *c = cJSON_GetObjectItem(cJSON_GetArrayItem(msgs, cJSON_GetArraySize(msgs) - 1), "content");
+    return cJSON_IsString(c) ? c->valuestring : NULL;
+}
+
+// needs_web in the schema properties and in "required"
+static bool has_needs_web(cJSON *root)
+{
+    cJSON *s = cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(root, "response_format"), "json_schema"),
+                                   "schema");
+    bool req = false;
+    cJSON *it;
+    cJSON_ArrayForEach(it, cJSON_GetObjectItem(s, "required")) {
+        req |= cJSON_IsString(it) && !strcmp(it->valuestring, "needs_web");
+    }
+    cJSON *p = cJSON_GetObjectItem(cJSON_GetObjectItem(s, "properties"), "needs_web");
+    return req && p && !strcmp(cJSON_GetObjectItem(p, "type")->valuestring, "boolean");
+}
+
+// max_results of the web plugin, -1 without it
+static int web_results(cJSON *root)
+{
+    cJSON *pl = cJSON_GetObjectItem(root, "plugins");
+    cJSON *w = cJSON_GetArrayItem(pl, 0);
+    if (cJSON_GetArraySize(pl) != 1 || !w || strcmp(cJSON_GetObjectItem(w, "id")->valuestring, "web")) {
+        return -1;
+    }
+    return cJSON_GetObjectItem(w, "max_results")->valueint;
+}
+
+static void t_web_auto(void)
+{
+    printf("t_web_auto\n");
+    setup();
+    mock_push_json(200, web_body(WEB_FIRST, 0.00012, NULL));
+    mock_push_json(200, web_body(WEB_ANSWER, 0.0136, "https://www.gismeteo.ru/weather-moscow-4368/now/"));
+    job_t j = mkjob(AI_MODE_ASSISTANT, Q_WEATHER, NULL, 0);
+    run(&j);
+    CHECK(g_nreq == 2 && g_len_mismatch == 0);
+    const ev_t *w = find_ev(AI_EV_WEB);
+    CHECK(w && w->i == 1);
+    const ev_t *r = find_ev(AI_EV_RESULT);
+    CHECK(r && r->web && !r->web_failed && !strcmp(r->source, "gismeteo.ru") && !r->notice[0]);
+    CHECK(r && !strcmp(r->text, WEB_CLEAN) && !strcmp(r->transcript, Q_WEATHER));
+    CHECK(r && fabs(r->cost - (0.00012 + 0.0136)) < 1e-9);
+    printf("    reply: %s | source %s | $%.6f\n", r ? r->text : "?", r ? r->source : "?", r ? r->cost : 0);
+    CHECK(!find_ev(AI_EV_ERROR) && hist_count() == 1);
+    cJSON *a = cJSON_Parse(g_reqs[0].body), *b = cJSON_Parse(g_reqs[1].body);
+    CHECK(a && b);
+    if (!a || !b) {
+        return;
+    }
+    // first request: needs_web (before reply in the schema), no plugin, the auto rule in the prompt
+    CHECK(has_needs_web(a) && web_results(a) < 0);
+    CHECK(strstr(g_reqs[0].body, "\"needs_web\":{") < strstr(g_reqs[0].body, "\"reply\":{"));
+    CHECK(strstr(sys_of(a), "поставь needs_web = true") && !strstr(sys_of(a), "нет доступа"));
+    // re-run: plugin with ai_web_n results, no needs_web, the "results attached" rule, the transcript as text
+    CHECK(!has_needs_web(b) && web_results(b) == 3);
+    CHECK(strstr(sys_of(b), "результаты поиска в интернете") && !strstr(sys_of(b), "needs_web"));
+    CHECK(cJSON_GetArraySize(cJSON_GetObjectItem(b, "messages")) == 2 && last_user_text(b) &&
+          !strcmp(last_user_text(b), Q_WEATHER));
+    CHECK(cJSON_GetObjectItem(b, "response_format") && cJSON_GetObjectItem(b, "reasoning"));
+    cJSON_Delete(a);
+    cJSON_Delete(b);
+    char red[16384];
+    ai_client_last_request_redacted(red, sizeof(red));
+    CHECK(strstr(red, "\"plugins\":[{\"id\":\"web\",\"max_results\":3}]") != NULL);
+    ai_last_t l;
+    CHECK(ai_client_last(&l) && l.web && !l.web_failed);
+
+    // the next turn carries the web answer (links stripped) in its history; ai_web_n sets max_results
+    host_set("ai_web_n", "1");
+    mock_push_json(200, web_body(WEB_FIRST, 0.00012, NULL));
+    mock_push_json(200, web_body(WEB_ANSWER, 0.0136, NULL));
+    j = mkjob(AI_MODE_ASSISTANT, Q_WEATHER, NULL, 0);
+    run(&j);
+    a = cJSON_Parse(g_reqs[2].body);
+    b = cJSON_Parse(g_reqs[3].body);
+    cJSON *hm = cJSON_GetArrayItem(cJSON_GetObjectItem(a, "messages"), 2);
+    CHECK(hm && !strcmp(cJSON_GetObjectItem(hm, "content")->valuestring, WEB_CLEAN));
+    CHECK(web_results(b) == 1 && cJSON_GetArraySize(cJSON_GetObjectItem(b, "messages")) == 4);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(r && r->web && !strcmp(r->source, "gismeteo.ru"));     // no annotation: the host of the stripped link
+    cJSON_Delete(a);
+    cJSON_Delete(b);
+}
+
+static void t_web_voice(void)
+{
+    printf("t_web_voice\n");
+    setup();
+    mock_push_json(200, web_body("{\\\"transcript\\\":\\\"Какой сейчас курс доллара?\\\",\\\"needs_web\\\":true,"
+                                 "\\\"reply\\\":\\\"Сейчас узнаю.\\\",\\\"lang\\\":\\\"ru\\\"}", 0.0004, NULL));
+    mock_push_json(200, web_body("{\\\"transcript\\\":\\\"Какой сейчас курс доллара?\\\",\\\"reply\\\":\\\"Около "
+                                 "восьмидесяти рублей.\\\",\\\"lang\\\":\\\"ru\\\"}", 0.0135,
+                                 "https://cbr.ru/currency_base/daily/"));
+    job_t j = mkjob(AI_MODE_ASSISTANT, NULL, s_pcm, s_npcm);
+    run(&j);
+    CHECK(g_nreq == 2 && g_len_mismatch == 0);
+    CHECK(count_ev(AI_EV_UPLOAD_DONE) == 1 && count_ev(AI_EV_RELEASED) == 1);
+    CHECK(strstr(g_reqs[0].body, "input_audio") && !strstr(g_reqs[1].body, "input_audio"));
+    CHECK(g_reqs[1].len < 16384);                // the clip is not uploaded again
+    cJSON *b = cJSON_Parse(g_reqs[1].body);
+    CHECK(b && last_user_text(b) && !strcmp(last_user_text(b), "Какой сейчас курс доллара?"));
+    cJSON_Delete(b);
+    const ev_t *r = find_ev(AI_EV_RESULT);
+    CHECK(r && r->web && !strcmp(r->transcript, "Какой сейчас курс доллара?") &&
+          !strcmp(r->text, "Около восьмидесяти рублей.") && !strcmp(r->source, "cbr.ru") && !strcmp(r->tts_lang, "ru"));
+}
+
+static void t_web_fail(void)
+{
+    printf("t_web_fail\n");
+    // a server error on the web request: one attempt, then the first answer, no error card
+    setup();
+    mock_push_json(200, web_body(WEB_FIRST, 0.00012, NULL));
+    mock_push_json(500, "{\"error\":{\"code\":500,\"message\":\"Internal Server Error\"}}");
+    job_t j = mkjob(AI_MODE_ASSISTANT, Q_WEATHER, NULL, 0);
+    run(&j);
+    const ev_t *r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && !find_ev(AI_EV_ERROR) && count_ev(AI_EV_RETRY) == 0);
+    // W1: the holding phrase is followed by a sentence saying the search failed, shown and spoken
+    CHECK(r && r->web_failed && !r->web && !r->source[0] &&
+          !strcmp(r->text, "Сейчас посмотрю. Не получилось найти это в интернете, попробуйте ещё раз."));
+    CHECK(r && !r->notice[0] && !strcmp(r->tts_lang, "ru") && fabs(r->cost - 0.00012) < 1e-9);
+    printf("    fallback: %s\n", r ? r->text : "?");
+    CHECK(hist_count() == 0);                    // the holding phrase is not remembered
+    ai_last_t l;
+    CHECK(ai_client_last(&l) && l.ok && l.web_failed);
+
+    // no first byte within 30 s: the web request gives up, the first answer stays
+    setup();
+    mock_push_json(200, web_body(WEB_FIRST, 0.00012, NULL));
+    mock_reply_t slow = { .eagain_before_headers = 40 };
+    mock_push(&slow);
+    j = mkjob(AI_MODE_ASSISTANT, Q_WEATHER, NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && r && r->web_failed && !find_ev(AI_EV_ERROR));
+    CHECK(r && r->web_ms >= 29000 && r->web_ms <= 31500);
+    printf("    web request timed out after %u ms\n", r ? (unsigned)r->web_ms : 0u);
+
+    // a web reply that does not parse: P2, first answer, its cost still counted
+    setup();
+    mock_push_json(200, web_body(WEB_FIRST, 0.00012, NULL));
+    mock_push_json(200, web_body("not json", 0.0130, NULL));
+    j = mkjob(AI_MODE_ASSISTANT, Q_WEATHER, NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && r && r->web_failed && fabs(r->cost - (0.00012 + 0.0130)) < 1e-9);
+
+    // an English holding phrase without its full stop: the sentence is English and the stop is added
+    setup();
+    mock_push_json(200, web_body("{\\\"transcript\\\":\\\"Weather in London?\\\",\\\"needs_web\\\":true,"
+                                 "\\\"reply\\\":\\\"Let me check\\\",\\\"lang\\\":\\\"en\\\"}", 0.00012, NULL));
+    mock_push_json(503, "{\"error\":{\"code\":503,\"message\":\"Service Unavailable\"}}");
+    j = mkjob(AI_MODE_ASSISTANT, "Weather in London?", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(r && r->web_failed && !strcmp(r->tts_lang, "en") &&
+          !strcmp(r->text, "Let me check. I couldn't search the web just now, please try again."));
+
+    // a cancel (barge-in, PWR) as the search starts: no web request, nothing reported, the first one billed
+    setup();
+    mock_push_json(200, web_body(WEB_FIRST, 0.00012, NULL));
+    mock_push_json(200, web_body(WEB_ANSWER, 0.0136, NULL));
+    j = mkjob(AI_MODE_ASSISTANT, Q_WEATHER, NULL, 0);
+    s_cancel_on_web = j.turn;
+    double c0 = ai_client_session_cost();
+    run(&j);
+    s_cancel_on_web = 0;
+    CHECK(find_ev(AI_EV_WEB) && !find_ev(AI_EV_RESULT) && !find_ev(AI_EV_ERROR) && hist_count() == 0);
+    CHECK(g_nreq == 1 && fabs(ai_client_session_cost() - c0 - 0.00012) < 1e-9);
+    ai_last_t l2;
+    CHECK(ai_client_last(&l2) && !l2.ok && !strcmp(l2.err_id, "AB") && fabs(l2.cost - 0.00012) < 1e-9);
+    printf("    cancelled as the search starts: %d request, $%.6f billed\n", g_nreq, ai_client_session_cost() - c0);
+
+    // the first request fails: the normal error path, no web request
+    setup();
+    mock_push_json(401, "{\"error\":{\"message\":\"User not found.\",\"code\":401}}");
+    j = mkjob(AI_MODE_ASSISTANT, Q_WEATHER, NULL, 0);
+    run(&j);
+    CHECK(g_nreq == 1 && find_ev(AI_EV_ERROR) && !find_ev(AI_EV_WEB));
+}
+
+static void t_web_modes(void)
+{
+    printf("t_web_modes\n");
+    // always: the first request (voice included) carries the plugin, no needs_web, one request
+    setup();
+    host_set("ai_web", "2");
+    mock_push_json(200, web_body("{\\\"transcript\\\":\\\"Что нового?\\\",\\\"reply\\\":\\\"Сегодня тихо.\\\","
+                                 "\\\"lang\\\":\\\"ru\\\"}", 0.0138, "https://ria.ru/20261018/x.html"));
+    job_t j = mkjob(AI_MODE_ASSISTANT, NULL, s_pcm, s_npcm);
+    run(&j);
+    const ev_t *w = find_ev(AI_EV_WEB), *r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 1 && g_len_mismatch == 0 && w && w->i == 0);
+    CHECK(r && r->web && !strcmp(r->source, "ria.ru") && !strcmp(r->text, "Сегодня тихо."));
+    cJSON *a = cJSON_Parse(g_reqs[0].body);
+    CHECK(a && web_results(a) == 3 && !has_needs_web(a) && strstr(g_reqs[0].body, "input_audio"));
+    CHECK(a && strstr(sys_of(a), "результаты поиска в интернете"));
+    cJSON_Delete(a);
+
+    // always, but the relay rejects the plugin: sent again without it (an auto-fix, not a retry)
+    setup();
+    host_set("ai_web", "2");
+    mock_push_json(400, "{\"error\":{\"message\":\"Plugin web is not available for this endpoint\",\"code\":400}}");
+    mock_push_json(200, ok_body(ASSIST_OK, "stop"));
+    j = mkjob(AI_MODE_ASSISTANT, "hi", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && r && !r->web && count_ev(AI_EV_RETRY) == 0);
+    a = cJSON_Parse(g_reqs[1].body);
+    CHECK(a && web_results(a) < 0 && strstr(sys_of(a), "нет доступа к интернету"));
+    cJSON_Delete(a);
+
+    // off: no field, no plugin, the old rule; a needs_web in the reply changes nothing
+    setup();
+    host_set("ai_web", "0");
+    mock_push_json(200, web_body(WEB_FIRST, 0.0001, NULL));
+    j = mkjob(AI_MODE_ASSISTANT, Q_WEATHER, NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 1 && !find_ev(AI_EV_WEB) && r && !r->web && !r->web_failed);
+    a = cJSON_Parse(g_reqs[0].body);
+    CHECK(a && !has_needs_web(a) && web_results(a) < 0 && strstr(sys_of(a), "нет доступа к интернету"));
+    cJSON_Delete(a);
+
+    // console "ai ask -w": forced on the first request whatever ai_web says
+    setup();
+    host_set("ai_web", "0");
+    mock_push_json(200, web_body(WEB_ANSWER, 0.0136, NULL));
+    j = mkjob(AI_MODE_ASSISTANT, Q_WEATHER, NULL, 0);
+    j.web = true;
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    a = cJSON_Parse(g_reqs[0].body);
+    CHECK(g_nreq == 1 && a && web_results(a) == 3 && r && r->web && !strcmp(r->text, WEB_CLEAN));
+    cJSON_Delete(a);
+
+    // the translator never searches
+    setup();
+    host_set("ai_web", "2");
+    mock_push_json(200, ok_body("{\\\"src_lang\\\":\\\"en\\\",\\\"transcript\\\":\\\"Hi\\\",\\\"translation\\\":"
+                                "\\\"Привет\\\"}", "stop"));
+    j = mkjob(AI_MODE_TRANSLATOR, "Hi", NULL, 0);
+    j.web = true;
+    run(&j);
+    CHECK(g_nreq == 1 && !strstr(g_reqs[0].body, "plugins") && !strstr(g_reqs[0].body, "needs_web"));
+    CHECK(!find_ev(AI_EV_WEB) && find_ev(AI_EV_RESULT) && !find_ev(AI_EV_RESULT)->web);
+
+    // other providers ignore the setting
+    setup();
+    host_set("ai_url", "https://api.openai.com/v1");
+    host_set("ai_web", "2");
+    mock_push_json(200, ok_body(ASSIST_OK, "stop"));
+    j = mkjob(AI_MODE_ASSISTANT, "hi", NULL, 0);
+    run(&j);
+    a = cJSON_Parse(g_reqs[0].body);
+    CHECK(g_nreq == 1 && a && web_results(a) < 0 && !has_needs_web(a) && strstr(sys_of(a), "нет доступа"));
+    cJSON_Delete(a);
+}
+
 void test_ai(void)
 {
     ai_add_listener(cap, NULL);
@@ -622,4 +931,8 @@ void test_ai(void)
     t_cancel();
     t_effort();
     t_unheard_voice();
+    t_web_auto();
+    t_web_voice();
+    t_web_fail();
+    t_web_modes();
 }

@@ -96,6 +96,9 @@ typedef struct {
     bool want_tts, tts_first, tts_done, revealed;
     uint32_t spk_quiet_t;           // when the speaker last went quiet after a turn's speech (0 = never)
     char *reply;                    // voice on: shown when its audio starts
+    char web_src[48];               // web source host shown under the reply ("" = none)
+    bool web;                       // the UI shows "Ищу в интернете…" for this turn
+    uint32_t t_web;                 // a web search re-run started (the turn deadline extends), 0 = none
     uint32_t t_submit, t_result, t_first;
     uint32_t est_upload_ms;
     int upload_pct;
@@ -647,6 +650,12 @@ static void turn_reset(void)
     }
     free(s_a.reply);
     s_a.reply = NULL;
+    s_a.web_src[0] = 0;
+    if (s_a.web) {
+        ui_i(UI_WEB, 0);
+    }
+    s_a.web = false;
+    s_a.t_web = 0;
     s_a.want_tts = s_a.tts_first = s_a.tts_done = s_a.revealed = false;
     s_a.latched = false;
     s_a.turn = 0;
@@ -681,6 +690,9 @@ static void reveal(bool tts_failed)
 {
     if (!s_a.revealed && s_a.reply) {
         ui_post_text(UI_BOT_MSG, tts_failed ? 1 : 0, s_a.reply);
+        if (s_a.web_src[0]) {
+            ui_post_text(UI_BOT_SOURCE, 0, s_a.web_src);   // the small "Источник: …" note under that reply
+        }
         s_a.revealed = true;
     }
 }
@@ -1084,9 +1096,16 @@ static void on_result(app_result_t *r)
     s_a.last_err[0] = 0;
     devcon_event("ai",
                  "\"turn\":%u,\"phase\":\"result\",\"ms\":%u,\"upload_ms\":%u,\"clip_ms\":%u,\"lang\":\"%s\","
-                 "\"src_lang\":\"%s\",\"tts_lang\":\"%s\",\"unheard\":%s,\"truncated\":%s,\"cost\":%.6f",
+                 "\"src_lang\":\"%s\",\"tts_lang\":\"%s\",\"unheard\":%s,\"truncated\":%s,\"cost\":%.6f,"
+                 "\"web\":%s,\"web_failed\":%s,\"web_ms\":%u,\"source\":\"%s\"",
                  (unsigned)s_a.turn, (unsigned)r->t.ai_ms, (unsigned)r->t.upload_ms, (unsigned)r->t.clip_ms, r->lang,
-                 r->src_lang, r->tts_lang, r->unheard ? "true" : "false", r->truncated ? "true" : "false", r->cost);
+                 r->src_lang, r->tts_lang, r->unheard ? "true" : "false", r->truncated ? "true" : "false", r->cost,
+                 r->web ? "true" : "false", r->web_failed ? "true" : "false", (unsigned)r->t.web_ms, r->source);
+    if (s_a.web) {
+        ui_i(UI_WEB, 0);            // the search is over: the status goes back to the thinking stages
+        s_a.web = false;
+    }
+    strlcpy(s_a.web_src, s_a.mode == 0 ? r->source : "", sizeof(s_a.web_src));
     if (r->unheard || (!r->transcript[0] && !r->text[0])) {
         close_placeholder();
         ui_status_id(S_ST_NOT_HEARD);
@@ -1098,7 +1117,7 @@ static void on_result(app_result_t *r)
         clear_fault();              // the key, credit and model work again
     }
     s_a.card_key = 0;               // the same error after an answer is news again
-    if (s_a.mode == 1 || (!r->truncated && r->transcript[0] && r->text[0])) {
+    if (s_a.mode == 1 || (!r->truncated && !r->web_failed && r->transcript[0] && r->text[0])) {
         s_a.last_end_t = s_a.t_result;  // the AI client keeps this exchange in its history (hist_add) now
     }
     int side = UI_SIDE_AUTO;
@@ -1634,6 +1653,17 @@ static void handle(app_evt_t *e)
             ui_i(UI_RETRY, e->i);
         }
         break;
+    case EV_AI_WEB:
+        if (mine && (s_a.st == APP_UPLOADING || s_a.st == APP_THINKING)) {
+            devcon_event("ai", "\"turn\":%u,\"phase\":\"web\",\"rerun\":%s", (unsigned)e->turn,
+                         e->i ? "true" : "false");
+            s_a.web = true;
+            if (e->i) {
+                s_a.t_web = app_now_ms();   // the re-run has its own 30 s on top of the first request
+            }
+            ui_i(UI_WEB, 1);
+        }
+        break;
     case EV_AI_RESULT:
         if (mine && (s_a.st == APP_UPLOADING || s_a.st == APP_THINKING)) {
             on_result(e->p);
@@ -1779,7 +1809,7 @@ static void fsm_tick(uint32_t now)
     }
     case APP_THINKING:
         if (!s_a.want_tts) {
-            if (now - s_a.t_submit > APP_TURN_MAX_MS) {
+            if (now - s_a.t_submit > APP_TURN_MAX_MS && (!s_a.t_web || now - s_a.t_web > APP_WEB_MAX_MS)) {
                 turn_timeout();
             }
         } else if (now - s_a.t_result >= APP_TTS_FIRST_MS) {
@@ -1953,6 +1983,9 @@ static app_result_t *result_copy(const ai_result_t *r)
     c->truncated = r->truncated;
     c->other_lang = r->other_lang;
     c->stt_used = r->stt_used;
+    c->web = r->web;
+    c->web_failed = r->web_failed;
+    strlcpy(c->source, r->source, sizeof(c->source));
     c->t = r->t;
     c->cost = r->cost;
     return c;
@@ -1982,6 +2015,7 @@ static void ai_listener(const ai_event_t *ev, void *ctx)
     switch (ev->type) {
     case AI_EV_UPLOAD_DONE: e.type = EV_AI_UPLOAD_DONE; break;
     case AI_EV_RETRY: e.type = EV_AI_RETRY; break;
+    case AI_EV_WEB: e.type = EV_AI_WEB; break;
     case AI_EV_RESULT:
         e.type = EV_AI_RESULT;
         e.p = result_copy(ev->result);

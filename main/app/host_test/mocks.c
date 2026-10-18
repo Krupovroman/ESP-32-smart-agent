@@ -333,6 +333,26 @@ void emit_result(uint32_t turn, ai_mode_t mode, const char *transcript, const ch
     s_listener(&ev, s_listener_ctx);
 }
 
+void emit_result_web(uint32_t turn, const char *transcript, const char *text, const char *source, bool failed)
+{
+    ai_result_t r;
+    memset(&r, 0, sizeof(r));
+    r.turn = turn;
+    r.mode = AI_MODE_ASSISTANT;
+    r.transcript = (char *)transcript;
+    r.text = (char *)text;
+    strlcpy(r.lang, "ru", sizeof(r.lang));
+    strlcpy(r.tts_lang, "ru", sizeof(r.tts_lang));
+    r.web = !failed;
+    r.web_failed = failed;
+    strlcpy(r.source, source, sizeof(r.source));
+    r.t.ai_ms = 3100;
+    r.t.web_ms = 2000;
+    r.cost = 0.0137;
+    ai_event_t ev = { .type = AI_EV_RESULT, .turn = turn, .result = &r };
+    s_listener(&ev, s_listener_ctx);
+}
+
 void or_err_local(or_err_t *e, const char *id)
 {
     memset(e, 0, sizeof(*e));
@@ -438,17 +458,17 @@ void audio_out_set_volume(uint8_t pct)
 
 // ---- console events
 
-static char s_ev[512][200];
+static char s_ev[512][400];         // the "ai" result event with its web fields is about 300 bytes
 int g_nev;
 
 void devcon_event(const char *ev, const char *fmt, ...)
 {
     char *b = s_ev[g_nev++ % 512];
-    int n = snprintf(b, 200, "%s ", ev);
+    int n = snprintf(b, sizeof(s_ev[0]), "%s ", ev);
     if (fmt) {
         va_list ap;
         va_start(ap, fmt);
-        vsnprintf(b + n, 200 - (size_t)n, fmt, ap);
+        vsnprintf(b + n, sizeof(s_ev[0]) - (size_t)n, fmt, ap);
         va_end(ap);
     }
 }

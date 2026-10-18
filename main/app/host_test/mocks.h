@@ -60,6 +60,8 @@ extern int g_nspeak;
 void emit_simple(ai_ev_type_t t, uint32_t turn, int32_t i);
 void emit_result(uint32_t turn, ai_mode_t mode, const char *transcript, const char *text, const char *lang,
                  const char *src_lang, const char *tts_lang, bool unheard);
+// Assistant result made with web search (source "" = none), or the first answer after a failed search.
+void emit_result_web(uint32_t turn, const char *transcript, const char *text, const char *source, bool failed);
 void emit_error(ai_ev_type_t t, uint32_t turn, const char *id, const char *msg);
 
 // ---- audio

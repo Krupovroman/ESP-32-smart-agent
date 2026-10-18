@@ -592,6 +592,13 @@ static int cmd_ui(int argc, char **argv)
     if (!strcmp(sub, "retry")) {
         return post(UI_RETRY, atoi(arg), NULL);
     }
+    if (!strcmp(sub, "web")) {
+        return post(UI_WEB, atoi(arg), NULL);       // with "ui state think": "Ищу в интернете…"
+    }
+    if (!strcmp(sub, "source")) {
+        char *s = join(argc, argv, 2);
+        return s ? post(UI_BOT_SOURCE, 0, s) : dc_fail("usage: ui source <host>");
+    }
     if (!strcmp(sub, "lang")) {
         return post(UI_SET_LANG, !strcmp(arg, "en"), NULL);
     }
@@ -668,6 +675,7 @@ static int cmd_ui(int argc, char **argv)
                    "user [-a|-b] <text> | bot <text> | append <text> | wave | clear | divider [hh:mm] | tree | "
                    "tap <name>|key:<k> [ms] | audit | fit | mode 0|1 | "
                    "error <card> [body] | fault <f> | net <n> | toast <text> | upload <pct> | retry <n> | "
+                   "web 0|1 | source <host> | "
                    "lang ru|en | langs a|b | speaker 0|1 | textonly 0|1 | hints <n> | face 0|1 | dir 0|1|2 | "
                    "back | busy 0|1 | fps on|off | lockanim lock|unlock <ms> | lockanim off | "
                    "btn boot|pwr [short|down|up]");

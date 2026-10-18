@@ -21,6 +21,7 @@ typedef struct {
     const char *text;                 // typed input, used when pcm is NULL
     const char *lang_a, *lang_b;      // translator languages, NULL = settings tr_lang_a / tr_lang_b
     const char *src_lang;             // translator voice: source forced to lang_a or lang_b, NULL = detect
+    bool web;                         // assistant: web search on this turn whatever ai_web says (console "-w")
 } ai_request_t;
 
 typedef struct {
@@ -33,6 +34,7 @@ typedef struct {
     uint32_t bytes_up;                // request body bytes of the last attempt
     int http_status;
     bool reused;                      // the chat request ran on a kept-alive socket
+    uint32_t web_ms;                  // auto-mode web search request (protocol §2.8), 0 = none
 } ai_timings_t;
 
 typedef struct {
@@ -49,6 +51,9 @@ typedef struct {
     bool unheard;                     // P4: empty transcript, nothing to speak or store
     bool stt_used;                    // transcript came from the Whisper fallback
     bool other_lang;                  // translator: neither of the two languages
+    bool web;                         // the reply was made with web search results (protocol §2.8)
+    bool web_failed;                  // auto mode: the web request failed; text = first answer + W1 sentence
+    char source[48];                  // host of the first web source ("gismeteo.ru"), "" = none
     const char *notice_ru;            // P3 / P4 text for the UI, or NULL
     double cost;                      // usage.cost of chat + STT (USD)
     int prompt_tokens, completion_tokens, audio_tokens, reasoning_tokens;
@@ -72,6 +77,7 @@ typedef struct {
 typedef enum {
     AI_EV_UPLOAD_DONE,                // body sent; i = upload ms
     AI_EV_RETRY,                      // i = retry number; err = reason (msg_retry_ru, else msg_ru)
+    AI_EV_WEB,                        // a request with web search starts; i = 1 auto-mode re-run, 0 first request
     AI_EV_RESULT,                     // result
     AI_EV_ERROR,                      // final; err->msg_ru is the user-facing message
     AI_EV_RELEASED,                   // the turn's pcm is no longer read
@@ -103,6 +109,7 @@ typedef struct {
     double cost;
     int prompt_tokens, completion_tokens, audio_tokens;
     bool truncated, unheard, stt_used;
+    bool web, web_failed;             // web search used / auto-mode web request failed
     ai_timings_t t;
 } ai_last_t;
 

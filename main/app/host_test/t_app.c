@@ -1250,6 +1250,68 @@ static void t_misc(void)
     s_low_mem = false;
 }
 
+static void text_submit(const char *q)
+{
+    char *t = malloc(64);
+    strlcpy(t, q, 64);
+    app_evt_t e = { .type = EV_TEXT_SUBMIT, .p = t };
+    app_post(&e, 0);
+    pump();
+}
+
+// protocol §2.8: the searching status, the turn deadline of a re-run, the source note and a failed search (W1)
+static void t_web(void)
+{
+    printf("t_web\n");
+    boot();
+    text_submit("Какая погода в Москве?");
+    uint32_t turn = s_a.turn;
+    CHECK(s_a.st == APP_THINKING && ui_count(UI_WEB) == 0);
+    step(60000);                    // a slow first answer
+    emit_simple(AI_EV_WEB, turn, 1);
+    pump();
+    CHECK(s_a.web && s_a.t_web && ui_last(UI_WEB)->i == 1 && strstr(ev_last("ai"), "\"phase\":\"web\""));
+    step(20000);                    // 80 s after the submit: the re-run still has its own 30 s
+    CHECK(s_a.st == APP_THINKING && ui_count(UI_ERROR) == 0);
+    int n0 = g_nui;
+    emit_result_web(turn, "Какая погода в Москве?", "Плюс пять градусов.", "gismeteo.ru", false);
+    pump();
+    int bi = ui_index(UI_BOT_MSG, n0), si = ui_index(UI_BOT_SOURCE, n0);
+    CHECK(ui_last(UI_WEB)->i == 0 && !s_a.web && s_a.st == APP_IDLE);
+    CHECK(bi >= 0 && si > bi && !strcmp(g_ui[bi].s, "Плюс пять градусов.") && !strcmp(g_ui[si].s, "gismeteo.ru"));
+    CHECK(strstr(ev_last("ai"), "\"web\":true") && strstr(ev_last("ai"), "\"source\":\"gismeteo.ru\""));
+
+    // the search failed: the AI client's reply says so (W1) and is shown as it is; no source, no history clock
+    text_submit("Курс доллара?");
+    turn = s_a.turn;
+    emit_simple(AI_EV_WEB, turn, 1);
+    int sources = ui_count(UI_BOT_SOURCE);
+    uint32_t end0 = s_a.last_end_t;
+    step(1000);
+    emit_result_web(turn, "Курс доллара?", "Сейчас посмотрю. Не получилось найти это в интернете, попробуйте ещё раз.",
+                    "", true);
+    pump();
+    CHECK(!strcmp(ui_last(UI_BOT_MSG)->s, "Сейчас посмотрю. Не получилось найти это в интернете, попробуйте ещё раз."));
+    CHECK(ui_count(UI_BOT_SOURCE) == sources && s_a.st == APP_IDLE && ui_count(UI_ERROR) == 0);
+    CHECK(s_a.last_end_t == end0);  // the AI client does not store this exchange (hist_add) either
+
+    // no answer 35 s after the re-run started (and 75 s after the submit): N8
+    text_submit("Новости?");
+    turn = s_a.turn;
+    step(50000);
+    emit_simple(AI_EV_WEB, turn, 1);
+    pump();
+    step(30000);
+    CHECK(s_a.st == APP_THINKING);
+    step(6000);
+    CHECK(s_a.st == APP_ERROR && !strcmp(s_a.last_err, "N8") && ui_last(UI_WEB)->i == 0 && !s_a.web);
+    // a late web event of a finished turn changes nothing
+    int webs = ui_count(UI_WEB);
+    emit_simple(AI_EV_WEB, turn, 1);
+    pump();
+    CHECK(ui_count(UI_WEB) == webs);
+}
+
 int main(void)
 {
     t_hold_text_only();
@@ -1266,6 +1328,7 @@ int main(void)
     t_text();
     t_power();
     t_misc();
+    t_web();
     printf("%d checks, %d failures\n", s_checks, s_fail);
     return s_fail ? 1 : 0;
 }

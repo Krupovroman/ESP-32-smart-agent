@@ -60,6 +60,9 @@ static void listener(const ai_event_t *ev, void *ctx)
             printf("ai: turn=%" PRIu32 " retry=%" PRId32 " %s %s\n", ev->turn, ev->i, ev->err->id,
                    ev->err->msg_retry_ru[0] ? ev->err->msg_retry_ru : ev->err->msg_ru);
             break;
+        case AI_EV_WEB:
+            printf("ai: turn=%" PRIu32 " web_search %s\n", ev->turn, ev->i ? "rerun (needs_web)" : "first request");
+            break;
         case AI_EV_RESULT:
             printf("ai: turn=%" PRIu32 " result ms=%" PRIu32 " lang=%s cost=%.6f\n", ev->turn, ev->result->t.ai_ms,
                    ev->result->lang, ev->result->cost);
@@ -215,9 +218,10 @@ static int run_turn_cmd(ai_mode_t mode, bool voice, int argc, char **argv)
         return dc_fail("ai not started");
     }
     int from = 2;
-    bool async = argc > from && !strcmp(argv[from], "-a");
-    if (async) {
-        from++;
+    bool async = false, web = false;
+    for (; argc > from && (!strcmp(argv[from], "-a") || !strcmp(argv[from], "-w")); from++) {
+        async |= argv[from][1] == 'a';
+        web |= argv[from][1] == 'w';       // assistant only: the translator never searches
     }
     const audio_clip_t *clip = NULL;
     char *text = NULL;
@@ -228,7 +232,7 @@ static int run_turn_cmd(ai_mode_t mode, bool voice, int argc, char **argv)
         }
     } else {
         if (argc <= from) {
-            return dc_fail("usage: ai %s [-a] <text...>", argv[1]);
+            return dc_fail("usage: ai %s [-a] [-w] <text...>", argv[1]);
         }
         text = join_args(argc, argv, from);
         if (!text) {
@@ -239,7 +243,7 @@ static int run_turn_cmd(ai_mode_t mode, bool voice, int argc, char **argv)
     cap_reset(async ? 0 : turn);
     ai_request_t r = {
         .turn = turn, .mode = mode, .pcm = clip ? clip->pcm : NULL, .samples = clip ? clip->samples : 0,
-        .rate = clip ? clip->rate : 16000, .text = text,
+        .rate = clip ? clip->rate : 16000, .text = text, .web = web,
     };
     esp_err_t e = ai_client_submit(&r);
     free(text);
@@ -271,6 +275,8 @@ static int run_turn_cmd(ai_mode_t mode, bool voice, int argc, char **argv)
     }
     printf("finish=%s truncated=%d unheard=%d stt=%d model=%s provider=%s gen=%s\n", res->finish, res->truncated,
            res->unheard, res->stt_used, res->model, res->provider, res->gen_id);
+    printf("web=%d web_failed=%d source=%s web_ms=%" PRIu32 "\n", res->web, res->web_failed,
+           res->source[0] ? res->source : "-", res->t.web_ms);
     printf("timings: clip_ms=%" PRIu32 " upload_ms=%" PRIu32 " first_byte_ms=%" PRIu32 " ai_ms=%" PRIu32
            " stt_ms=%" PRIu32 " retries=%" PRIu32 " bytes_up=%" PRIu32 " http=%d reused=%d\n",
            res->t.clip_ms, res->t.upload_ms, res->t.first_byte_ms, res->t.ai_ms, res->t.stt_ms, res->t.retries,
@@ -522,8 +528,9 @@ static int cmd_last(int argc, char **argv)
     if (ai_client_last(&l)) {
         printf("turn=%" PRIu32 " mode=%s ok=%d err=%s %s\n", l.turn, l.mode == AI_MODE_ASSISTANT ? "assistant" : "translator",
                l.ok, l.err_id[0] ? l.err_id : "-", l.err_msg);
-        printf("model=%s provider=%s gen=%s finish=%s truncated=%d unheard=%d stt=%d\n", l.model, l.provider, l.gen_id,
-               l.finish, l.truncated, l.unheard, l.stt_used);
+        printf("model=%s provider=%s gen=%s finish=%s truncated=%d unheard=%d stt=%d web=%d web_failed=%d "
+               "web_ms=%" PRIu32 "\n", l.model, l.provider, l.gen_id, l.finish, l.truncated, l.unheard, l.stt_used,
+               l.web, l.web_failed, l.t.web_ms);
         printf("timings: clip_ms=%" PRIu32 " upload_ms=%" PRIu32 " first_byte_ms=%" PRIu32 " ai_ms=%" PRIu32
                " stt_ms=%" PRIu32 " retries=%" PRIu32 " bytes_up=%" PRIu32 " http=%d reused=%d\n",
                l.t.clip_ms, l.t.upload_ms, l.t.first_byte_ms, l.t.ai_ms, l.t.stt_ms, l.t.retries, l.t.bytes_up,
@@ -676,7 +683,7 @@ static int cmd_ai(int argc, char **argv)
         printf("event log %s\n", s_log ? "on" : "off");
         return 0;
     }
-    return dc_fail("usage: ai ask|tr [-a] <text...> | voice|trvoice [-a] | say|fetch [-l xx] <text...> | "
+    return dc_fail("usage: ai ask|tr [-a] [-w] <text...> | voice|trvoice [-a] [-w] | say|fetch [-l xx] <text...> | "
                    "models [tts] | voices <model> [locale] | check [model] | key | last | req | stt [lang] | "
                    "hist [clear] | cancel | prewarm | log 0|1");
 }
@@ -694,8 +701,8 @@ void ai_console_register(void)
     s_registered = true;
     ai_add_listener(listener, NULL);
     devconsole_register("ai",
-                        "ai ask|tr [-a] <text> | voice|trvoice [-a] | say|fetch [-l xx] <text> | models [tts] | "
-                        "voices <m> [loc] | check [m] | key | last | req | stt [lang] | hist [clear] | cancel | "
-                        "prewarm | log 0|1",
+                        "ai ask|tr [-a] [-w] <text> | voice|trvoice [-a] [-w] | say|fetch [-l xx] <text> | "
+                        "models [tts] | voices <m> [loc] | check [m] | key | last | req | stt [lang] | hist [clear] | "
+                        "cancel | prewarm | log 0|1",
                         cmd_ai);
 }

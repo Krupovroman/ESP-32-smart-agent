@@ -400,6 +400,7 @@ static void build_bot(lv_obj_t *w, const cm_entry_t *e)
     lv_obj_t *l = label(w, &st_reply, "text");
     lv_obj_set_width(l, LV_PCT(100));
     lv_obj_t *n = label(w, &st_text16_3, "note");
+    lv_obj_set_width(n, LV_PCT(100));       // a long source host wraps instead of leaving the chat
     lv_label_set_text_static(n, ui_s(S_TTS_NOTE));
     (void)e;
 }
@@ -407,7 +408,18 @@ static void build_bot(lv_obj_t *w, const cm_entry_t *e)
 static void refresh_bot(lv_obj_t *w, const cm_entry_t *e)
 {
     lv_label_set_text(lv_obj_get_child(w, 0), e->text ? e->text : "");
-    lv_obj_set_flag(lv_obj_get_child(w, 1), LV_OBJ_FLAG_HIDDEN, !e->tts_failed);
+    lv_obj_t *n = lv_obj_get_child(w, 1);
+    // "голос недоступен", "Источник: gismeteo.ru", or both
+    if (e->source[0]) {
+        char src[64], buf[112];
+        snprintf(src, sizeof(src), ui_s(S_WEB_SOURCE_FMT), e->source);
+        snprintf(buf, sizeof(buf), "%s%s%s", e->tts_failed ? ui_s(S_TTS_NOTE) : "",
+                 e->tts_failed ? " " TXT_MIDDOT " " : "", src);
+        lv_label_set_text(n, buf);
+    } else {
+        lv_label_set_text_static(n, ui_s(S_TTS_NOTE));
+    }
+    lv_obj_set_flag(n, LV_OBJ_FLAG_HIDDEN, !e->tts_failed && !e->source[0]);
 }
 
 static void build_turn(lv_obj_t *w, const cm_entry_t *e)
