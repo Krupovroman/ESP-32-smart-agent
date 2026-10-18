@@ -20,7 +20,6 @@
 static const char *TAG = "app_io";
 
 #define DIM_PCT          25              // ui.md 5.8: dimmed backlight
-#define OFF_AFTER_DIM_S  300             // dimmed this long: screen off (the ambient clock comes later)
 #define NET_POLL_MS      500
 #define BAT_POLL_MS      30000
 #define BAT_WARN_PCT     10              // ui.md 5.6: toast "Батарея 10 %"
@@ -42,7 +41,7 @@ typedef struct {
 
 static atomic_int s_screen = APP_SCREEN_ON;
 static atomic_int s_bat_mv = -1;
-static uint32_t s_last_act;
+static uint32_t s_last_act, s_last_wake_post;
 static int s_bright = 80, s_dim_s = 60;
 static bool s_pwr_woke;                  // this PWR press woke the screen: its click does nothing else
 static bool s_latch_off;                 // power latch released (power off while on USB)
@@ -100,24 +99,47 @@ static void backlight_apply(void)
     board_backlight_set((uint8_t)pct);
 }
 
+static const char *screen_name(app_screen_t sc)
+{
+    return sc == APP_SCREEN_ON ? "on" : sc == APP_SCREEN_DIM ? "dim" : "off";
+}
+
+// The UI owns dimming, ambient and the backlight fades (ui_sleep.c, ui.md 5.8); the app only asks it
+// to wake or to switch off, and mirrors the level the UI reports through UI_IN_SLEEP.
 static void screen_set(app_screen_t sc)
 {
-    if (atomic_exchange(&s_screen, (int)sc) == (int)sc) {
-        return;
+    if (sc == APP_SCREEN_ON) {
+        ui_post(&(ui_msg_t){ .type = UI_WAKE });
+    } else if (sc == APP_SCREEN_OFF) {
+        ui_post(&(ui_msg_t){ .type = UI_SCREEN_OFF });
     }
-    backlight_apply();
-    devcon_event("screen", "\"state\":\"%s\"", sc == APP_SCREEN_ON ? "on" : sc == APP_SCREEN_DIM ? "dim" : "off");
+    if (atomic_exchange(&s_screen, (int)sc) != (int)sc) {
+        devcon_event("screen", "\"state\":\"%s\"", screen_name(sc));
+    }
+}
+
+void app_io_ui_sleep(int level)
+{
+    app_screen_t sc = level <= 0 ? APP_SCREEN_ON : level >= 3 ? APP_SCREEN_OFF : APP_SCREEN_DIM;
+    if (atomic_exchange(&s_screen, (int)sc) != (int)sc) {
+        devcon_event("screen", "\"state\":\"%s\",\"level\":%d", screen_name(sc), level);
+    }
 }
 
 bool app_io_activity(void)
 {
-    s_last_act = app_now_ms();
+    uint32_t now = app_now_ms();
+    s_last_act = now;
     if (s_latch_off) {
         board_power_latch_on();     // used again after a power off on USB: stay on when unplugged
         s_latch_off = s_off_wait_up = false;
         s_off_check = s_note_until = 0;
     }
     if (app_io_screen() == APP_SCREEN_ON) {
+        if (now - s_last_wake_post >= 1000) {   // restarts the UI's dim timer, at most once a second
+            s_last_wake_post = now;
+            ui_post(&(ui_msg_t){ .type = UI_WAKE });
+        }
         return false;
     }
     screen_set(APP_SCREEN_ON);
@@ -370,16 +392,7 @@ static void dim_tick(uint32_t now)
         s_note_until = 0;
         screen_set(APP_SCREEN_OFF);
     }
-    if (s_dim_s <= 0 || s_note_until || s_off_check) {
-        return;
-    }
-    uint32_t idle = now - s_last_act;
-    app_screen_t sc = app_io_screen();
-    if (sc == APP_SCREEN_ON && idle >= (uint32_t)s_dim_s * 1000u) {
-        screen_set(APP_SCREEN_DIM);
-    } else if (sc == APP_SCREEN_DIM && idle >= (uint32_t)(s_dim_s + OFF_AFTER_DIM_S) * 1000u) {
-        screen_set(APP_SCREEN_OFF);
-    }
+    // dim / ambient / off after dim_s are run by the UI's own idle timer (ui_sleep.c)
 }
 
 void app_io_tick(uint32_t now)

@@ -401,9 +401,11 @@ static void show_not_ready(ready_t r)
     }
 }
 
+static bool s_no_speaker;   // Settings -> "Динамик": none (RAM only, ui.md 5.2)
+
 static bool voice_on(void)
 {
-    return !s_a.text_only && app_cfg_int("volume", 60) > 0;
+    return !s_a.text_only && !s_no_speaker && app_cfg_int("volume", 60) > 0;
 }
 
 // ---- turn bookkeeping
@@ -1205,6 +1207,21 @@ static void on_ui(ui_input_t ev, int32_t arg)
             set_state(APP_IDLE);
         }
         break;
+    case UI_IN_LANGS:
+        // tr_lang_a / tr_lang_b were saved by the UI: the new pair applies to the next turn
+        if (s_a.mode == 1) {
+            app_abort_all();
+        }
+        publish();
+        break;
+    case UI_IN_SPEAKER:
+        s_no_speaker = arg == 0;
+        if (s_no_speaker && s_a.st == APP_SPEAKING) {
+            stop_speaking();
+        }
+        publish();
+        break;
+    case UI_IN_SLEEP: app_io_ui_sleep((int)arg); break;
     default: break;
     }
 }
@@ -1466,6 +1483,25 @@ static void ui_input_cb(ui_input_t ev, int32_t i, void *ctx)
         e.type = EV_SET_TEXT_ONLY;
         e.i = i;
         break;
+    case UI_IN_SET_MODE:            // the mode sheet already switched the UI and saves "mode"
+        e.type = EV_SET_MODE;
+        e.i = i;
+        break;
+    case UI_IN_TR_DIR:
+        e.type = EV_SET_DIR;
+        e.i = i;
+        break;
+    case UI_IN_TEXT: {              // typed question: the app owns the copy (freed by app_post on overflow)
+        size_t n = (size_t)(i > 0 ? i : 0) + 1;
+        char *t = heap_caps_malloc(n < 2048 ? 2048 : n + 1, MALLOC_CAP_SPIRAM);
+        if (!t) {
+            return;
+        }
+        ui_typed_text(t, n < 2048 ? 2048 : n + 1);
+        e.type = EV_TEXT_SUBMIT;
+        e.p = t;
+        break;
+    }
     default:
         e.type = EV_UI;
         e.i = ev;

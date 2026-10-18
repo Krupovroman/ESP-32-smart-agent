@@ -117,6 +117,7 @@ static void enter(int level)
 void ui_sleep_wake(void)
 {
     if (atomic_load(&s_level) == 0) {
+        lv_display_trigger_activity(NULL);  // BOOT / app activity also restarts the dim timer
         return;
     }
     atomic_store(&s_level, 0);

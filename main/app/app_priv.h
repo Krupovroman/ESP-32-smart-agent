@@ -65,6 +65,8 @@ void app_io_save(const char *key, int32_t v, bool now);
 // Input activity (resets the dim timer). Returns true when the screen was dimmed or off and woke up.
 bool app_io_activity(void);
 void app_io_screen_off(void);
+// Mirrors the sleep level the UI reports (UI_IN_SLEEP: 0 awake, 1 dim, 2 ambient, 3 off).
+void app_io_ui_sleep(int level);
 // PWR held 3 s: power off on battery; on USB the screen goes off with "Питание от USB".
 void app_io_power_off(void);
 bool app_io_net_up(void);
