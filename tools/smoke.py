@@ -101,7 +101,12 @@ def main():
         check("assistant turn from injected RU speech", err is None and any(k in text.lower() for k in ("двест", "двумст", "200")),
               err or next((l for l in text.splitlines() if l.startswith("reply:")), "")[:140])
 
+        saved = {k: out_text(d.cmd(f"get {k}")).split("=", 1)[-1].strip() for k in ("tr_lang_a", "tr_lang_b")}
+        d.cmd("set tr_lang_a ru")
+        d.cmd("set tr_lang_b en")
         res, err = voice_turn(d, "q_en.wav", "ai trvoice")
+        for k, v in saved.items():       # put the user's pair back
+            d.cmd(f"set {k} {v}")
         text = out_text(res) if res else ""
         check("translator turn EN -> RU", err is None and any(k in text.lower() for k in ("вокзал", "станци")),
               err or next((l for l in text.splitlines() if l.startswith("translation:")), "")[:140])

@@ -122,7 +122,8 @@ esp_err_t display_init(void)
 
     lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
     port_cfg.task_priority = 4;
-    port_cfg.task_stack = 8192;
+    // 12 KB: Tiny TTF rasterising CJK glyphs inside label drawing left only ~0.4 KB of 8 KB free
+    port_cfg.task_stack = 12288;
     port_cfg.task_affinity = 1;
     port_cfg.task_max_sleep_ms = 100;
     ESP_RETURN_ON_ERROR(lvgl_port_init(&port_cfg), TAG, "lvgl port");
