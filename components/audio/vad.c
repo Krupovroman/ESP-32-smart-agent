@@ -10,7 +10,11 @@
 #define HIST_BUCKETS    97
 #define FLOOR_PCTL      15               // the floor is the 15th percentile of the frame levels
 #define HINT_MARGIN     30               // an ambient hint counts as floor + 3 dB (it is a 20 ms minimum)
-#define LIVE_RISE_X100  5                // live floor rise per frame: 0.05 dB, i.e. 2.5 dB/s
+// live floor rise per frame: 0.02 dB, i.e. 1 dB/s, and with an ambient hint never above hint + 3 dB. In a
+// reverberant room the gaps between syllables stay ~8 dB over the fan: an unbounded creep (it was 2.5 dB/s)
+// let the threshold overtake a softer end of a long utterance, which ended a latched or translator (tr_vad)
+// recording mid-sentence.
+#define LIVE_RISE_X100  2
 #define SILENT_PEAK     2                // a clip whose samples never exceed +-2 LSB carries no signal
 #define ENV_RANGE       400              // envelope: floor .. floor + 40 dB
 
@@ -159,8 +163,10 @@ void vad_live_init(vad_live_t *v, const vad_cfg_t *c, int hint_db_x10)
 {
     memset(v, 0, sizeof(*v));
     v->cfg = *c;
+    v->cap_x100 = INT32_MAX;
     if (hint_db_x10 != VAD_NO_HINT) {
         v->floor_x100 = hint_db_x10 * 10;
+        v->cap_x100 = (hint_db_x10 + HINT_MARGIN) * 10;     // the room was measured just before the press
         v->started = true;
     }
 }
@@ -173,7 +179,7 @@ void vad_live_feed(vad_live_t *v, const int16_t *pcm, size_t n)
         if (!v->started || db * 10 < v->floor_x100) {
             v->floor_x100 = db * 10;
             v->started = true;
-        } else {
+        } else if (v->floor_x100 < v->cap_x100) {
             v->floor_x100 += LIVE_RISE_X100;
         }
         int thr = threshold(&v->cfg, v->floor_x100 / 10);

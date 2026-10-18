@@ -52,7 +52,8 @@ void vad_envelope(const int16_t *pcm, size_t n, int floor_db_x10, uint8_t env[32
 // Streaming detector: feed whole frames as they are recorded.
 typedef struct {
     vad_cfg_t cfg;
-    int floor_x100;            // tracked floor, dB x100 (falls at once, rises 2.5 dB/s)
+    int floor_x100;            // tracked floor, dB x100 (falls at once, rises 1 dB/s)
+    int cap_x100;              // the floor never rises above this (ambient hint + 3 dB; INT32_MAX without one)
     bool started, in_speech;
     uint32_t frames;
     uint32_t speech_ms;        // total speech so far

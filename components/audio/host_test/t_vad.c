@@ -200,6 +200,43 @@ static void t_live(void)
     vad_live_feed(&v, p, n / VAD_FRAME * VAD_FRAME);
     CHECK(v.speech_ms < 100);
     free(p);
+
+    // a long utterance in a reverberant room that trails off: 4 s at -24 dBFS, then 3 s at -32 dBFS, the gaps
+    // between syllables only 8 dB under them. The tracked floor creeps up towards the gap level; it must not
+    // overtake the soft end, or a translator (tr_vad) turn is sent mid-sentence
+    n = 10000 * 16;
+    p = clip(10000);
+    fan(p, 16000, -45, 0);
+    for (size_t i = 16000; i < 16000 + 7 * RATE; i++) {
+        size_t ms = (i - 16000) * 1000 / RATE;
+        double db = ms < 4000 ? -24 : -32;
+        bool on = ms % 220 < 160;
+        double env = on ? sin(3.14159265 * (double)(ms % 220) / 160.0) : 0.0;
+        p[i] = clamp16(noise(-45) + (on ? env * 1.4 * noise(db) : noise(db - 8)));
+    }
+    fan(p + 16000 + 7 * RATE, n - 16000 - 7 * RATE, -45, 16000 + 7 * RATE);
+    vad_live_init(&v, &c, -470);
+    stop_ms = 0;
+    for (size_t o = 0; o + VAD_FRAME <= n; o += VAD_FRAME) {
+        vad_live_feed(&v, p + o, VAD_FRAME);
+        if (!stop_ms && v.speech_ms >= 400 && v.silence_ms >= 1200) {
+            stop_ms = (uint32_t)((o + VAD_FRAME) * 1000 / RATE);
+        }
+    }
+    printf("    trailing-off speech: auto-stop at %u ms (speech ends at 8000 ms)\n", (unsigned)stop_ms);
+    CHECK(stop_ms >= 9000 && stop_ms <= 9700);      // 1.2 s of silence after the end, not during the soft part
+    // the same without an ambient hint (injected audio): the slow creep still keeps the soft end
+    vad_live_init(&v, &c, VAD_NO_HINT);
+    stop_ms = 0;
+    for (size_t o = 0; o + VAD_FRAME <= n; o += VAD_FRAME) {
+        vad_live_feed(&v, p + o, VAD_FRAME);
+        if (!stop_ms && v.speech_ms >= 400 && v.silence_ms >= 1200) {
+            stop_ms = (uint32_t)((o + VAD_FRAME) * 1000 / RATE);
+        }
+    }
+    printf("    trailing-off speech, no hint: auto-stop at %u ms\n", (unsigned)stop_ms);
+    CHECK(stop_ms >= 8000);
+    free(p);
 }
 
 int main(void)
