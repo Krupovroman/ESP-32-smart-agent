@@ -195,8 +195,7 @@ static void attach(void)
 
 // One-shot task with a PSRAM stack (only its TCB is internal): it reads mapped flash and never writes it. The CRC of
 // the 5 MB font (estimated 50-80 ms per MB through the flash cache) runs on core 0 beside app_main; the fonts are
-// then attached under the
-// LVGL lock. (ui_work would hold a 6 KB internal stack through the boot self-test.)
+// then attached under the LVGL lock. (ui_work would hold a 6 KB internal stack through the boot self-test.)
 static void verify_task(void *arg)
 {
     (void)arg;
@@ -268,7 +267,7 @@ typedef struct {
     uint32_t dsc_us[N_SIZES], dsc_max[N_SIZES], bmp_us[N_SIZES], bmp_max[N_SIZES];
     // end to end: a 252 px ui_28 label with n other glyphs, from creation to the end of the refresh that drew it
     lv_obj_t *label;
-    int64_t t0, t_layout;
+    int64_t t0;
     uint32_t label_ms, layout_ms, label_rendered, rendered0;
     uint32_t stack_free;
     bool ok;
@@ -276,27 +275,41 @@ typedef struct {
 
 static bench_t *s_bench;
 
-// n covered hanzi spread over the font (and the flash), different for each offset
+// n (<= BENCH_MAX) covered hanzi spread over the font (and the flash), different for each offset: the covered
+// hanzi number (offset * 997 + i * 61) mod total, in i order
 static int pick_hanzi(uint32_t *out, int n, int offset)
 {
     int total = 0;
     for (uint32_t c = 0x4E00; c <= 0x9FFF; c++) {
         total += covered(c);
     }
-    if (!total) {
+    if (!total || n > total) {
         return 0;
     }
-    int got = 0;
+    struct {
+        int want, i;
+    } w[BENCH_MAX];
     for (int i = 0; i < n; i++) {
-        int want = (int)(((int64_t)offset * 997 + (int64_t)i * 61) % total), k = 0;
-        for (uint32_t c = 0x4E00; c <= 0x9FFF; c++) {
-            if (covered(c) && k++ == want) {
-                out[got++] = c;
-                break;
-            }
+        w[i].want = (int)(((int64_t)offset * 997 + (int64_t)i * 61) % total);
+        w[i].i = i;
+        for (int j = i; j > 0 && w[j - 1].want > w[j].want; j--) {      // insertion sort by want
+            int t = w[j].want, ti = w[j].i;
+            w[j] = w[j - 1];
+            w[j - 1].want = t;
+            w[j - 1].i = ti;
         }
     }
-    return got;
+    int k = 0, j = 0;
+    for (uint32_t c = 0x4E00; c <= 0x9FFF && j < n; c++) {
+        if (!covered(c)) {
+            continue;
+        }
+        while (j < n && w[j].want == k) {
+            out[w[j++].i] = c;
+        }
+        k++;
+    }
+    return j;
 }
 
 static void bench_ready_cb(lv_event_t *e)
