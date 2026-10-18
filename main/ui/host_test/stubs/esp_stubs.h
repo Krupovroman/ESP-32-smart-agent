@@ -43,6 +43,7 @@ typedef void (*TaskFunction_t)(void *);
 #define pdTRUE  1
 #define pdFALSE 0
 #define pdMS_TO_TICKS(ms) (ms)
+#define tskIDLE_PRIORITY 0
 BaseType_t xTaskCreatePinnedToCoreWithCaps(TaskFunction_t fn, const char *name, uint32_t stack, void *arg,
                                            UBaseType_t prio, TaskHandle_t *h, BaseType_t core, uint32_t caps);
 void vTaskDeleteWithCaps(TaskHandle_t h);

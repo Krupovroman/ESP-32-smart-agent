@@ -11,6 +11,7 @@
 #include "ui_font.h"
 #include "ui.h"
 #include "ui_internal.h"
+#include "ui_scr.h"
 #include "ui_theme.h"
 #include "assets.h"
 #include "devconsole.h"
@@ -150,13 +151,33 @@ static const void *proxy_bitmap(lv_font_glyph_dsc_t *g, lv_draw_buf_t *buf)
     return bm;
 }
 
-static void attach(void)
+// taskLVGL: zh / ja / ko were offered while the check ran (ui_init keeps a stored CJK pair then), so a pack that
+// turns out bad leaves the pair as a stored language the fonts cannot draw (ui_lang_fix), stored like a pick
+static void langs_fallback_cb(void *arg)
+{
+    (void)arg;
+    char a[4], b[4];
+    memcpy(a, g_lang_a, sizeof(a));
+    memcpy(b, g_lang_b, sizeof(b));
+    if (ui_lang_fix(a, b)) {
+        ESP_LOGW(TAG, "no CJK fonts: translator pair now %s|%s", a, b);
+        ui_set_langs(a, b);
+    }
+}
+
+// LVGL lock held: the pack cannot be drawn after all
+static void fail(void)
+{
+    s_state = UI_CJK_BAD;
+    lv_async_call(langs_fallback_cb, NULL);     // taskLVGL: the pair is saved through ui_work's lv_timer
+}
+
+static bool attach(void)
 {
     assets_entry_t ttf, cov;
     if (!assets_find("cjk.ttf", &ttf) || !assets_find("cjk.cov", &cov) || cov.size != COV_BYTES) {
         ESP_LOGE(TAG, "pack has no cjk.ttf / cjk.cov");
-        s_state = UI_CJK_BAD;
-        return;
+        return false;
     }
     int64_t t0 = esp_timer_get_time();
     for (int i = 0; i < N_SIZES; i++) {
@@ -168,8 +189,7 @@ static void attach(void)
                 lv_tiny_ttf_destroy(s_ttf[k]);
                 s_ttf[k] = NULL;
             }
-            s_state = UI_CJK_BAD;
-            return;
+            return false;
         }
     }
     s_cov = cov.data;
@@ -191,22 +211,23 @@ static void attach(void)
     ESP_LOGI(TAG, "CJK fallback ready: %u glyphs, %u code points, %d/%d/%d px in %u us", (unsigned)s_glyphs,
              (unsigned)s_cps, (int)s_size[0].px, (int)s_size[1].px, (int)s_size[2].px,
              (unsigned)(esp_timer_get_time() - t0));
+    return true;
 }
 
 // One-shot task with a PSRAM stack (only its TCB is internal): it reads mapped flash and never writes it. The CRC of
-// the 5 MB font (estimated 50-80 ms per MB through the flash cache) runs on core 0 beside app_main; the fonts are
-// then attached under the LVGL lock. (ui_work would hold a 6 KB internal stack through the boot self-test.)
+// the 5 MB font (estimated 0.3-0.6 s through the flash cache, DIO) runs on core 0 at the idle priority, so it only
+// takes time core 0 has spare and never slows app_main's boot (self-test, Wi-Fi); the fonts are then attached under
+// the LVGL lock. (ui_work would hold a 6 KB internal stack through the boot self-test.)
 static void verify_task(void *arg)
 {
     (void)arg;
-    if (assets_verify() != ESP_OK) {
-        s_state = UI_CJK_BAD;
-    } else {
-        while (!ui_lock(1000)) {
-        }
-        attach();
-        ui_unlock();
+    bool ok = assets_verify() == ESP_OK;
+    while (!ui_lock(1000)) {
     }
+    if (!ok || !attach()) {
+        fail();
+    }
+    ui_unlock();
     vTaskDeleteWithCaps(NULL);
 }
 
@@ -230,14 +251,16 @@ void ui_font_init(void)
         return;
     }
     if (assets_state() == ASSETS_OK) {
-        attach();
+        if (!attach()) {
+            fail();
+        }
         return;
     }
-    // priority 1 shares core 0 with app_main (also 1) instead of holding up the boot
-    if (xTaskCreatePinnedToCoreWithCaps(verify_task, "cjk_crc", 4096, NULL, 1, NULL, 0,
+    // idle priority: time-sliced with IDLE0 (which still feeds the task watchdog), below app_main (1)
+    if (xTaskCreatePinnedToCoreWithCaps(verify_task, "cjk_crc", 4096, NULL, tskIDLE_PRIORITY, NULL, 0,
                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
         ESP_LOGE(TAG, "no verify task");
-        s_state = UI_CJK_BAD;
+        fail();
     }
 }
 
@@ -275,15 +298,15 @@ typedef struct {
 
 static bench_t *s_bench;
 
-// n (<= BENCH_MAX) covered hanzi spread over the font (and the flash), different for each offset: the covered
-// hanzi number (offset * 997 + i * 61) mod total, in i order
+// n (<= BENCH_MAX) covered hanzi spread over the font (and the flash), different for each offset (>= 0): the
+// covered hanzi number (offset * 997 + i * 61) mod total, in i order. Returns n, or 0 when there are not enough.
 static int pick_hanzi(uint32_t *out, int n, int offset)
 {
     int total = 0;
     for (uint32_t c = 0x4E00; c <= 0x9FFF; c++) {
         total += covered(c);
     }
-    if (!total || n > total) {
+    if (!total || n > total || offset < 0) {
         return 0;
     }
     struct {
@@ -337,6 +360,10 @@ static void bench_cb(void *arg)
         return;
     }
     int n = pick_hanzi(b->cps, b->n, b->offset);
+    if (n <= 0) {
+        xSemaphoreGive(b->done);        // b->ok stays false: "bench did not finish", never a division by 0
+        return;
+    }
     for (int i = 0; i < N_SIZES; i++) {
         lv_font_t *f = lv_tiny_ttf_create_data_ex(ttf.data, ttf.size, s_size[i].px, LV_FONT_KERNING_NONE,
                                                   (size_t)n + 4);
@@ -404,7 +431,7 @@ static int cmd_bench(int argc, char **argv)
     }
     b->n = argc > 2 ? atoi(argv[2]) : 40;
     b->n = LV_CLAMP(1, b->n, BENCH_MAX);
-    b->offset = argc > 3 ? atoi(argv[3]) : (int)(esp_timer_get_time() / 1000 % 1000);
+    b->offset = argc > 3 ? LV_CLAMP(0, atoi(argv[3]), 1000000) : (int)(esp_timer_get_time() / 1000 % 1000);
     b->done = xSemaphoreCreateBinary();
     if (!b->done || !ui_lock(1000)) {
         if (b->done) {

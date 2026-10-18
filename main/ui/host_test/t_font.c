@@ -167,6 +167,72 @@ int dc_fail(const char *fmt, ...)
 
 lv_style_t st_text28;      // ui_theme.c is not built here; the bench label needs this one
 
+// translator pair (ui_misc.c is not built here): a CJK code is "not offered" without ready fonts, like ui_lang_fix
+char g_lang_a[4] = "ru", g_lang_b[4] = "zh";
+static int s_set_langs;
+static char s_set_a[4], s_set_b[4];
+
+static bool cjk_code(const char *c)
+{
+    return !strcmp(c, "zh") || !strcmp(c, "ja") || !strcmp(c, "ko");
+}
+
+bool ui_lang_fix(char *a, char *b)
+{
+    bool changed = false;
+    if (cjk_code(a) && !ui_cjk_offered()) {
+        snprintf(a, 4, "%s", strcmp(b, "en") ? "en" : "ru");
+        changed = true;
+    }
+    if ((cjk_code(b) && !ui_cjk_offered()) || !strcmp(a, b)) {
+        snprintf(b, 4, "%s", strcmp(a, "en") ? "en" : "ru");
+        changed = true;
+    }
+    return changed;
+}
+
+void ui_set_langs(const char *a, const char *b)
+{
+    s_set_langs++;
+    snprintf(s_set_a, sizeof(s_set_a), "%s", a);
+    snprintf(s_set_b, sizeof(s_set_b), "%s", b);
+}
+
+// CJK glyphs of the pack must stay inside the line box of the Inter font they back (no clipped tops or descenders on
+// a label's first or last line). Measured: every hanzi, kana, Hangul syllable and CJK punctuation mark fits at all
+// three sizes; only pinyin ǘ ǚ ǜ, Å and full-width ＾ ｀ reach 1 px over at 16 px, and the combining tone marks
+// U+302A-302D and the vertical repeat marks U+3031-3032 (not used in horizontal text) stick out. Returns the glyphs
+// beyond that, -1 when no glyph resolved to the CJK font.
+static int glyph_box_check(const lv_font_t *font, const lv_font_t *cjk)
+{
+    int32_t asc = font->line_height - font->base_line, desc = font->base_line;
+    int n = 0, over1 = 0, bad = 0;
+    for (uint32_t c = 0x80; c < 0x10000; c++) {
+        lv_font_glyph_dsc_t g;
+        if (!lv_font_get_glyph_dsc(font, &g, c, 0) || g.resolved_font != cjk) {
+            continue;
+        }
+        n++;
+        int32_t over = LV_MAX(g.ofs_y + (int32_t)g.box_h - asc, -desc - g.ofs_y);
+        if (!g.box_h || over <= 0) {
+            continue;
+        }
+        bool marks = (c >= 0x302A && c <= 0x302D) || c == 0x3031 || c == 0x3032;
+        bool script = (c >= 0x3000 && c <= 0x30FF) || (c >= 0x4E00 && c <= 0x9FFF) || (c >= 0xAC00 && c <= 0xD7A3);
+        if (marks || (over == 1 && !script)) {
+            over1++;
+            continue;
+        }
+        if (bad++ < 10) {
+            printf("  U+%04X in a %d px line: rows %d..%d, line box %d..%d\n", (unsigned)c, (int)font->line_height,
+                   (int)g.ofs_y, (int)(g.ofs_y + g.box_h), (int)-desc, (int)asc);
+        }
+    }
+    printf("  %d CJK glyphs behind a %d px line: %d outside it (%d marks or 1 px)\n", n, (int)font->line_height,
+           bad + over1, over1);
+    return n ? bad : -1;
+}
+
 // ---- Display: full frame, flushed into s_fb
 
 #define W 360
@@ -336,7 +402,7 @@ static void print_line(const char *line)
     printf("  %s\n", line);
 }
 
-static void font_cmd(int argc, char **argv)
+static int font_cmd(int argc, char **argv)
 {
     printf("  >");
     for (int i = 0; i < argc; i++) {
@@ -345,6 +411,7 @@ static void font_cmd(int argc, char **argv)
     printf("\n");
     int rc = s_font_cmd ? s_font_cmd(argc, argv) : -1;
     printf("  rc=%d\n", rc);
+    return rc;
 }
 
 static void scenes(bool cjk)
@@ -425,10 +492,21 @@ int main(int argc, char **argv)
     ui_font_probe();
     ui_font_init();
     ui_font_console_register();
+    lv_timer_handler();     // the async language fallback of a pack that failed its check
     bool cjk = pack && !corrupt;
     CHECK(ui_cjk_state() == (cjk ? UI_CJK_READY : pack ? UI_CJK_BAD : UI_CJK_ABSENT));
     CHECK(ui_cjk_offered() == cjk);
     CHECK(assets_state() == (cjk ? ASSETS_OK : pack ? ASSETS_BAD : ASSETS_ABSENT));
+    // the stored ru|zh pair survives the check only when the fonts attach (no pack: ui_init's ui_lang_fix does it)
+    CHECK(s_set_langs == (pack && corrupt ? 1 : 0));
+    if (pack && corrupt) {
+        CHECK(!strcmp(s_set_a, "ru") && !strcmp(s_set_b, "en"));
+    }
+    if (cjk) {
+        CHECK(glyph_box_check(&ui_16, &ui_cjk_16) == 0);
+        CHECK(glyph_box_check(&ui_20, &ui_cjk_20) == 0);
+        CHECK(glyph_box_check(&ui_28, &ui_cjk_28) == 0);
+    }
 
     // the sanitiser keeps what the chain can draw: markdown, emoji and Arabic go, CJK stays with the pack
     char out[256];
@@ -448,7 +526,9 @@ int main(int argc, char **argv)
     font_cmd(2, st);
     if (cjk) {
         char *bench[] = { "font", "bench", "40", "7" };
-        font_cmd(4, bench);
+        CHECK(font_cmd(4, bench) == 0);
+        char *bench_neg[] = { "font", "bench", "8", "-5" };     // a negative offset is clamped (was a division by 0)
+        CHECK(font_cmd(4, bench_neg) == 0);
         font_cmd(2, st);
     }
     printf("\n%d checks, %d failures\n", s_checks, s_fails);
