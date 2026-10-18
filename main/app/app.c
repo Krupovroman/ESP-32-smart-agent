@@ -104,7 +104,7 @@ typedef struct {
     bool gate_valid;
     int fault;
     int hints;
-    int last_card;
+    uint32_t card_key;              // error id + body of the last card (0 = none), for the repeat rule
     uint32_t last_card_t;
     uint32_t last_end_t;
     bool chat_used[2];
@@ -263,6 +263,20 @@ static const kept_t *kept_newest_voice(void)
         }
     }
     return NULL;
+}
+
+// Error-card identity for the repeat rule: id and body (FNV-1a), never 0
+static uint32_t card_key(const char *id, const char *msg)
+{
+    uint32_t h = 2166136261u;
+    for (const char *s = id; *s; s++) {
+        h = (h ^ (uint8_t)*s) * 16777619u;
+    }
+    h = (h ^ '|') * 16777619u;
+    for (const char *s = msg ? msg : ""; *s; s++) {
+        h = (h ^ (uint8_t)*s) * 16777619u;
+    }
+    return h ? h : 1;
 }
 
 size_t app_json_esc(char *out, size_t len, const char *in)
@@ -484,13 +498,16 @@ static void show_error(const char *id, const char *msg)
     app_json_esc(esc, sizeof(esc), msg ? msg : "");
     devcon_event("error", "\"id\":\"%s\",\"msg\":\"%s\",\"turn\":%u", id, esc, (unsigned)s_a.turn);
     uint32_t now = app_now_ms();
-    if (card == s_a.last_card && now - s_a.last_card_t < CARD_REPEAT_MS) {
-        ui_state(UI_ST_ERROR);      // a repeated press: no second identical card
+    // the same error (id and text) again soon: no second identical card; another error of the same card type
+    // still gets its own (its reason is in the body)
+    uint32_t key = card_key(id, msg);
+    if (key == s_a.card_key && now - s_a.last_card_t < CARD_REPEAT_MS) {
+        ui_state(UI_ST_ERROR);
     } else {
         ui_post_text(UI_ERROR, card, body ? msg : NULL);
         s_a.chat_used[s_a.mode] = true;
     }
-    s_a.last_card = card;
+    s_a.card_key = key;
     s_a.last_card_t = now;
     if (fault >= 0 && fault != s_a.fault) {
         s_a.fault = fault;
@@ -1012,6 +1029,7 @@ static void on_result(app_result_t *r)
     if (s_a.fault != UI_FAULT_MIC) {
         clear_fault();              // the key, credit and model work again
     }
+    s_a.card_key = 0;               // the same error after an answer is news again
     int side = UI_SIDE_AUTO;
     if (s_a.mode == 1) {
         char a[8], b[8];
@@ -1295,6 +1313,7 @@ static void set_mode(int m, bool save_now)
     if (m != s_a.mode) {
         app_abort_all();
         s_a.mode = m;
+        s_a.card_key = 0;           // the other chat has not seen the last card
         ai_client_history_clear();  // protocol 4.3: a mode switch starts a new conversation
         ui_i(UI_SET_MODE, m);
         devcon_event("mode", "\"mode\":\"%s\"", m ? "translator" : "assistant");
@@ -1329,6 +1348,7 @@ static void new_chat(void)
     ui_i(UI_CLEAR, 0);
     ui_i(UI_GOTO, UI_SCR_HOME);
     s_a.chat_used[s_a.mode] = false;
+    s_a.card_key = 0;               // an empty chat shows the next error card even if it repeats
 }
 
 void app_net_changed(bool up)
@@ -1817,7 +1837,6 @@ esp_err_t app_start(void)
     s_a.mode = settings_get_int("mode") ? 1 : 0;
     s_a.text_only = settings_get_int("text_only") != 0;
     s_a.hints = 3;
-    s_a.last_card = -1;
     s_a.fault = UI_FAULT_NONE;
     s_a.press_side = UI_SIDE_AUTO;
     vad_cfg_t c;
