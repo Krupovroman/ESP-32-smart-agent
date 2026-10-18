@@ -135,7 +135,7 @@ typedef enum {
     UI_OPEN_WIFI,           // offline orb (W)
     UI_OPEN_LANG_A,         // chip A tapped (LP for slot A)
     UI_OPEN_LANG_B,         // chip B tapped (LP for slot B)
-    UI_OPEN_FAULT_FIX,      // fault pill: the screen that fixes g_s_fault (W | Q | P | AI)
+    UI_OPEN_FAULT_FIX,      // M's fault row: the screen that fixes g_s_fault (W | P | KEYINFO | AI | D)
 } ui_open_t;
 
 typedef void (*ui_input_cb_t)(ui_input_t ev, int32_t i, void *ctx);

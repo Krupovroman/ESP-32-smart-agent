@@ -311,7 +311,7 @@ Power ─► S0 ─┬─ first boot ─► O1 Language ─► O2 Network ─┬
    │ Assistant: left button = voice toggle, right button = S                                     │
    │ Translator: left chip A, right chip B: tap = LP for that slot, hold = talk in that language │
    │ tap a message ─► HIST (assistant) / RD (translator)                                         │
-   │ fault pill ─► the fixing screen (W | Q | P | AI)                                            │
+   │ fault pill ─► M, whose first row ─► the fixing screen (W | Q | P | AI | D)                  │
    │ S ─► A Volume | A Brightness | W ─► K ─► WC | Q | AI ─► K | V | P ─► PE ─► K | D ─► C       │
    │ idle 30 s ─► dim 25 % (face SLEEPY) · +60 s ─► Z · +5 min ─► X                              │
    └─────────────────────────────────────────────────────────────────────────────────────────────┘

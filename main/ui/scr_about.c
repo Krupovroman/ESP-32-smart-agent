@@ -277,6 +277,7 @@ lv_obj_t *scr_about_build(uint32_t arg)
     // sound: where "Проверить звук" / "Диагностика" land (arg), the beep only plays on a tap
     s_mic = ui_list_row(list, "a_mic", SYM_MIC, ui_s(S_A_MIC), "", UI_ROW_NONE, NULL, NULL);
     mic_show(0);
+    s_toning = false;       // a lost done callback must not block the beep for good
     if (!s_mic_timer) {
         s_mic_timer = lv_timer_create(mic_tick, 100, NULL);
     }
