@@ -201,12 +201,20 @@ uint8_t   board_backlight_get(void);
 esp_err_t board_buttons_start(board_btn_cb_t cb, void *ctx);   /* espressif/button 4.2.1: iot_button_new_gpio_device,
                                                                   active_level 0, long_press_time BOOT 1500 / PWR 3000 ms */
 int       board_battery_mv(void);       /* adc_oneshot ch7 + adc_cali curve fitting, ×3; -1 on error */
+/* battery model (ui.md 3.16): the app calls sample() every 5 s; median of 5, Li-ion curve, charging = USB host
+   (usb_serial_jtag_is_connected) or +15 mV in 2 min below 4.15 V, full = either at >= 4.15 V (the ETA6098 has no
+   status pin to the MCU) */
+typedef struct { int pct, mv; bool charging, full, usb, sim; } board_bat_t;
+bool      board_battery_sample(void);   /* true when pct / charging / full / usb changed */
+void      board_battery_state(board_bat_t *out);    /* any task */
+void      board_battery_sim(int pct, bool charging); /* console "bat sim"; pct < 0 ends it */
 ```
 
 **Button rules.** These fix a conflict in the draft, where holding BOOT for 1.5 s to talk triggered a cancel.
 
 - **BOOT** reports DOWN and UP with `held_ms`. It has no long or double action, so hold-to-talk can last any length of time.
 - **PWR** reports CLICK, DOUBLE and LONG (3 s). PWR events are **ignored until PWR has been seen released once after boot**. On battery, the user holds PWR to switch the board on; without this rule, a 3 s hold during boot would trigger power-off.
+- **Roles (ui.md 2.3), firmware today:** PWR CLICK = lock / unlock (`ui_pwr_short()`; on a dark, unlocked screen it only wakes), LONG = power off. BOOT DOWN / UP = talk; the app turns a second BOOT press within 300 ms of a tap's release into a double tap (Assistant ⇄ Translator) and latches a tap's recording only after that window. The driver itself has no DOUBLE event.
 
 **Bootloader hook.** `bootloader_components/power_latch/power_latch.c`:
 

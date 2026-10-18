@@ -75,3 +75,7 @@ EXIOn = TCA9554 port P(n-1). Output register defaults to 0xFF.
    be ASCII without spaces.
 8. **Download mode** if auto-reset fails: hold BOOT, tap RESET, release BOOT.
 9. Strapping pins in use: GPIO0 (BOOT), GPIO3 (TP_SCL), GPIO45/46 (LCD D1/D0) — no external pull-ups.
+10. **No charge status to the MCU.** The ETA6098 drives only its charge LED. The firmware infers charging from the
+    USB host (`usb_serial_jtag_is_connected()`, start-of-frame packets; a plain wall charger sends none) or from the
+    battery voltage rising (+15 mV in 2 min below 4.15 V), docs/ui.md 3.16. With USB connected the ×3 divider read
+    about 4065 mV (≈ 83 %) on this unit.
