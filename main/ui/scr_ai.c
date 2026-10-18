@@ -64,11 +64,14 @@ static void p_refresh(void)
     ui_row_set_sub(s_p_model, buf);
 }
 
+// Credentials are written at once (an explicit save on a settings screen, not a slider): the AI client reads the
+// stored values, so "Проверить ключ" or "Загрузить список" right after would still use the old ones
 static void url_done(const char *text, bool ok, void *ctx)
 {
     (void)ctx;
     if (ok) {
         ui_save_str("ai_url", text);
+        ui_save_flush();
         ui_toast(ui_s(S_DONE));
     }
 }
@@ -78,6 +81,7 @@ static void key_done(const char *text, bool ok, void *ctx)
     (void)ctx;
     if (ok && text[0]) {
         ui_save_str("ai_key", text);
+        ui_save_flush();
         ui_toast(ui_s(S_DONE));
     }
 }
@@ -263,7 +267,14 @@ static void models_done(void *arg)
         }
         char sub[64];
         if (m->expires[0]) {
-            snprintf(sub, sizeof(sub), ui_s(S_AI_EXPIRES_FMT), m->expires);
+            // "2026-10-20" -> "истекает 20.10" (3.7)
+            char d[12];
+            if (strlen(m->expires) >= 10 && m->expires[4] == '-' && m->expires[7] == '-') {
+                snprintf(d, sizeof(d), "%.2s.%.2s", m->expires + 8, m->expires + 5);
+            } else {
+                ui_str_copy(d, sizeof(d), m->expires);
+            }
+            snprintf(sub, sizeof(sub), ui_s(S_AI_EXPIRES_FMT), d);
         } else {
             price(m->est_turn_usd, sub, sizeof(sub));
         }

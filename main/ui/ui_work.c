@@ -196,24 +196,43 @@ static void save_done(void *arg)
     }
 }
 
+static void arm(void);
+
 static void flush_now(void)
 {
     save_job_t *j = ui_work_alloc(sizeof(save_job_t));
     if (!j) {
         return;
     }
+    char *dups[PEND_MAX];
+    int nd = 0;
     for (int i = 0; i < PEND_MAX; i++) {
-        if (s_pend[i].used) {
-            pend_t *e = &j->e[j->n++];
-            *e = s_pend[i];
-            e->s = s_pend[i].s ? str_dup(s_pend[i].s) : NULL;
+        if (!s_pend[i].used) {
+            continue;
         }
+        pend_t *e = &j->e[j->n];
+        *e = s_pend[i];
+        e->s = NULL;
+        if (s_pend[i].str) {
+            // no copy, no write: a NULL string would be stored as "" (an erased key); the slot stays pending
+            if (!(e->s = str_dup(s_pend[i].s ? s_pend[i].s : ""))) {
+                continue;
+            }
+            dups[nd++] = e->s;
+        }
+        j->n++;
     }
     if (j->n == 0) {
         heap_caps_free(j);
         return;
     }
-    ui_work(save_job, save_done, j);
+    if (!ui_work(save_job, save_done, j)) {
+        // the job was dropped (and freed by ui_work): its copies go too, secrets zeroed; the slots stay pending
+        for (int i = 0; i < nd; i++) {
+            str_free(dups[i]);
+        }
+        arm();      // try again later instead of waiting for the next change
+    }
 }
 
 static bool app_busy(void)

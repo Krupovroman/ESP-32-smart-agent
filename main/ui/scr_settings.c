@@ -120,6 +120,12 @@ static void row_cb(lv_event_t *e)
         int32_t to = !ui_get(g_s_speaker);
         ui_set(g_s_speaker, to);
         ui_emit(UI_IN_SPEAKER, to);
+        if (!to && !ui_get(g_s_text_only)) {
+            // no speaker: replies are text only (5.2), as onboarding O4 does
+            ui_set(g_s_text_only, 1);
+            ui_emit(UI_IN_TEXT_ONLY, 1);
+            ui_save_int("text_only", 1);
+        }
         refresh();
         break;
     }

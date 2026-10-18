@@ -1,7 +1,8 @@
 // Sleep, ambient and screen off (docs/ui.md 5.8): idle for dim_s -> backlight 25 % and a sleepy face; 60 s more
 // -> Z ambient at 15 %; 5 min more -> backlight off. Any touch only wakes (a top-layer catcher swallows it),
 // BOOT and PWR wake through ui_boot_down / ui_pwr_short. Text entry, phone setup, the adjuster, the touch test,
-// the onboarding and the Wi-Fi connecting step never sleep, nor does a busy turn.
+// the onboarding (with every screen opened from it) and the Wi-Fi connecting step never sleep, nor does a busy
+// turn.
 #include "ui_internal.h"
 #include "ui_orb.h"
 #include "ui_scr.h"
@@ -140,8 +141,10 @@ static bool never_sleeps(void)
 {
     ui_ctx_t c = ui_context();
     ui_screen_t s = ui_nav_current();
+    // the whole first-boot flow stays awake (W / K / WC on top of a step too): the ambient step goes home and
+    // would drop it
     return c == UI_CTX_TEXT || c == UI_CTX_QR || c == UI_CTX_ADJUST || c == UI_CTX_TOUCH || c == UI_CTX_TEST ||
-           s == UI_SCR_ONBOARD || s == UI_SCR_WIFI_CONN || s == UI_SCR_DIALOG;
+           s == UI_SCR_ONBOARD || s == UI_SCR_WIFI_CONN || s == UI_SCR_DIALOG || ui_onboarding();
 }
 
 static bool busy(void)

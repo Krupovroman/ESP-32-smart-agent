@@ -29,6 +29,7 @@ void ui_dialog_open(const ui_dialog_t *d)
     ui_str_copy(s_confirm, sizeof(s_confirm), d->confirm ? d->confirm : ui_s(S_A_YES));
     s_armed = true;
     ui_nav_push(UI_SCR_DIALOG, 0);
+    s_armed = false;    // consumed by the builder; a failed push must not leave it for "ui goto dialog"
 }
 
 static void cancel_cb(lv_event_t *e)

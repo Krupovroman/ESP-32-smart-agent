@@ -64,6 +64,7 @@ void ui_text_open(const ui_text_req_t *r)
     s_init = r->init ? str_copy(r->init) : NULL;
     s_armed = true;
     ui_nav_push(UI_SCR_TEXT, (uint32_t)r->field);
+    s_armed = false;    // consumed by the builder; a failed push (stack full) must not leave it for "ui goto"
 }
 
 static void prompt_refresh(void)
@@ -122,7 +123,12 @@ static void right_cb(lv_event_t *e)
     (void)e;
     if (s_req.field == UI_FIELD_KEY_HEX) {
         // "Aa": hex keypad <-> full EN keyboard for keys of another format (4.1)
-        ui_kb_set_hex(!ui_kb_hex());
+        bool to_hex = !ui_kb_hex();
+        if (to_hex && ui_field_hex_count(lv_textarea_get_text(s_ta)) < 0) {
+            // the EN keyboard may have deleted the prefix, which the hex keypad cannot type: OK would stay off
+            lv_textarea_set_text(s_ta, UI_KEY_PREFIX);
+        }
+        ui_kb_set_hex(to_hex);
         lv_label_set_text_static(s_right_lbl, ui_kb_hex() ? "Aa" : "0-f");
         prompt_refresh();
         return;

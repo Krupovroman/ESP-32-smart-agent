@@ -367,7 +367,17 @@ static struct {
     char ssid[33];
     char *pass;         // PSRAM, NULL = saved password
     uint32_t gen;
+    bool armed;         // ui_wifi_connect() asked for the next WC (a bare "ui goto wificonn" must not connect)
 } s_conn;
+
+static void conn_pass_drop(void)
+{
+    if (s_conn.pass) {
+        memset(s_conn.pass, 0, strlen(s_conn.pass));
+        heap_caps_free(s_conn.pass);
+        s_conn.pass = NULL;
+    }
+}
 
 static ui_step_t s_wc;
 static lv_obj_t *s_wc_scr;
@@ -454,19 +464,19 @@ static void conn_start(void)
 void ui_wifi_connect(const char *ssid, const char *pass)
 {
     strlcpy(s_conn.ssid, ssid ? ssid : "", sizeof(s_conn.ssid));
-    if (s_conn.pass) {
-        memset(s_conn.pass, 0, strlen(s_conn.pass));
-        heap_caps_free(s_conn.pass);
-        s_conn.pass = NULL;
-    }
+    conn_pass_drop();
     if (pass) {
         size_t n = strlen(pass) + 1;
         s_conn.pass = heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
-        if (s_conn.pass) {
-            memcpy(s_conn.pass, pass, n);
+        if (!s_conn.pass) {
+            ui_toast(ui_s(S_NOT_SAVED));
+            return;     // never fall back to the saved password of another attempt
         }
+        memcpy(s_conn.pass, pass, n);
     }
+    s_conn.armed = true;
     ui_nav_push(UI_SCR_WIFI_CONN, 0);
+    s_conn.armed = false;   // consumed by the builder (or the push failed)
 }
 
 static void wc_back_timer(lv_timer_t *t)
@@ -551,6 +561,7 @@ static void wc_delete_cb(lv_event_t *e)
     }
     s_wc_scr = NULL;
     s_conn.gen++;           // a late result is ignored
+    conn_pass_drop();       // the job keeps its own copy; a retry needs this screen
     if (s_wc_timer) {
         lv_timer_delete(s_wc_timer);
         s_wc_timer = NULL;
@@ -560,9 +571,10 @@ static void wc_delete_cb(lv_event_t *e)
 lv_obj_t *scr_wifi_conn_build(uint32_t arg)
 {
     (void)arg;
-    if (!s_conn.ssid[0]) {
+    if (!s_conn.armed || !s_conn.ssid[0]) {
         return NULL;        // needs ui_wifi_connect()
     }
+    s_conn.armed = false;
     s_wc_scr = ui_step_screen("wificonn", &s_wc, 0, wc_btn_cb);
     lv_obj_add_event_cb(s_wc_scr, wc_delete_cb, LV_EVENT_DELETE, NULL);
     conn_start();

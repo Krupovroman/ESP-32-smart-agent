@@ -46,11 +46,10 @@ static int next_step(void)
 
 void ui_onboard_resume(void)
 {
-    // the flow of the current step (W -> K -> WC, Q, K hex) succeeded
+    // the flow of the current step (W -> K -> WC, Q, K hex) succeeded. Wi-Fi is up when W / WC or Q finish; the key
+    // is read back (key_set: the pending or stored value), because Q also finishes when only Wi-Fi data arrived
     if (s_step == 2) {
         s_wifi_ok = true;
-    } else if (s_step == 3) {
-        s_key_ok = true;
     }
     ui_nav_home();
     ui_nav_push(UI_SCR_ONBOARD, (uint32_t)next_step());
@@ -136,6 +135,7 @@ static void key_done(const char *text, bool ok, void *ctx)
     (void)ctx;
     if (ok && text[0]) {
         ui_save_str("ai_key", text);
+        ui_save_flush();        // the AI client reads the stored key: the first try must not use the old one
         ui_onboard_resume();
     }
 }
