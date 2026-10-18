@@ -35,13 +35,60 @@ typedef enum {
     S_C_ERROR_T,
     // short errors for the status line
     S_E_GENERIC, S_E_SERVER, S_E_RATE, S_E_TLS, S_E_MIC, S_E_SPK,
+
+    // ---- second half (lists, keyboard, QR, dialog, steps, ambient)
+    S_ON, S_OFF, S_NOT_SAVED, S_CANCEL, S_LOADING, S_ERR_LOAD, S_AUTO, S_NEVER, S_SEC_FMT, S_MIN_FMT,
+    // arc titles
+    S_T_MODE, S_T_SETTINGS, S_T_WIFI, S_T_PROVIDER, S_T_MODELS, S_T_KEY, S_T_VOICE, S_T_TTS, S_T_VOICES,
+    S_T_SPEED, S_T_LANGS, S_T_LANG_A, S_T_LANG_B, S_T_DIR, S_T_DISPLAY, S_T_ABOUT, S_T_LICENSES, S_T_PHONE,
+    // mode sheet
+    S_M_ASSISTANT_SUB, S_M_TYPE, S_M_NEW_SUB, S_VOLUME, S_BRIGHT, S_VOICE_REPLY, S_VOICE_TR,
+    // settings
+    S_S_NOT_CONNECTED, S_S_CONNECTING, S_S_PHONE_SUB, S_S_SPEAKER, S_S_SPK_YES, S_S_SPK_NO, S_S_DIM_FMT,
+    S_S_DIM_NEVER, S_S_FACE, S_S_UILANG, S_LANG_SELF, S_S_CLEAR,
+    // Wi-Fi
+    S_W_RESCAN, S_W_SCANNING, S_W_CONNECTED, S_W_SECURED, S_W_OPEN, S_W_SAVED, S_W_AWAY, S_W_OTHER, S_W_PHONE,
+    S_W_NONE, S_N_CONNECT, S_N_PASSWORD, S_N_FORGET, S_N_STATUS, S_N_IP, S_N_SIGNAL, S_N_FORGET_Q, S_N_FORGET_BTN,
+    S_N_FORGOTTEN, S_K_PASS_FMT, S_K_SSID,
+    S_WC_TITLE, S_WC_SUB_FMT, S_WC_OK, S_WC_BAD_PASS, S_WC_NOT_FOUND, S_WC_FAILED, S_WC_AGAIN, S_WC_OTHER,
+    // provider, models, key, voice
+    S_P_URL, S_P_KEY_NONE, S_P_CHECK, S_P_PHONE, S_K_URL, S_K_KEY_FMT, S_K_KEY, S_K_MODEL, S_P_NEED_HTTPS,
+    S_AI_LOAD, S_AI_CUSTOM, S_AI_PRICE_FMT, S_AI_DEFAULT, S_AI_EXPIRES_FMT,
+    S_KI_REMAINING, S_KI_OF_FMT, S_KI_NO_LIMIT, S_KI_RESET, S_KI_TODAY, S_KI_MONTH, S_KI_TOTAL, S_KI_FREE,
+    S_KI_DAILY, S_KI_WEEKLY, S_KI_MONTHLY,
+    S_V_MODEL, S_V_SPEED, S_V_NO_VOICES, S_V_PRICE_FMT,
+    // about
+    S_A_FW, S_A_ROLLBACK, S_A_PANEL, S_A_UPTIME, S_A_MEM, S_A_LATENCY, S_A_LAT_FMT, S_A_LAST_ERR, S_A_NONE,
+    S_A_TOUCH, S_A_HINTS, S_A_HINTS_SUB, S_A_HINTS_ON, S_A_REBOOT, S_A_REBOOT_Q, S_A_YES, S_A_RESET, S_A_RESET_Q,
+    S_A_RESET_B, S_A_RESET_BTN, S_H_CLEAR_Q, S_H_CLEAR_B, S_H_DELETE, S_H_CLEARED,
+    // phone setup
+    S_Q_NET_FMT, S_Q_PASS_FMT, S_Q_OPEN, S_Q_WAIT, S_Q_STARTING, S_Q_WIFI_OK, S_Q_KEY_OK, S_Q_MODEL_OK, S_Q_ERROR,
+    // onboarding
+    S_O1_T, S_O1_S, S_O1_P, S_O1_B, S_O2_T, S_O2_S, S_O2_B, S_O3_T, S_O3_S, S_O3_B, S_O4_T, S_O4_S, S_O4_P,
+    S_O4_B, S_O5_T, S_O5_S, S_O5_P,
+    // text entry
+    S_K_QUESTION, S_K_INPUT, S_NEW_CHAT_Q,
     S__N
 } ui_sid_t;
 
 // Measured string slots for the fit test (docs/ui.md 7.9).
 typedef enum {
     SLOT_NONE, SLOT_PILL, SLOT_FAULT, SLOT_STATUS, SLOT_TITLE, SLOT_HINT, SLOT_HINT2, SLOT_TOAST, SLOT_TOAST_WIDE,
-    SLOT_BTN, SLOT_BTN_WIDE
+    SLOT_BTN, SLOT_BTN_WIDE,
+    SLOT_ROW,           // list row title (ui_20, 164)
+    SLOT_ROW_SUB,       // list row subtitle / info caption (ui_16, 184)
+    SLOT_TOGGLE,        // "Вкл" / "Выкл" in the right slot (ui_16, 44)
+    SLOT_PROMPT,        // K prompt label (ui_16, 150)
+    SLOT_STEP_T,        // T_STEP title (ui_28, 280)
+    SLOT_STEP_S,        // T_STEP subtitle (ui_16, 290)
+    SLOT_STEP_P,        // T_STEP primary stadium (ui_20, 204)
+    SLOT_STEP_B,        // T_STEP secondary stadium (ui_20, 168)
+    SLOT_DLG_T,         // dialog title (ui_20, 260)
+    SLOT_DLG_BTN,       // dialog stadium (ui_20, 104)
+    SLOT_QR1,           // Q caption 1 (ui_16, 220)
+    SLOT_QR2,           // Q caption 2 (ui_16, 150)
+    SLOT_QR_TITLE,      // Q arc title (ui_20, 100)
+    SLOT_QR_LINE,       // Q "received" lines (ui_20, 220)
 } ui_slot_t;
 
 // Text of id in the current UI language.

@@ -491,8 +491,9 @@ static void refresh_turn(lv_obj_t *w, const cm_entry_t *e, bool animate)
 
 static void card_btn_cb(lv_event_t *e)
 {
-    // the app routes the action to its fixing screen (W, Q, P, AI, D); none of them exists without it
-    if (!ui_emit(UI_IN_CARD_ACTION, (int32_t)(intptr_t)lv_event_get_user_data(e))) {
+    // routing actions open their fixing screen here (W, P, AI, credit, D); retries go to the app
+    int32_t card = (int32_t)(intptr_t)lv_event_get_user_data(e);
+    if (!ui_open_card(card) && !ui_emit(UI_IN_CARD_ACTION, card)) {
         ui_toast(ui_s(S_NOT_YET));
     }
 }

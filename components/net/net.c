@@ -169,6 +169,14 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t *d = data;
+        if (d->reason == WIFI_REASON_ASSOC_LEAVE && s_state == NET_CONNECTING) {
+            // start_sta() left the previous network itself (esp_wifi_disconnect); this event arrives after the
+            // bits were cleared and is not the result of the attempt just started, which reports its own
+            s_ip[0] = 0;
+            xEventGroupClearBits(s_evt, BIT_UP);
+            ESP_LOGI(TAG, "left the previous network for \"%s\"", s_cur_ssid);
+            return;
+        }
         bool was_up = s_state == NET_UP;
         s_state = NET_FAILED;
         s_ip[0] = 0;
@@ -253,6 +261,22 @@ esp_err_t net_connect(const char *ssid, const char *pass, bool save)
         }
     }
     return up ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t net_connect_saved(const char *ssid)
+{
+    char pass[65] = "";
+    bool found = false;
+    for (int i = 0; i < s_n_saved && !found; i++) {
+        if (!strcmp(s_saved[i].ssid, ssid)) {
+            strlcpy(pass, s_saved[i].pass, sizeof(pass));
+            found = true;
+        }
+    }
+    ESP_RETURN_ON_FALSE(found, ESP_ERR_NOT_FOUND, TAG, "not saved");
+    esp_err_t err = net_connect(ssid, pass, true);
+    memset(pass, 0, sizeof(pass));
+    return err;
 }
 
 esp_err_t net_disconnect(void)

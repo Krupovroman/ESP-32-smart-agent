@@ -49,3 +49,8 @@
 #define TXT_BULLET      "\xE2\x80\xA2"
 #define TXT_MIDDOT      "\xC2\xB7"
 #define TXT_RSAQUO      "\xE2\x80\xBA"  // "›" after fault texts
+#define TXT_LAQUO       "\xC2\xAB"      // «
+#define TXT_RAQUO       "\xC2\xBB"      // »
+#define TXT_TIMES       "\xC3\x97"      // × (speech speed "1.25×")
+#define TXT_UP          "\xE2\x86\x91"  // ↑ (upload time)
+#define TXT_APPROX      "~"             // U+2248 is not in the Inter ranges of 1.3

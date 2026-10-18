@@ -302,7 +302,8 @@ esp_err_t portal_start(void)
     esp_netif_ip_info_t ip;
     esp_netif_get_ip_info(s_ap, &ip);
     s_ap_ip = ip.ip.addr;
-    char uri[32];
+    // static: the DHCP server keeps this pointer for option 114 (dhcps_set_option_info stores it, no copy)
+    static char uri[32];
     snprintf(uri, sizeof(uri), "http://" IPSTR "/", IP2STR(&ip.ip));
     esp_netif_dhcps_stop(s_ap);
     esp_netif_dhcps_option(s_ap, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI, uri, strlen(uri));

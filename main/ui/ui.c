@@ -4,11 +4,16 @@
 #include "ui_chat.h"
 #include "ui_geom.h"
 #include "ui_internal.h"
+#include "ui_list.h"
 #include "ui_orb.h"
 #include "ui_rim.h"
+#include "ui_scr.h"
 #include "ui_str.h"
 #include "ui_theme.h"
+#include "ui_work.h"
 #include "settings.h"
+
+#include <stdlib.h>
 
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -44,6 +49,7 @@ typedef struct {
     lv_obj_t *scr;
     lv_obj_t *scroller;     // what the rim thumb follows on this screen (H decides its own)
     ui_screen_t id;
+    bool (*back)(void);     // optional back handler (onboarding: PWR = previous step)
 } nav_t;
 
 static nav_t s_nav[UI_NAV_MAX];
@@ -61,6 +67,30 @@ static const struct {
     [UI_SCR_READER] = { "reader", scr_reader_build, UI_CTX_READ },
     [UI_SCR_TOUCH] = { "touch", scr_touch_build, UI_CTX_TOUCH },
     [UI_SCR_TEST] = { "test", ui_test_build, UI_CTX_TEST },
+    [UI_SCR_MODE] = { "mode", scr_mode_build, UI_CTX_LIST },
+    [UI_SCR_SETTINGS] = { "settings", scr_settings_build, UI_CTX_LIST },
+    [UI_SCR_WIFI] = { "wifi", scr_wifi_build, UI_CTX_LIST },
+    [UI_SCR_WIFI_NET] = { "wifinet", scr_wifi_net_build, UI_CTX_LIST },
+    [UI_SCR_WIFI_CONN] = { "wificonn", scr_wifi_conn_build, UI_CTX_STEP },
+    [UI_SCR_TEXT] = { "text", scr_text_build, UI_CTX_TEXT },
+    [UI_SCR_QR] = { "phone", scr_qr_build, UI_CTX_QR },
+    [UI_SCR_PROVIDER] = { "provider", scr_provider_build, UI_CTX_LIST },
+    [UI_SCR_MODELS] = { "models", scr_models_build, UI_CTX_LIST },
+    [UI_SCR_KEYINFO] = { "keyinfo", scr_keyinfo_build, UI_CTX_LIST },
+    [UI_SCR_VOICE] = { "voice", scr_voice_build, UI_CTX_LIST },
+    [UI_SCR_TTS_MODELS] = { "ttsmodels", scr_tts_models_build, UI_CTX_LIST },
+    [UI_SCR_VOICES] = { "voices", scr_voices_build, UI_CTX_LIST },
+    [UI_SCR_SPEED] = { "speed", scr_speed_build, UI_CTX_LIST },
+    [UI_SCR_LANGS] = { "langs", scr_langs_build, UI_CTX_LIST },
+    [UI_SCR_LANG_PICK] = { "langpick", scr_lang_pick_build, UI_CTX_LIST },
+    [UI_SCR_DIR] = { "dir", scr_dir_build, UI_CTX_LIST },
+    [UI_SCR_ADJUST] = { "adjust", scr_adjust_build, UI_CTX_ADJUST },
+    [UI_SCR_DISPLAY] = { "display", scr_display_build, UI_CTX_LIST },
+    [UI_SCR_ABOUT] = { "about", scr_about_build, UI_CTX_LIST },
+    [UI_SCR_LICENSES] = { "licenses", scr_licenses_build, UI_CTX_LIST },
+    [UI_SCR_DIALOG] = { "dialog", scr_dialog_build, UI_CTX_DIALOG },
+    [UI_SCR_ONBOARD] = { "onboard", scr_onboard_build, UI_CTX_STEP },
+    [UI_SCR_AMBIENT] = { "ambient", scr_ambient_build, UI_CTX_AMBIENT },
 };
 
 // ---- Posting (any task)
@@ -91,6 +121,47 @@ void ui_post_text(ui_msg_type_t type, int32_t i, const char *text)
         memcpy(m.s, text, n);
     }
     ui_post(&m);
+}
+
+bool ui_post_wait(const ui_msg_t *m, uint32_t ms)
+{
+    if (!m || !s_q || xQueueSend(s_q, m, pdMS_TO_TICKS(ms)) != pdTRUE) {
+        return false;
+    }
+    atomic_fetch_add(&s_posted, 1);
+    return true;
+}
+
+// ---- Typed question (UI_IN_TEXT): the app copies it out with ui_typed_text()
+
+static SemaphoreHandle_t s_typed_mx;
+static char *s_typed;
+
+bool ui_send_typed(const char *text)
+{
+    size_t n = text ? strlen(text) : 0;
+    char *copy = heap_caps_malloc(n + 1, MALLOC_CAP_SPIRAM);
+    if (!copy) {
+        return false;
+    }
+    memcpy(copy, text ? text : "", n + 1);
+    xSemaphoreTake(s_typed_mx, portMAX_DELAY);
+    char *old = s_typed;
+    s_typed = copy;
+    xSemaphoreGive(s_typed_mx);
+    heap_caps_free(old);
+    return ui_emit(UI_IN_TEXT, (int32_t)n);
+}
+
+size_t ui_typed_text(char *out, size_t len)
+{
+    if (!out || !len || !s_typed_mx) {
+        return 0;
+    }
+    xSemaphoreTake(s_typed_mx, portMAX_DELAY);
+    size_t n = ui_str_copy(out, len, s_typed ? s_typed : "");
+    xSemaphoreGive(s_typed_mx);
+    return n;
 }
 
 void ui_set_input_cb(ui_input_cb_t cb, void *ctx)
@@ -130,9 +201,32 @@ ui_screen_t ui_nav_current(void)
     return s_depth > 0 ? s_nav[s_depth - 1].id : UI_SCR_HOME;
 }
 
+bool ui_nav_has(ui_screen_t id)
+{
+    for (int i = 0; i < s_depth; i++) {
+        if (s_nav[i].id == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void ctx_update(void)
 {
     atomic_store(&s_ctx, (int)s_screens[ui_nav_current()].ctx);
+}
+
+static lv_obj_t *nav_build(ui_screen_t id, uint32_t arg, lv_obj_t **scroller)
+{
+    lv_obj_t *prev_scroller = ui_rim_scroller();
+    ui_rim_attach_scroll(NULL);     // builders attach their own scroller
+    lv_obj_t *scr = s_screens[id].build(arg);
+    if (!scr) {
+        ui_rim_attach_scroll(prev_scroller);
+        return NULL;
+    }
+    *scroller = ui_rim_scroller();
+    return scr;
 }
 
 void ui_nav_push(ui_screen_t id, uint32_t arg)
@@ -145,19 +239,42 @@ void ui_nav_push(ui_screen_t id, uint32_t arg)
         ESP_LOGW(TAG, "nav stack full");
         return;
     }
-    lv_obj_t *prev_scroller = ui_rim_scroller();
-    ui_rim_attach_scroll(NULL);     // builders attach their own scroller
-    lv_obj_t *scr = s_screens[id].build(arg);
+    lv_obj_t *scroller;
+    lv_obj_t *scr = nav_build(id, arg, &scroller);
     if (!scr) {
-        ui_rim_attach_scroll(prev_scroller);
         return;
     }
-    s_nav[s_depth++] = (nav_t){ scr, ui_rim_scroller(), id };
+    s_nav[s_depth++] = (nav_t){ scr, scroller, id, NULL };
     lv_screen_load(scr);        // instant: no load animation (A33)
     ctx_update();
 }
 
-void ui_nav_back(void)
+void ui_nav_replace(ui_screen_t id, uint32_t arg)
+{
+    if (s_depth <= 1 || (unsigned)id >= UI_SCR__N || id == UI_SCR_HOME) {
+        ui_nav_push(id, arg);
+        return;
+    }
+    lv_obj_t *scroller;
+    lv_obj_t *scr = nav_build(id, arg, &scroller);
+    if (!scr) {
+        return;
+    }
+    lv_obj_t *old = s_nav[s_depth - 1].scr;
+    s_nav[s_depth - 1] = (nav_t){ scr, scroller, id, NULL };
+    lv_screen_load(scr);
+    lv_obj_delete_async(old);   // may be called from an event of the screen being replaced
+    ctx_update();
+}
+
+void ui_nav_set_back(bool (*fn)(void))
+{
+    if (s_depth > 1) {
+        s_nav[s_depth - 1].back = fn;
+    }
+}
+
+static void nav_pop(void)
 {
     if (s_depth <= 1) {
         return;
@@ -174,20 +291,77 @@ void ui_nav_back(void)
     ctx_update();
 }
 
+void ui_nav_back(void)
+{
+    if (s_depth > 1 && s_nav[s_depth - 1].back && s_nav[s_depth - 1].back()) {
+        return;
+    }
+    nav_pop();
+}
+
 void ui_nav_home(void)
 {
+    // never through the back handlers (an onboarding step would refuse to leave), and without loading the
+    // screens in between: their SCREEN_LOADED refreshes (scans, status jobs) would run for nothing
+    if (s_depth <= 1) {
+        return;
+    }
+    ui_rim_attach_scroll(NULL);
+    lv_screen_load(s_nav[0].scr);
     while (s_depth > 1) {
-        ui_nav_back();
+        lv_obj_delete_async(s_nav[--s_depth].scr);
+    }
+    scr_home_resume();
+    ctx_update();
+}
+
+static void nav_goto(int32_t id, const char *arg)
+{
+    uint32_t a = arg ? (uint32_t)strtoul(arg, NULL, 10) : 0;
+    if (id == UI_SCR_HOME) {
+        ui_nav_home();
+    } else if ((unsigned)id < UI_SCR__N && (id != (int32_t)ui_nav_current() || arg)) {
+        ui_nav_home();
+        ui_nav_push((ui_screen_t)id, a);
     }
 }
 
-static void nav_goto(int32_t id)
+void ui_open(ui_open_t what)
 {
-    if (id == UI_SCR_HOME) {
-        ui_nav_home();
-    } else if ((unsigned)id < UI_SCR__N && id != (int32_t)ui_nav_current()) {
-        ui_nav_home();
-        ui_nav_push((ui_screen_t)id, 0);
+    switch (what) {
+    case UI_OPEN_MODE_SHEET: ui_nav_push(UI_SCR_MODE, 0); break;
+    case UI_OPEN_SETTINGS: ui_nav_push(UI_SCR_SETTINGS, 0); break;
+    case UI_OPEN_WIFI: ui_nav_push(UI_SCR_WIFI, 0); break;
+    case UI_OPEN_LANG_A: ui_nav_push(UI_SCR_LANG_PICK, 0); break;
+    case UI_OPEN_LANG_B: ui_nav_push(UI_SCR_LANG_PICK, 1); break;
+    case UI_OPEN_FAULT_FIX:
+        // the screen that fixes the persistent fault (3.14): W | P | AI, credit details, diagnostics
+        switch (ui_get(g_s_fault)) {
+        case UI_FAULT_BAD_KEY:
+        case UI_FAULT_REGION: ui_nav_push(UI_SCR_PROVIDER, 0); break;
+        case UI_FAULT_NO_CREDIT:
+        case UI_FAULT_LOW_CREDIT: ui_nav_push(UI_SCR_KEYINFO, 0); break;
+        case UI_FAULT_MODEL:
+        case UI_FAULT_MODEL_EXPIRING: ui_nav_push(UI_SCR_MODELS, 0); break;
+        case UI_FAULT_MIC: ui_nav_push(UI_SCR_ABOUT, 0); break;
+        default: ui_nav_push(UI_SCR_WIFI, 0); break;
+        }
+        break;
+    default: break;
+    }
+}
+
+bool ui_open_card(int32_t card)
+{
+    switch (card) {
+    case UI_CARD_NO_WIFI: ui_nav_push(UI_SCR_WIFI, 0); return true;
+    case UI_CARD_BAD_KEY:
+    case UI_CARD_REGION: ui_nav_push(UI_SCR_PROVIDER, 0); return true;
+    case UI_CARD_NO_CREDIT: ui_nav_push(UI_SCR_KEYINFO, 0); return true;
+    case UI_CARD_MODEL: ui_nav_push(UI_SCR_MODELS, 0); return true;
+    case UI_CARD_MIC:
+    case UI_CARD_NO_SPEAKER: ui_nav_push(UI_SCR_ABOUT, 0); return true;
+    default: return false;      // retry cards: the app re-sends the cached clip
     }
 }
 
@@ -256,21 +430,36 @@ static void set_langs(const char *s)
     scr_home_langs_changed();
 }
 
-static void set_lang(int lang)
+static void rebuild_home(lv_timer_t *t)
+{
+    (void)t;
+    // the old H goes at once (never inside one of its own events: this is a one-shot timer): until it is gone
+    // its subject observers would run a second time against the new screen's widgets
+    lv_obj_t *old = s_nav[0].scr;
+    s_nav[0].scr = scr_home_create();
+    if (s_depth == 1) {
+        lv_screen_load(s_nav[0].scr);
+        scr_home_resume();
+    }
+    lv_obj_delete(old);
+}
+
+void ui_apply_lang(int lang)
 {
     if (lang == ui_str_lang()) {
         return;
     }
-    // strings are baked into the widgets: rebuild H (the model survives) and drop the stack. The old H goes
-    // at once (this runs in the pump, never inside one of its events): until it is gone its subject observers
-    // would run a second time against the new screen's widgets.
+    // strings are baked into the widgets: drop the stack now and rebuild H (the chat model survives) from a
+    // timer, because this may run inside an event of a screen that is still alive
     ui_str_set_lang(lang);
     ui_nav_home();
-    lv_obj_t *old = s_nav[0].scr;
-    s_nav[0].scr = scr_home_create();
-    lv_screen_load(s_nav[0].scr);
-    lv_obj_delete(old);
-    scr_home_resume();
+    lv_timer_t *t = lv_timer_create(rebuild_home, 0, NULL);
+    lv_timer_set_repeat_count(t, 1);
+}
+
+static void set_lang(int lang)
+{
+    ui_apply_lang(lang);
 }
 
 static void dispatch(const ui_msg_t *m)
@@ -289,7 +478,10 @@ static void dispatch(const ui_msg_t *m)
     case UI_ERROR: scr_home_error(m->i, m->s); break;
     case UI_SET_NET: ui_set(g_s_net, LV_CLAMP(0, m->i, UI_NET_FAILED)); break;
     case UI_PORTAL: ui_set(g_s_portal, m->i); break;
-    case UI_GOTO: nav_goto(m->i); break;
+    case UI_GOTO:
+        ui_sleep_wake();        // a requested screen is meant to be seen (and the wake catcher must go)
+        nav_goto(m->i, m->s);
+        break;
     case UI_SET_TEXT_ONLY: ui_set(g_s_text_only, m->i ? 1 : 0); break;
     case UI_RETRY: scr_home_retry(m->i); break;
     case UI_SET_MOOD: scr_home_mood(m->i); break;
@@ -307,6 +499,9 @@ static void dispatch(const ui_msg_t *m)
     case UI_DIVIDER: scr_home_divider(m->s); break;
     case UI_SET_FACE: ui_set(g_s_face, m->i ? 1 : 0); break;
     case UI_SET_TR_DIR: ui_set(g_s_tr_dir, LV_CLAMP(0, m->i, 2)); break;
+    case UI_WAKE: ui_sleep_wake(); break;
+    case UI_SCREEN_OFF: ui_sleep_off(); break;
+    case UI_WORK_DONE: ui_work_dispatch(m->s); break;
     default: break;
     }
 }
@@ -349,6 +544,13 @@ ui_ctx_t ui_context(void)
 bool ui_boot_down(void)
 {
     ui_ctx_t c = ui_context();
+    if (ui_asleep()) {
+        // BOOT wakes to H and records at once (5.8); the wake leaves the ambient screen
+        ui_post(&(ui_msg_t){ .type = UI_WAKE });
+        if (c == UI_CTX_AMBIENT || c == UI_CTX_HOME) {
+            return true;
+        }
+    }
     if (c == UI_CTX_TEXT) {
         ui_post_text(UI_TOAST, 0, ui_s(S_FINISH_INPUT));
         return false;
@@ -364,11 +566,25 @@ bool ui_boot_down(void)
 
 bool ui_pwr_short(void)
 {
+    if (ui_asleep()) {
+        ui_post(&(ui_msg_t){ .type = UI_WAKE });     // PWR only wakes
+        return true;
+    }
     if (ui_context() == UI_CTX_HOME) {
         return false;
     }
     ui_post(&(ui_msg_t){ .type = UI_BACK });
     return true;
+}
+
+void ui_screen_off(void)
+{
+    ui_post(&(ui_msg_t){ .type = UI_SCREEN_OFF });
+}
+
+bool ui_asleep(void)
+{
+    return ui_sleep_level() > 0;
 }
 
 void ui_pwr_down(void)
@@ -415,6 +631,9 @@ esp_err_t ui_init(lv_display_t *disp)
     }
     s_q = xQueueCreate(UI_Q_DEPTH, sizeof(ui_msg_t));
     ESP_RETURN_ON_FALSE(s_q, ESP_ERR_NO_MEM, TAG, "queue");
+    s_typed_mx = xSemaphoreCreateMutex();
+    ESP_RETURN_ON_FALSE(s_typed_mx, ESP_ERR_NO_MEM, TAG, "mutex");
+    ui_work_init();
     cm_init();
 
     // first frame already matches the saved settings; the app keeps them in sync through ui_post()
@@ -463,6 +682,8 @@ esp_err_t ui_init(lv_display_t *disp)
     scr_home_resume();
     ui_orb_intro(scr_home_orb());           // S0 boot splash (A31) on the permanent Home orb
     lv_timer_create(pump_cb, PUMP_MS, NULL);
+    ui_sleep_init();
+    ui_onboard_check();                     // O1 once the system is up, if Wi-Fi or the key is missing
     ctx_update();
     s_ready = true;
     lvgl_port_unlock();
@@ -673,8 +894,11 @@ static void audit_visit(lv_obj_t *obj, void *ctx)
     }
     lv_area_t a;
     // the arc title draws along r 148 inside its box, and the rim draws at r <= 168 by construction;
-    // transparent hit zones may extend past the circle (0.4)
-    bool exempt = lv_obj_check_type(obj, &lv_arclabel_class) || obj == ui_rim_obj() || !draws_something(obj);
+    // transparent hit zones may extend past the circle (0.4); list rows fade out towards the rim on purpose
+    // (3.7: fully opaque only within 79 px of the centre line)
+    bool fading = ui_list_is_row(obj) && lv_obj_get_style_opa(obj, LV_PART_MAIN) < LV_OPA_COVER;
+    bool exempt = lv_obj_check_type(obj, &lv_arclabel_class) || obj == ui_rim_obj() || !draws_something(obj) ||
+                  fading;
     if (!exempt && ui_obj_visible_area(obj, &a)) {
         float r = ui_obj_rmax(obj, &a);
         if (!ui_geom_fits(r)) {

@@ -861,8 +861,8 @@ static void orb_cb(lv_event_t *e)
             if (!ui_emit(UI_IN_DISMISS, 0)) {
                 ui_set(g_s_state, offline() ? UI_ST_OFFLINE : UI_ST_IDLE);
             }
-        } else if (!ui_emit(UI_IN_OPEN, UI_OPEN_WIFI)) {
-            ui_toast(ui_s(S_NOT_YET));
+        } else {
+            ui_open(UI_OPEN_WIFI);      // the hollow OFFLINE orb opens W (5.3)
         }
     }
 }
@@ -927,8 +927,8 @@ static void side_cb(lv_event_t *e)
         }
         if (side == UI_SIDE_A) {
             toggle_voice();
-        } else if (!ui_emit(UI_IN_OPEN, UI_OPEN_SETTINGS)) {
-            ui_toast(ui_s(S_NOT_YET));
+        } else {
+            ui_open(UI_OPEN_SETTINGS);
         }
         return;
     }
@@ -963,9 +963,7 @@ static void side_cb(lv_event_t *e)
             }
         } else if (code == LV_EVENT_RELEASED && released_on(btn)) {
             // a short tap opens the picker; PRESS_LOCK still sends RELEASED after the finger slid away
-            if (!ui_emit(UI_IN_OPEN, side == UI_SIDE_A ? UI_OPEN_LANG_A : UI_OPEN_LANG_B)) {
-                ui_toast(ui_s(S_NOT_YET));
-            }
+            ui_open(side == UI_SIDE_A ? UI_OPEN_LANG_A : UI_OPEN_LANG_B);
         }
         s_chip_side = -1;
         s_chip_talk = false;
@@ -978,12 +976,9 @@ static void pill_cb(lv_event_t *e)
     lv_point_t p;
     lv_indev_get_point(lv_indev_active(), &p);
     ui_orb_look_at(s_orb, p, 900);
+    // while a fault is active the pill opens the fixing screen instead of M (3.14)
     bool fault = ui_get(g_s_fault) != UI_FAULT_NONE || offline();
-    if (ui_emit(UI_IN_OPEN, fault ? UI_OPEN_FAULT_FIX : UI_OPEN_MODE_SHEET)) {
-        return;
-    }
-    // no mode sheet in this build: without an app the pill switches the mode directly
-    ui_set(g_s_mode, !mode());
+    ui_open(fault ? UI_OPEN_FAULT_FIX : UI_OPEN_MODE_SHEET);
 }
 
 // ---- Subject observers
