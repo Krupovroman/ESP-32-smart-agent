@@ -444,7 +444,8 @@ Message objects:
   - The envelope is drawn once in the bubble's `LV_EVENT_DRAW_MAIN`.
 - **Gaps:** 6 px between a user bubble and its reply; 14 px between turns.
 - **Divider:** after 15 min idle, a `ui_16` `text-3` divider "— новый разговор · 15:10 —" is inserted and the model context resets. Waking after ≥ 15 min returns H to the empty state.
-- **Limit:** ≤ 20 messages live on H. Storage keeps 40 per mode (PSRAM, persisted to the `storage` partition), shown in HIST.
+- **Limit:** ≤ 20 messages live on H. Storage keeps 40 per mode in PSRAM, shown in HIST.
+- **Chat history is RAM only, on purpose.** It is never written to flash (NVS or the `storage` partition), so a reboot or power cycle empties H, HIST and the RD history. This is a privacy choice, the same as the model context (protocol §4.3): transcripts and translations of other people's speech must not outlive the session on a device that is easy to pass around, and the flash is not encrypted. It also saves flash wear. "Новый разговор" and S → История → "Очистить" clear it earlier.
 - **Scrolling:** a new message scrolls the chat to the bottom. A translator bubble or a card taller than the unfaded window (y 104–228) is scrolled so that its top sits just below the top fade, and the user scrolls down for the rest. A manual drag stops auto-scroll until the next talk press.
 
 ### 3.4 Translator face (H′)
