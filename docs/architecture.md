@@ -206,19 +206,27 @@ uint8_t   board_backlight_get(void);
 esp_err_t board_buttons_start(board_btn_cb_t cb, void *ctx);   /* espressif/button 4.2.1: iot_button_new_gpio_device,
                                                                   active_level 0, long_press_time BOOT 1500 / PWR 3000 ms */
 int       board_battery_mv(void);       /* adc_oneshot ch7 + adc_cali curve fitting, ×3; -1 on error */
-/* battery model (ui.md 3.16): the app calls sample() every 5 s; median of 5, Li-ion curve; external power = USB
-   host (usb_serial_jtag_is_connected) or +15 mV in 2 min of settled readings below 4.15 V; the voltage's direction
-   decides CHARGING / FULL (>= 4.15 V holding) / USB_DRAIN (settled -20 mV in 3 min); the ETA6098 has no status
-   pin to the MCU and the system load hangs on the cell */
+/* battery model v3 (ui.md 3.16): the app calls sample() every poll_ms (5 s, 2 s while a step is measured); median
+   of 5, Li-ion curve scaled by 4200 / v_full; external power = USB host (usb_serial_jtag_is_connected), a settled
+   voltage step of 35 mV (a wall charger; down = unplugged), the host lost without a step down = kept (macOS
+   suspend); CHARGING / FULL (plug-in step < 15 mV near v_full, or flat 4 min: its level is learned as v_full) /
+   USB_DRAIN (settled -20 mV in 3 min with the host); the ETA6098 has no status pin to the MCU and the system load
+   hangs on the cell */
 typedef enum { BOARD_PWR_BATTERY, BOARD_PWR_CHARGING, BOARD_PWR_FULL, BOARD_PWR_USB_DRAIN } board_power_t;
+typedef enum { BOARD_EXT_NONE, BOARD_EXT_USB, BOARD_EXT_CHARGER, BOARD_EXT_KEPT } board_ext_t;
 typedef enum { BOARD_BAT_SKIP, BOARD_BAT_LOADED, BOARD_BAT_SETTLED } board_bat_q_t;
-typedef struct { int pct, mv; board_power_t power; bool charging, full, usb, sim; int raw, d3; bool d3_ok;
-                 int ofs; unsigned skipped; } board_bat_t;
+typedef struct { int pct, mv; board_power_t power; bool charging, full, usb, sim; int raw, d3; bool d3_ok; int d4;
+                 bool d4_ok; int ofs; unsigned skipped; board_ext_t ext; int vfull, vfull_learn, poll_ms;
+                 board_bat_ev_t why; } board_bat_t;
 bool      board_battery_sample(board_bat_q_t q);   /* SKIP: speaker / turn / backlight step lately (app_io.c), the
                                                       reading is not taken; SETTLED: no load step for 60 s; true
                                                       when pct / power / usb changed */
 void      board_battery_state(board_bat_t *out);    /* any task */
+void      board_battery_set_vfull(int mv);          /* setting bat_vfull (4000-4250, else 4150) */
 void      board_battery_sim(int pct, board_power_t power); /* console "bat sim"; pct < 0 ends it */
+uint32_t  board_battery_log_range(uint32_t *first); /* the battery log (PSRAM, 1536 records): minutes + events */
+bool      board_battery_log_get(uint32_t seq, board_bat_log_t *out);
+void      board_battery_log_clear(void);
 ```
 
 **Button rules.** These fix a conflict in the draft, where holding BOOT for 1.5 s to talk triggered a cancel.
@@ -500,6 +508,7 @@ void      settings_on_change(void (*cb)(const char *key, void *ctx), void *ctx);
 | `lcd_inv` | u8 | 1 | 1 = keep INVON from the init table |
 | `ota_url` | str 201 | `""` | |
 | `ref_url` | str 129 | `""` | `HTTP-Referer`, sent only to openrouter.ai |
+| `bat_vfull` | u16 | 4150 | 4000–4250 mV: the battery divider's reading of a full cell on the charger (100 %); learned from each charge's plateau and stored by the app (ui.md 3.16) |
 | `dev_flags` | u32 | 0 | b0 perf log, b1 HTTP trace (no secrets), b2 portal reachable on the STA IP, b3 allow `:free` models |
 
 **Namespace `wifi`:** `n` u8; `ssid0`..`ssid4` str 33; `pass0`..`pass4` str 65 (S); `last` u8.

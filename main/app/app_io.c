@@ -21,7 +21,8 @@ static const char *TAG = "app_io";
 
 #define DIM_PCT          25              // ui.md 5.8: dimmed backlight
 #define NET_POLL_MS      500
-#define BAT_POLL_MS      5000            // ui.md 3.16: one reading into the battery model every 5 s
+#define BAT_POLL_MS      5000            // ui.md 3.16: one reading into the battery model every 5 s (every 2 s
+                                         // while it measures a step: board_bat_t.poll_ms)
 #define BAT_LOW_PCT      15              // toasts "Батарея 15 %" and "Батарея 5 %", once each per discharge
 #define BAT_CRIT_PCT     5
 #define BAT_REARM_PCT    20              // ... until charging or back above this
@@ -57,12 +58,14 @@ static int s_net = -1;
 static bool s_portal;
 static uint32_t s_t_net, s_t_bat, s_t_heap, s_t_touch, s_t_amb;
 static bool s_bat_polled, s_bat_warned, s_bat_crit;
+static uint32_t s_bat_poll_ms = BAT_POLL_MS;    // when the model wants its next reading
+static int s_bat_vfull_seen = -1;       // the model's last learned v_full, saved as bat_vfull
 static int32_t s_bat_posted = -1;       // UI_BAT_MAKE() value last sent to the UI
 static uint32_t s_load_t;               // last load step: a turn, sound, the mic, a backlight change (settle clock)
 static uint32_t s_audio_t, s_turn_t, s_screen_t;   // the speaker last played, a turn last ran, the backlight changed
 static bool s_low_mem;
 static int s_ambient = VAD_NO_HINT;
-static save_t s_save[] = { { .key = "mode" }, { .key = "text_only" } };
+static save_t s_save[] = { { .key = "mode" }, { .key = "text_only" }, { .key = "bat_vfull" } };
 
 app_screen_t app_io_screen(void)
 {
@@ -285,6 +288,9 @@ void app_io_setting(const char *key)
     if (all || !strcmp(key, "mic_slot") || !strcmp(key, "mic_shift")) {
         audio_in_set_format(settings_get_int("mic_slot") == 0, settings_get_int("mic_shift"));
     }
+    if (all || !strcmp(key, "bat_vfull")) {
+        board_battery_set_vfull(settings_get_int("bat_vfull"));    // the battery's 100 % (ui.md 3.16)
+    }
 }
 
 void app_io_save(const char *key, int32_t v, bool now)
@@ -373,14 +379,24 @@ void app_io_battery(bool sample)
     board_bat_t b;
     board_battery_state(&b);
     atomic_store(&s_bat_mv, b.mv);
+    s_bat_poll_ms = b.poll_ms > 0 ? (uint32_t)b.poll_ms : BAT_POLL_MS;
+    if (b.vfull_learn > 0 && b.vfull_learn != s_bat_vfull_seen) {
+        // a plateau on the charger taught the model this divider's full level: kept for the next boot (written
+        // once the app is idle, a flash write stalls the caches)
+        s_bat_vfull_seen = b.vfull_learn;
+        app_io_save("bat_vfull", b.vfull_learn, false);
+    }
     int32_t v = UI_BAT_MAKE(b.pct, (b.power == BOARD_PWR_CHARGING ? UI_BAT_CHARGING : 0) |
                                        (b.power == BOARD_PWR_FULL ? UI_BAT_FULL : 0) |
                                        (b.power == BOARD_PWR_USB_DRAIN ? UI_BAT_DRAIN : 0) | (b.usb ? UI_BAT_USB : 0));
     if (v != s_bat_posted) {
         s_bat_posted = v;
         ui_post(&(ui_msg_t){ .type = UI_SET_BATTERY, .i = v });
-        devcon_event("battery", "\"mv\":%d,\"pct\":%d,\"power\":\"%s\",\"charging\":%d,\"full\":%d,\"usb\":%d,\"sim\":%d",
-                     b.mv, b.pct, board_power_name(b.power), b.charging, b.full, b.usb, b.sim);
+        devcon_event("battery",
+                     "\"mv\":%d,\"pct\":%d,\"power\":\"%s\",\"charging\":%d,\"full\":%d,\"usb\":%d,\"ext\":\"%s\","
+                     "\"why\":\"%s\",\"sim\":%d",
+                     b.mv, b.pct, board_power_name(b.power), b.charging, b.full, b.usb, board_ext_name(b.ext),
+                     board_bat_ev_name(b.why), b.sim);
     }
     // ui.md 5.6 / 3.16: "Батарея 15 %" and "Батарея 5 %" once each while it discharges
     if (b.pct < 0 || b.charging || b.full || b.pct > BAT_REARM_PCT) {
@@ -485,7 +501,7 @@ void app_io_tick(uint32_t now)
         s_t_net = now;
         poll_net();
     }
-    if (!s_bat_polled || now - s_t_bat >= BAT_POLL_MS) {
+    if (!s_bat_polled || now - s_t_bat >= s_bat_poll_ms) {
         s_bat_polled = true;
         s_t_bat = now;
         app_io_battery(true);
@@ -522,6 +538,7 @@ void app_io_init(void)
     s_bright = settings_get_int("bright");
     s_dim_s = settings_get_int("dim_s");
     s_last_act = s_load_t = app_now_ms();     // boot (Wi-Fi joining, TLS) is a load too
+    board_battery_set_vfull(settings_get_int("bat_vfull"));    // before the first reading
     settings_on_change(on_setting_cb, NULL);
     if (board_buttons_start(btn_cb, NULL) != ESP_OK) {
         ESP_LOGE(TAG, "buttons unavailable");

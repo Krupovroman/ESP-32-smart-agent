@@ -44,4 +44,5 @@ S("tr_voice_b",  ST_STR, 0,   "",                                  0, 0,     64,
 S("tr_vad",      ST_U8,  1,   NULL,                                0, 1,     0,    0)
 S("lcd_inv",     ST_U8,  1,   NULL,                                0, 1,     0,    0)
 S("ota_url",     ST_STR, 0,   "",                                  0, 0,     200,  0)
+S("bat_vfull",   ST_U16, 4150, NULL,                               4000, 4250, 0,  0)   // battery 100 % (mV), learned
 S("dev_flags",   ST_U32, 0,   NULL,                                0, 0x7fffffff, 0, 0)

@@ -144,7 +144,7 @@ typedef struct {
 static kv_t s_kv[] = {
     { "mode" }, { "text_only" }, { "volume" }, { "bright" }, { "dim_s" }, { "max_rec_s" }, { "vad_stop" },
     { "tr_vad" }, { "mic_slot" }, { "mic_shift" }, { "tr_lang_a", true }, { "tr_lang_b", true },
-    { "ui_lang", true }, { "ai_key", true },
+    { "ui_lang", true }, { "ai_key", true }, { "bat_vfull" },
 };
 static setting_desc_t s_desc;
 static void (*s_on_change)(const char *key, void *ctx);
@@ -776,6 +776,8 @@ bool board_battery_sample(board_bat_q_t q)
     return false;
 }
 
+int g_bat_poll_ms, g_bat_vfull_learn = -1, g_bat_vfull_set = -1;
+
 void board_battery_state(board_bat_t *out)
 {
     memset(out, 0, sizeof(*out));
@@ -786,6 +788,15 @@ void board_battery_state(board_bat_t *out)
                : g_bat_chg   ? BOARD_PWR_CHARGING
                              : BOARD_PWR_BATTERY;
     out->charging = out->power == BOARD_PWR_CHARGING;
+    out->ext = out->power != BOARD_PWR_BATTERY ? BOARD_EXT_USB : BOARD_EXT_NONE;
+    out->poll_ms = g_bat_poll_ms;
+    out->vfull = g_bat_vfull_set;
+    out->vfull_learn = g_bat_vfull_learn;
+}
+
+void board_battery_set_vfull(int mv)
+{
+    g_bat_vfull_set = mv;
 }
 
 void board_battery_sim(int pct, board_power_t power)
@@ -797,6 +808,17 @@ const char *board_power_name(board_power_t p)
 {
     static const char *const n[] = { "battery", "charging", "full", "drain" };
     return (unsigned)p < BOARD_PWR__N ? n[p] : "?";
+}
+
+const char *board_ext_name(board_ext_t e)
+{
+    static const char *const n[] = { "none", "usb", "charger", "kept" };
+    return (unsigned)e < BOARD_EXT__N ? n[e] : "?";
+}
+
+const char *board_bat_ev_name(board_bat_ev_t e)
+{
+    return e == BOARD_BEV_BOOT ? "boot" : "ev";
 }
 
 void net_status(net_status_t *out)
@@ -840,6 +862,9 @@ void mocks_reset(void)
     g_bat_chg = g_bat_drain = g_bat_last_settled = false;
     g_bat_samples = g_bat_settled = 0;
     g_bat_last_q = -1;
+    g_bat_poll_ms = 0;
+    g_bat_vfull_learn = g_bat_vfull_set = -1;
+    set_int("bat_vfull", 4150);
     g_inactive_ms = 100000;
     g_touch_down = false;
     g_ui_level = 0;
