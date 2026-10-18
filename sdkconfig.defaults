@@ -72,6 +72,12 @@ CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y
 CONFIG_LV_USE_FONT_COMPRESSED=n
 CONFIG_LV_USE_FONT_PLACEHOLDER=y
 CONFIG_LV_TXT_ENC_UTF8=y
+# CJK fallback fonts (main/ui/ui_font.c): Tiny TTF over the memory-mapped storage pack, so no file support; the
+# glyph cache size is set per font at creation; no kerning cache (CJK has no kerning, the pack no kern table)
+CONFIG_LV_USE_TINY_TTF=y
+CONFIG_LV_TINY_TTF_FILE_SUPPORT=n
+CONFIG_LV_TINY_TTF_CACHE_GLYPH_CNT=128
+CONFIG_LV_TINY_TTF_CACHE_KERNING_CNT=0
 # no theme: every part is styled explicitly (ui_theme.c)
 CONFIG_LV_USE_THEME_DEFAULT=n
 CONFIG_LV_USE_THEME_SIMPLE=n

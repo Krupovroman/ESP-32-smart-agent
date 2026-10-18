@@ -7839,6 +7839,9 @@ static lv_font_fmt_txt_dsc_t font_dsc = {
  *  PUBLIC FONT
  *----------------*/
 
+/*CJK fallback of the storage font pack (main/ui/ui_font.c); added by tools/mkfonts.ps1*/
+extern lv_font_t ui_cjk_28;
+
 /*Initialize a public general font descriptor*/
 #if LVGL_VERSION_MAJOR >= 8
 const lv_font_t ui_28 = {
@@ -7858,7 +7861,7 @@ lv_font_t ui_28 = {
 #endif
     .dsc = &font_dsc,          /*The custom font data. Will be accessed by `get_glyph_bitmap/dsc` */
 #if LV_VERSION_CHECK(8, 2, 0) || LVGL_VERSION_MAJOR >= 9
-    .fallback = NULL,
+    .fallback = &ui_cjk_28,
 #endif
     .user_data = NULL,
 };

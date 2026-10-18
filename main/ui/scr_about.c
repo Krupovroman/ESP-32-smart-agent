@@ -306,6 +306,8 @@ lv_obj_t *scr_licenses_build(uint32_t arg)
         { "LVGL", "MIT" },
         { "Inter", "SIL OFL 1.1" },
         { "Font Awesome 5 Free", "OFL 1.1 " TXT_MIDDOT " CC BY 4.0" },
+        { "Noto Sans CJK (subset)", "SIL OFL 1.1" },
+        { "stb_truetype", "MIT " TXT_MIDDOT " Public Domain" },
         { "xiaozhi-esp32", "MIT" },
         { "ESP-IDF", "Apache 2.0" },
         { "esp_lvgl_port", "Apache 2.0" },
