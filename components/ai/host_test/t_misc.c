@@ -112,6 +112,17 @@ static void t_url(void)
     char u[128];
     ai_join_url(u, sizeof(u), "https://a/b/api/v1/", "/chat/completions");
     CHECK(!strcmp(u, "https://a/b/api/v1/chat/completions"));
+    // tts_key / stt_key fall back to ai_key only on the ai_url host
+    char k[64];
+    host_set("ai_url", "https://relay.example/SECRET/api/v1");
+    host_set("ai_key", "sk-or-v1-test");
+    CHECK(cfg_key("tts_key", "https://RELAY.example/other/v1", k, sizeof(k)) && !strcmp(k, "sk-or-v1-test"));
+    CHECK(!cfg_key("tts_key", "https://piper.home.example/v1", k, sizeof(k)) && k[0] == 0);
+    CHECK(!cfg_key("stt_key", "https://relay.example:8443/SECRET/api/v1", k, sizeof(k)) && k[0] == 0);
+    host_set("tts_key", "own");
+    CHECK(cfg_key("tts_key", "https://piper.home.example/v1", k, sizeof(k)) && !strcmp(k, "own"));
+    host_settings_reset();
+    CHECK(cfg_key("stt_key", "https://openrouter.ai/api/v1", k, sizeof(k)) && k[0] == 0);   // K0 case
 }
 
 static void t_classify(void)

@@ -43,9 +43,9 @@ esp_err_t stt_transcribe_ex(uint32_t turn, const int16_t *pcm, size_t samples, u
     char base[136], url[200], key[208], model[100];
     cfg_url("stt_url", base, sizeof(base));
     ai_join_url(url, sizeof(url), base, "audio/transcriptions");
-    cfg_key("stt_key", key, sizeof(key));
+    bool need_key = cfg_key("stt_key", base, key, sizeof(key));
     cfg_str("stt_model", model, sizeof(model), "openai/whisper-large-v3-turbo");
-    if (!key[0]) {
+    if (!key[0] && need_key) {
         or_err_local(err, "K0");
         return ESP_ERR_INVALID_STATE;
     }

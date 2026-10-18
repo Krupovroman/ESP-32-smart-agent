@@ -76,12 +76,21 @@ void cfg_url(const char *key, char *buf, size_t len)
     }
 }
 
-void cfg_key(const char *key, char *buf, size_t len)
+bool cfg_key(const char *key, const char *url, char *buf, size_t len)
 {
     cfg_str(key, buf, len, "");
-    if (!buf[0]) {
-        cfg_str("ai_key", buf, len, "");
+    if (buf[0]) {
+        return true;
     }
+    // ai_key belongs to the AI host: it never goes to a tts_url / stt_url on another host
+    char ai[136], o_ai[100], o_url[100];
+    cfg_str("ai_url", ai, sizeof(ai), "");
+    if (!or_url_origin(url, o_url, sizeof(o_url)) ||
+        !or_url_origin(ai[0] ? ai : "https://openrouter.ai/api/v1", o_ai, sizeof(o_ai)) || strcmp(o_url, o_ai)) {
+        return false;
+    }
+    cfg_str("ai_key", buf, len, "");
+    return true;
 }
 
 void ai_join_url(char *out, size_t len, const char *base, const char *path)

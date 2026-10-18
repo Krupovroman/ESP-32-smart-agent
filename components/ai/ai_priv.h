@@ -19,9 +19,12 @@ int64_t ai_now_ms(void);
 // Settings that may be missing from the table get def (the table is owned by components/settings).
 int32_t cfg_int(const char *key, int32_t def);
 void cfg_str(const char *key, char *buf, size_t len, const char *def);
-// tts_url / stt_url and tts_key / stt_key fall back to ai_url / ai_key when empty.
+// tts_url / stt_url fall back to ai_url when empty.
 void cfg_url(const char *key, char *buf, size_t len);
-void cfg_key(const char *key, char *buf, size_t len);
+// tts_key / stt_key for the endpoint url; empty falls back to ai_key only when url is on the
+// ai_url host. Returns false for another host without its own key: the request then goes
+// without Authorization (a keyless service) instead of carrying the AI key there.
+bool cfg_key(const char *key, const char *url, char *buf, size_t len);
 // base + path with exactly one '/' between them.
 void ai_join_url(char *out, size_t len, const char *base, const char *path);
 bool ai_net_up(void);
