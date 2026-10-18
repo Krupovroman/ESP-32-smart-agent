@@ -23,6 +23,8 @@ S("ai_json",     ST_U8,  1,   NULL,                                0, 1,     0, 
 S("ai_maxtok",   ST_U16, 1024, NULL,                               50, 4000, 0,    0)
 S("ai_temp",     ST_U8,  40,  NULL,                                0, 200,   0,    0)
 S("ai_hist",     ST_U8,  6,   NULL,                                0, 20,    0,    0)
+S("ai_web",      ST_U8,  1,   NULL,                                0, 2,     0,    0)   // web search: 0 off, 1 auto, 2 always
+S("ai_web_n",    ST_U8,  3,   NULL,                                1, 5,     0,    0)   // web results per search
 S("ai_sys",      ST_STR, 0,   "",                                  0, 0,     2000, 0)
 S("tts_url",     ST_STR, 0,   "",                                  0, 0,     128,  0)
 S("tts_key",     ST_STR, 0,   "",                                  0, 0,     200,  ST_SECRET)

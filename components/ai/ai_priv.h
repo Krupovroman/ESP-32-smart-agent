@@ -42,6 +42,11 @@ size_t utf8_put(uint32_t cp, char *out);                 // writes 1-4 bytes
 size_t utf8_cp_len(const char *s);
 // Copy of s limited to max_cp code points, "…" appended when cut (PSRAM).
 char *utf8_trunc_dup(const char *s, size_t max_cp);
+// Host of an http(s) URL without "www." and the port ("https://www.gismeteo.ru/x" -> "gismeteo.ru"); "" if none.
+void ai_url_host(const char *url, char *out, size_t len);
+// Web answers (protocol §2.8): drops markdown links "[label](http…)", bare http(s) URLs and the brackets or
+// spaces they leave, in place. host (may be NULL) gets the host of the first link when it is still empty.
+void ai_strip_links(char *s, char *host, size_t host_len);
 
 // ---- ai_client.c ------------------------------------------------------------------------------
 void ai_emit(const ai_event_t *ev);
@@ -57,7 +62,14 @@ uint32_t ai_task_stack_free(void);
 uint32_t tts_task_stack_free(void);
 
 // ---- ai_prompts.c -----------------------------------------------------------------------------
-char *ai_prompt_assistant(void);                         // PSRAM; {DATETIME} filled or its line removed
+// Web search shape of an assistant request (protocol §2.8); the values match the ai_web setting.
+typedef enum {
+    AI_WEB_OFF,                   // no search possible: the prompt says there is no internet
+    AI_WEB_AUTO,                  // schema has needs_web; the turn is re-run with the plugin when it is true
+    AI_WEB_ON,                    // "plugins":[{"id":"web"}] on this request
+} ai_web_t;
+// PSRAM; {WEB} gets the rule line of web, {DATETIME} filled or its line removed.
+char *ai_prompt_assistant(ai_web_t web);
 char *ai_prompt_translator(const char *a, const char *b);
 const char *ai_lang_name(const char *code);              // English name used in the prompt
 bool ai_lang_in_enum(const char *code);                  // assistant "lang" enum (other excluded)

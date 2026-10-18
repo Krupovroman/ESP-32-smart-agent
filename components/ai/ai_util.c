@@ -105,6 +105,148 @@ void ai_join_url(char *out, size_t len, const char *base, const char *path)
     snprintf(out, len, "%.*s/%s", (int)bl, base, path);
 }
 
+void ai_url_host(const char *url, char *out, size_t len)
+{
+    if (!len) {
+        return;
+    }
+    out[0] = 0;
+    const char *p = url ? strstr(url, "://") : NULL;
+    if (!p || strncasecmp(url, "http", 4)) {
+        return;
+    }
+    p += 3;
+    if (!strncasecmp(p, "www.", 4)) {
+        p += 4;
+    }
+    size_t n = 0;
+    for (; p[n] && p[n] != '/' && p[n] != ':' && p[n] != '?' && p[n] != '#' && p[n] != ')'; n++) {
+        unsigned char c = (unsigned char)p[n];
+        // letters, digits, '-', '.' and UTF-8 (IDN) only: anything else is not a host to show
+        if (!(c >= 0x80 || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' ||
+              c == '.')) {
+            return;
+        }
+    }
+    if (n == 0 || n >= len) {
+        return;
+    }
+    for (size_t i = 0; i < n; i++) {
+        out[i] = (p[i] >= 'A' && p[i] <= 'Z') ? (char)(p[i] - 'A' + 'a') : p[i];
+    }
+    out[n] = 0;
+}
+
+// "[gismeteo.ru](…)" names its source: such a label goes with the link; "[прогноз](…)" is part of a sentence.
+static bool host_like(const char *s, size_t n)
+{
+    bool dot = false;
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] == ' ' || s[i] == '\n') {
+            return false;
+        }
+        dot |= s[i] == '.';
+    }
+    return dot;
+}
+
+static bool is_punct(char c)
+{
+    return c == '.' || c == ',' || c == '!' || c == '?' || c == ';' || c == ':' || c == ')';
+}
+
+void ai_strip_links(char *s, char *host, size_t host_len)
+{
+    if (!s) {
+        return;
+    }
+    char *w = s;
+    const char *r = s;
+    bool cut = false;
+    while (*r) {
+        if (*r == '[') {
+            const char *q = r + 1;
+            while (*q && *q != ']' && *q != '[' && *q != '\n') {
+                q++;
+            }
+            const char *e = (*q == ']' && q[1] == '(' && !strncasecmp(q + 2, "http", 4)) ? strchr(q + 2, ')') : NULL;
+            if (e) {
+                if (host && !host[0]) {
+                    ai_url_host(q + 2, host, host_len);
+                }
+                size_t ln = (size_t)(q - r - 1);
+                if (!host_like(r + 1, ln)) {
+                    memmove(w, r + 1, ln);      // w <= r: the label moves left, never over unread text
+                    w += ln;
+                }
+                r = e + 1;
+                cut = true;
+                continue;
+            }
+        }
+        char prev = w > s ? w[-1] : ' ';
+        if ((prev == ' ' || prev == '(' || prev == '\n') &&
+            (!strncasecmp(r, "https://", 8) || !strncasecmp(r, "http://", 7))) {
+            if (host && !host[0]) {
+                ai_url_host(r, host, host_len);
+            }
+            const char *e = r;
+            while (*e && *e != ' ' && *e != '\n' && *e != ')' && *e != ']') {
+                e++;
+            }
+            while (e > r && is_punct(e[-1]) && e[-1] != ')') {
+                e--;                            // "…/page." keeps the full stop of the sentence
+            }
+            r = e;
+            cut = true;
+            continue;
+        }
+        *w++ = *r++;
+    }
+    *w = 0;
+    if (!cut) {
+        return;
+    }
+    // what the links leave behind: empty brackets, doubled or leading spaces, a space before punctuation
+    w = s;
+    r = s;
+    while (*r) {
+        if (*r == '(' || *r == '[') {
+            const char *q = r + 1;
+            while (*q == ' ') {
+                q++;
+            }
+            if (*q == (*r == '(' ? ')' : ']')) {
+                r = q + 1;
+                continue;
+            }
+        }
+        char c = *r;
+        if (c == ' ' && (w == s || w[-1] == ' ' || w[-1] == '\n' || w[-1] == '(')) {
+            r++;
+            continue;
+        }
+        if ((is_punct(c) || c == '\n') && w > s && w[-1] == ' ') {
+            w--;
+        }
+        char p = w > s ? w[-1] : '\n';
+        if ((c == ',' || c == ';') && (p == '\n' || p == '(' || (is_punct(p) && p != ')'))) {
+            r++;                                // "источники: , ." -> the comma of a removed list goes
+            continue;
+        }
+        if ((c == '.' || c == '!' || c == '?') && (p == ',' || p == ';' || p == ':')) {
+            w[-1] = c;                          // "погода, ." -> "погода."
+            r++;
+            continue;
+        }
+        *w++ = *r++;
+    }
+    while (w > s && (w[-1] == ' ' || w[-1] == '\n')) {
+        w--;
+    }
+    *w = 0;
+}
+
 bool ai_net_up(void)
 {
     net_status_t st;
