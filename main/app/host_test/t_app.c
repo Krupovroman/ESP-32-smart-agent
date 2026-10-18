@@ -620,6 +620,11 @@ static void t_cancel(void)
     CHECK(g_locked && s_a.st == APP_IDLE && !g_recording && !s_a.held && g_nsub == 1);
     post_ev(EV_PTT_UP, 900, APP_SRC_ORB);
     CHECK(s_a.st == APP_IDLE && g_nsub == 1);
+    // a chip held from before the lock reports its 400 ms hold while locked: no recording
+    starts = g_rec_starts;
+    ui_in(UI_IN_PTT_DOWN, UI_SIDE_A);
+    CHECK(g_rec_starts == starts && s_a.st == APP_IDLE && !s_a.held);
+    ui_in(UI_IN_PTT_UP, 600);
     ui_keylock(false);
     pump();
     // the UI's own screen off (power off on USB, console): its SLEEP(3) report does not light it again (flow-1);

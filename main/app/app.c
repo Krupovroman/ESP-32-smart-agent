@@ -1312,8 +1312,9 @@ static app_src_t src_family(app_src_t s)
 void app_ptt_down(int8_t side, app_src_t src)
 {
     bool woke = app_io_activity();
-    if (woke && (src == APP_SRC_ORB || src == APP_SRC_CHIP)) {
-        return;                     // the touch that wakes the screen is swallowed
+    if ((woke || ui_keylocked()) && (src == APP_SRC_ORB || src == APP_SRC_CHIP)) {
+        // the touch that wakes the screen is swallowed; locked, a chip held from before the lock must not record
+        return;
     }
     bool from_qr = false;
     if (s_a.boot_tap_t && (src != APP_SRC_BOOT || app_now_ms() - s_a.boot_tap_t > APP_DOUBLE_MS)) {
