@@ -275,7 +275,8 @@ static const str_def_t s_tab[S__N] = {
     E(S_O4_P, "Есть динамик", "Yes, it is", SLOT_STEP_P),
     E(S_O4_B, "Нет динамика", "No speaker", SLOT_STEP_B),
     E(S_O5_T, "Готово!", "All set!", SLOT_STEP_T),
-    E(S_O5_S, "Держите шар или BOOT", "Hold the orb or BOOT", SLOT_STEP_S),
+    // 281 / 246 px of 290 (Inter metrics with kerning)
+    E(S_O5_S, "Держите шар или BOOT и говорите", "Hold the orb or BOOT and speak", SLOT_STEP_S),
     E(S_O5_P, "Начать", "Start", SLOT_STEP_P),
 
     E(S_K_QUESTION, "Вопрос", "Question", SLOT_PROMPT),
