@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include "esp_console.h"
 
 static int ok(void)
@@ -138,6 +139,9 @@ static int cmd_net(int argc, char **argv)
     }
     char key[210] = "";
     if (argc > 3 && !strcmp(argv[3], "auth")) {
+        if (strncasecmp(argv[2], "https://", 8)) {
+            return err("auth needs an https:// URL (the key never goes out in clear text)");
+        }
         settings_get_str("ai_key", key, sizeof(key));
     }
     int status, ms;

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -29,7 +30,8 @@ esp_http_client_handle_t httpx_client(const char *url, esp_http_client_method_t 
     if (!h) {
         return NULL;
     }
-    if (api_key && api_key[0]) {
+    // the key only travels over TLS: a plain http:// URL gets no Authorization header
+    if (api_key && api_key[0] && !strncasecmp(url, "https://", 8)) {
         char auth[230];
         snprintf(auth, sizeof(auth), "Bearer %s", api_key);
         esp_http_client_set_header(h, "Authorization", auth);

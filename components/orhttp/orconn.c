@@ -289,7 +289,7 @@ static void set_header(esp_http_client_handle_t h, const char *k, const char *v)
 static void apply_headers(or_conn_t *c, const or_req_t *q)
 {
     esp_http_client_handle_t h = c->h;
-    if (q->bearer && q->bearer[0]) {
+    if (q->bearer && q->bearer[0] && !strncasecmp(q->url, "https://", 8)) {   // the key only over TLS
         char auth[224];
         snprintf(auth, sizeof(auth), "Bearer %s", q->bearer);
         esp_http_client_set_header(h, "Authorization", auth);
