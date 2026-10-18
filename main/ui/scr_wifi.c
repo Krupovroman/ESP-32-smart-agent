@@ -138,11 +138,13 @@ static void pass_done(const char *text, bool ok, void *ctx)
     }
 }
 
-static void ask_password(void)
+// open_ok: the network was typed in ("Другая сеть…"), so it may be an open one: OK also takes an empty password
+static void ask_password(bool open_ok)
 {
     char prompt[64];
     snprintf(prompt, sizeof(prompt), ui_s(S_K_PASS_FMT), s_target.ssid);
-    ui_text_open(&(ui_text_req_t){ .field = UI_FIELD_WIFI_PASS, .prompt = prompt, .done = pass_done });
+    ui_text_open(&(ui_text_req_t){ .field = open_ok ? UI_FIELD_WIFI_PASS_OPT : UI_FIELD_WIFI_PASS, .prompt = prompt,
+                                   .done = pass_done });
 }
 
 static void target_set(const char *ssid, int rssi, bool secured)
@@ -176,7 +178,7 @@ static void net_cb(lv_event_t *e)
     } else if (!s_target.secured) {
         ui_wifi_connect(a->ssid, "");
     } else {
-        ask_password();
+        ask_password(false);
     }
 }
 
@@ -185,7 +187,7 @@ static void ssid_done(const char *text, bool ok, void *ctx)
     (void)ctx;
     if (ok && text[0]) {
         target_set(text, -127, true);
-        ask_password();
+        ask_password(true);     // empty = a hidden open network (net_connect with "" joins without auth)
     }
 }
 
@@ -329,7 +331,7 @@ static void connect_saved_cb(lv_event_t *e)
 static void password_cb(lv_event_t *e)
 {
     (void)e;
-    ask_password();
+    ask_password(false);
 }
 
 lv_obj_t *scr_wifi_net_build(uint32_t arg)
@@ -545,7 +547,7 @@ static void wc_btn_cb(lv_event_t *e)
     if (s_wc_result == 2) {
         strlcpy(s_target.ssid, s_conn.ssid, sizeof(s_target.ssid));
         ui_nav_back();      // K replaces WC: W -> K -> WC
-        ask_password();
+        ask_password(false);    // the network rejected a password, so it has one
         return;
     }
     if (s_wc_result == 4) {

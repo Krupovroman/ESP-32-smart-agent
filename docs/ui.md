@@ -1045,7 +1045,7 @@ Cost and memory:
 
 | Field | Start layout | Accepted / limits | Secret | OK enabled when |
 |---|---|---|---|---|
-| Wi-Fi password | EN (language key disabled) | printable ASCII 0x20–0x7E, 8–63 characters | yes (reveal) | len ≥ 8, or the network is open |
+| Wi-Fi password | EN (language key disabled) | printable ASCII 0x20–0x7E, 8–63 characters | yes (reveal) | len ≥ 8, or the network is open; after "Другая сеть…" (hidden SSID) also empty, which joins it as an open network |
 | SSID ("Другая сеть") | EN | ≤ 32 **bytes** (checked in UTF-8 bytes) | no | len ≥ 1 |
 | OpenRouter key | HEX ("Aa" → EN) | `0-9a-f`, 64 after the protected `sk-or-v1-` | no (shown so it can be checked; validated by `GET /api/v1/key` on OK) | exactly 64 hex |
 | Other key / base URL / model id | EN | printable ASCII, ≤ 200 | key: yes | len ≥ 1; URL must start with `http` |
