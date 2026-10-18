@@ -445,6 +445,7 @@ Message objects:
 - **Gaps:** 6 px between a user bubble and its reply; 14 px between turns.
 - **Divider:** after 15 min idle, a `ui_16` `text-3` divider "— новый разговор · 15:10 —" is inserted and the model context resets. Waking after ≥ 15 min returns H to the empty state.
 - **Limit:** ≤ 20 messages live on H. Storage keeps 40 per mode (PSRAM, persisted to the `storage` partition), shown in HIST.
+- **Scrolling:** a new message scrolls the chat to the bottom. A translator bubble or a card taller than the unfaded window (y 104–228) is scrolled so that its top sits just below the top fade, and the user scrolls down for the rest. A manual drag stops auto-scroll until the next talk press.
 
 ### 3.4 Translator face (H′)
 

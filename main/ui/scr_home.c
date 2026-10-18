@@ -467,8 +467,9 @@ static void scroll_bottom(void)
     }
 }
 
-// A card taller than the unfaded window (y 104-228, 124 px; two-line titles make it about 166) shows its
-// title first instead of sitting at the bottom with the title under the top fade.
+// A card or translator bubble taller than the unfaded window (y 104-228, 124 px: a two-line card title, a long
+// translation in ui_28) shows its top first, just below the top fade, instead of sitting at the bottom with its
+// first line under the fade; the rest is a scroll down away.
 static void scroll_reveal(lv_obj_t *w)
 {
     if (!s_autoscroll || !s_conv) {
@@ -480,7 +481,19 @@ static void scroll_reveal(lv_obj_t *w)
         scroll_bottom();
         return;
     }
-    lv_obj_scroll_to_y(s_chat, lv_obj_get_y(w) + pad, LV_ANIM_ON);
+    // y is relative to the content box (below the 24 px fade padding); without the A16 appear offset still running
+    int32_t y = lv_obj_get_y(w) - lv_obj_get_style_translate_y(w, LV_PART_MAIN) + pad;
+    lv_obj_scroll_to_y(s_chat, y, LV_ANIM_ON);
+}
+
+// After new content: translator bubbles and cards keep their top in view, everything else follows the bottom
+static void scroll_for(lv_obj_t *w, const cm_entry_t *e)
+{
+    if (e->kind == CM_TURN || e->kind == CM_CARD) {
+        scroll_reveal(w);
+    } else {
+        scroll_bottom();
+    }
 }
 
 static void chat_click_cb(lv_event_t *e)
@@ -532,11 +545,7 @@ static lv_obj_t *add_widget(const cm_entry_t *e, uint32_t delay)
     }
     // new message: the face glances down for 1 s
     ui_orb_look_at(s_orb, (lv_point_t){ 180, 360 }, 1000);
-    if (e->kind == CM_CARD) {
-        scroll_reveal(w);
-    } else {
-        scroll_bottom();
-    }
+    scroll_for(w, e);
     return w;
 }
 
@@ -559,7 +568,7 @@ static void refresh_entry(const cm_entry_t *e, bool animate)
     lv_obj_t *w = ui_msg_find(s_chat, e->id);
     if (w) {
         ui_msg_refresh(w, e, animate);
-        scroll_bottom();
+        scroll_for(w, e);   // a translation that just grew the bubble past the window keeps its first line
     }
 }
 
