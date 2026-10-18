@@ -49,8 +49,8 @@
 #define LK_APPEAR_T     180     // 180-340 padlock appears in the centre (scale 0.6 -> 1)
 #define LK_DROP_T       320     // 320-450 shackle drops, overshoot and click
 #define LK_DROP_MS      130
-#define LK_PULSE_T      390     // 390-610 ring pulse from the click
-#define LK_PULSE_MS     220
+#define LK_PULSE_T      380     // 380-560 ring pulse from the click (over before the ring band fades in: at most
+#define LK_PULSE_MS     180     // 12 + 12 + 6 invalidated areas of LV_INV_BUF_SIZE 32 would be too close)
 #define LK_GLIDE_T      450     // 450-640 padlock glides up (scale 1 -> 0.55)
 #define LK_GLIDE_MS     190
 #define LK_FADE_T       560     // 560-700 clock, date, battery fade in, once the padlock has left the clock
