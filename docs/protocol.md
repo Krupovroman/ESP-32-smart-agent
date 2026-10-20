@@ -195,7 +195,7 @@ Error shape:
 
 ```json
 {
-  "models": ["google/gemini-3.1-flash-lite", "google/gemini-3.5-flash-lite"],
+  "models": ["google/gemini-3.5-flash-lite", "google/gemini-3.1-flash-lite"],
   "messages": [
     {"role": "system", "content": "<SYSTEM_ASSISTANT_RU from §4.1, {WEB} and {DATETIME} substituted>"},
     {"role": "user", "content": "Сколько будет двадцать пять процентов от восьмисот?"},
@@ -258,7 +258,7 @@ This example is illustrative and built from the OpenAPI `ChatResult`/`ChatUsage`
 {
   "id": "gen-1792247503-Xk2pQ9",
   "provider": "Google AI Studio",
-  "model": "google/gemini-3.1-flash-lite",
+  "model": "google/gemini-3.5-flash-lite",
   "object": "chat.completion",
   "created": 1792247503,
   "system_fingerprint": null,
@@ -399,7 +399,7 @@ The plugin works together with `response_format` `json_schema` `strict:true` and
 
 ```json
 {
-  "models": ["google/gemini-3.1-flash-lite", "google/gemini-3.5-flash-lite"],
+  "models": ["google/gemini-3.5-flash-lite", "google/gemini-3.1-flash-lite"],
   "messages": [
     {"role": "system", "content": "<SYSTEM_TRANSLATOR from §4.2 with A=ru, B=en>"},
     {"role": "user", "content": [

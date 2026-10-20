@@ -216,7 +216,7 @@ static esp_err_t job_list(void *ctx)
     list_ctx_t *lc = ctx;
     char base[136], cur[100];
     base_url(base, sizeof(base));
-    cfg_str("ai_model", cur, sizeof(cur), "google/gemini-3.1-flash-lite");
+    cfg_str("ai_model", cur, sizeof(cur), "google/gemini-3.5-flash-lite");
     bool allow_free = (cfg_int("dev_flags", 0) & 8) != 0;
     ai_model_t *list = ai_calloc(MAX_MODELS, sizeof(ai_model_t));
     if (!list) {
@@ -568,7 +568,7 @@ esp_err_t ai_client_check_model(const char *id, ai_model_t *out, or_err_t *err)
 {
     char cur[100];
     if (!id || !id[0]) {
-        cfg_str("ai_model", cur, sizeof(cur), "google/gemini-3.1-flash-lite");
+        cfg_str("ai_model", cur, sizeof(cur), "google/gemini-3.5-flash-lite");
         id = cur;
     }
     or_err_t local;

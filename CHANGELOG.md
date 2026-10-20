@@ -6,6 +6,9 @@ repository (`m1`, `m2` are bring-up milestones, `vX.Y-rcN` are release candidate
 
 ## [Unreleased]
 
+### Changed
+- Default chat model is now `google/gemini-3.5-flash-lite`; `gemini-3.1-flash-lite` became the fallback.
+
 ## [v0.8-rc1] - 2026-10-21
 
 ### Added

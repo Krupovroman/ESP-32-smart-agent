@@ -237,7 +237,7 @@ static void t_typed_history(void)
     cJSON_Delete(root);
     CHECK(g_reqs[1].reused && g_connects == 1);    // keep-alive reuse
     // model change clears the history
-    host_set("ai_model", "google/gemini-3.5-flash-lite");
+    host_set("ai_model", "google/gemini-3.1-flash-lite");
     mock_push_json(200, ok_body(ASSIST_OK, "stop"));
     job_t j = mkjob(AI_MODE_ASSISTANT, "x", NULL, 0);
     run(&j);

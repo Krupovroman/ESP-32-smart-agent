@@ -1011,8 +1011,8 @@ static void run_turn(job_t *j)
     cfg_str("ai_url", base, sizeof(base), "https://openrouter.ai/api/v1");
     ai_join_url(ch->url, sizeof(ch->url), base, "chat/completions");
     cfg_str("ai_key", ch->key, sizeof(ch->key), "");
-    cfg_str("ai_model", ch->model, sizeof(ch->model), "google/gemini-3.1-flash-lite");
-    cfg_str("ai_model_fb", ch->fallback, sizeof(ch->fallback), "google/gemini-3.5-flash-lite");
+    cfg_str("ai_model", ch->model, sizeof(ch->model), "google/gemini-3.5-flash-lite");
+    cfg_str("ai_model_fb", ch->fallback, sizeof(ch->fallback), "google/gemini-3.1-flash-lite");
     cfg_str("ref_url", ch->referer, sizeof(ch->referer), "");
     ch->openrouter = or_is_openrouter(base);
     if (j->mode == AI_MODE_ASSISTANT && ch->openrouter) {
@@ -1360,7 +1360,7 @@ static void run_prewarm(void)
     }
     int64_t t0 = esp_timer_get_time();
     char model[100];
-    cfg_str("ai_model", model, sizeof(model), "google/gemini-3.1-flash-lite");
+    cfg_str("ai_model", model, sizeof(model), "google/gemini-3.5-flash-lite");
     ai_prewarm_gets(model, job_waiting);
     ESP_LOGI(TAG, "prewarm %" PRId64 " ms", (esp_timer_get_time() - t0) / 1000);
 }

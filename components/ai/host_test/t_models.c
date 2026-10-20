@@ -55,6 +55,7 @@ void test_models(void)
     host_settings_reset();
     host_set("ai_url", "https://relay.example/SECRET/api/v1");
     host_set("ai_key", "sk-or-v1-testkey");
+    host_set("ai_model", "google/gemini-3.1-flash-lite");    // the listed current model (the default is 3.5)
     mock_push_json(200, PAGE1);
     list_ctx_t lc;
     memset(&lc, 0, sizeof(lc));

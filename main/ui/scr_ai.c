@@ -350,8 +350,8 @@ lv_obj_t *scr_models_build(uint32_t arg)
         float usd;
     } curated[] = {
         // "Gemini 3.1 Flash-Lite" is 196 px: a row title without an icon holds 180
-        { "google/gemini-3.1-flash-lite", "Gemini 3.1 Lite", 0.00058f },
         { "google/gemini-3.5-flash-lite", "Gemini 3.5 Lite", 0.00073f },
+        { "google/gemini-3.1-flash-lite", "Gemini 3.1 Lite", 0.00058f },
     };
     if (!picker_init(&s_ai, "ai_model", LIST_MAX + 4)) {
         return NULL;
