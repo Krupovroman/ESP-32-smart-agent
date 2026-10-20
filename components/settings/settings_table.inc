@@ -22,6 +22,7 @@ S("ai_effort",   ST_STR, 0,   "minimal",                           0, 0,     12,
 S("ai_stream",   ST_U8,  1,   NULL,                                0, 1,     0,    0)
 S("ai_json",     ST_U8,  1,   NULL,                                0, 1,     0,    0)
 S("ai_maxtok",   ST_U16, 1024, NULL,                               50, 4000, 0,    0)
+S("ai_len",      ST_U8,  1,   NULL,                                0, 2,     0,    0)   // reply length: 0 short, 1 normal, 2 detailed
 S("ai_temp",     ST_U8,  40,  NULL,                                0, 200,   0,    0)
 S("ai_hist",     ST_U8,  6,   NULL,                                0, 20,    0,    0)
 S("ai_web",      ST_U8,  1,   NULL,                                0, 2,     0,    0)   // web search: 0 off, 1 auto, 2 always

@@ -160,6 +160,10 @@ static const str_def_t s_tab[S__N] = {
     E(S_S_UILANG, "Язык меню", "Menu language", SLOT_ROW),
     E(S_LANG_SELF, "Русский", "English", SLOT_ROW_SUB),
     E(S_S_CLEAR, "Очистить", "Clear", SLOT_ROW_SUB),
+    E(S_S_REPLY_LEN, "Длина ответа", "Reply length", SLOT_ROW),     // ai_len (protocol §4.1)
+    E(S_LEN_SHORT, "Коротко", "Short", SLOT_ROW_SUB),
+    E(S_LEN_NORMAL, "Обычно", "Normal", SLOT_ROW_SUB),
+    E(S_LEN_LONG, "Подробно", "Detailed", SLOT_ROW_SUB),
 
     E(S_W_RESCAN, "Искать снова", "Scan again", SLOT_STEP_B),
     E(S_W_SCANNING, "Ищу сети" TXT_ELLIPSIS, "Scanning" TXT_ELLIPSIS, SLOT_ROW_SUB),

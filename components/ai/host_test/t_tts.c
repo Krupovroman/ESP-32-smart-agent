@@ -86,6 +86,74 @@ static void t_stream(void)
     for (int i = 0; i < n; i++) free(bodies[i]);
 }
 
+// A detailed reply (~2600 characters, ai_len 2) is spoken whole: nothing is cut at the old 1500 cap, and with the
+// speaker ring full the stream waits for room instead of dropping PCM.
+static void t_long_reply(void)
+{
+    printf("t_long_reply\n");
+    setup();
+    char *text = malloc(9 * strlen(TEXT3) + 9 + 1);
+    text[0] = 0;
+    for (int k = 0; k < 9; k++) {
+        strcat(text, TEXT3);
+        strcat(text, " ");
+    }
+    size_t cp = utf8_cp_len(text);
+    char **ch;
+    int n = tts_split(text, &ch);
+    size_t sum = 0;
+    for (int i = 0; i < n; i++) sum += utf8_cp_len(ch[i]);
+    printf("    %u characters -> %d chunks, %u spoken\n", (unsigned)cp, n, (unsigned)sum);
+    CHECK(cp > 2500 && n > 0 && n <= 20 && sum + n * 2 >= cp - 8);
+    tts_split_free(ch, n);
+    // 1 s of 24 kHz PCM per chunk into a 2 s ring that plays in real time
+    uint8_t *body = pcm_body(48000, 5);
+    for (int i = 0; i < n; i++) {
+        mock_reply_t r = { .status = 200, .content_type = "audio/pcm;rate=24000;channels=1", .body = body,
+                           .body_len = 48000, .chunked = true, .read_piece = 4096 };
+        mock_push(&r);
+    }
+    g_out_ring_cap = 96000;
+    g_out_drain_bps = 48000;
+    int64_t t0 = g_now_us;
+    speak(110, text, "ru");
+    printf("    ring full %u times, %u bytes out, %.1f s\n", (unsigned)g_out_full_hits, (unsigned)g_out_bytes,
+           (g_now_us - t0) / 1e6);
+    CHECK(s_done == 1 && s_err == 0 && s_st.chunks_done == (uint32_t)n);
+    CHECK(g_out_bytes == (size_t)n * 48000 && g_out_full_hits > 0);
+    g_out_ring_cap = 0;
+    free(body);
+    free(text);
+}
+
+// Chunks longer than the speaker ring (slow speech, ring ~43 s full): a later chunk is requested only once at most
+// AHEAD_S is queued, so its download never waits on the speaker into the 60 s OR_TO_TTS total.
+static void t_slow_chunks(void)
+{
+    printf("t_slow_chunks\n");
+    setup();
+    char **ch;
+    int n = tts_split(TEXT3, &ch);
+    tts_split_free(ch, n);
+    size_t len = 62 * 48000;                 // 62 s of 24 kHz mono per chunk
+    uint8_t *body = pcm_body(len, 9);
+    for (int i = 0; i < n; i++) {
+        mock_reply_t r = { .status = 200, .content_type = "audio/pcm;rate=24000;channels=1", .body = body,
+                           .body_len = len, .chunked = true, .read_piece = 4096 };
+        mock_push(&r);
+    }
+    g_out_ring_cap = 43 * 48000;
+    g_out_drain_bps = 48000;
+    int64_t t0 = g_now_us;
+    speak(111, TEXT3, "ru");
+    printf("    %d chunks of 62 s: %u retries, %.1f s, err %s\n", n, (unsigned)s_st.retries, (g_now_us - t0) / 1e6,
+           s_err_id);
+    CHECK(n >= 2 && s_done == 1 && s_err == 0 && s_st.retries == 0 && g_nreq == n);
+    CHECK(g_out_bytes == (size_t)n * len);
+    g_out_ring_cap = 0;
+    free(body);
+}
+
 static void t_wav_and_routes(void)
 {
     printf("t_wav_and_routes\n");
@@ -212,6 +280,8 @@ void test_tts(void)
     s_task = xTaskGetCurrentTaskHandle();
     t_routes_table();
     t_stream();
+    t_long_reply();
+    t_slow_chunks();
     t_wav_and_routes();
     t_mpeg_and_errors();
 }

@@ -120,3 +120,16 @@ EXIOn = TCA9554 port P(n-1). Output register defaults to 0xFF.
     model assumes ≤ 150 mV under the CV level), whether it terminates at all with the board's idle load on the cell
     (it senses its whole output current) or feeds the load after termination, and what the divider reads with USB and
     no cell (the model hides the indicator if the readings swing > 250 mV).
+    **Model v4** (field report on v0.7-rc2: "plugging in a charger, the percent rises but no charging is shown, the
+    green LED on"; its log: 3993 → 4101 mV within a minute, no `step_up`, then 83 → 98 % on battery). The step was
+    there (+108 mV) but never measured: the plug-in came with a load step (the screen woken to look), which breaks
+    the run, so the settled readings after it began at the charging level; the 2-min trend needs 15 mV in 2 min and
+    a CC charge rises 1-4 mV/min; and v3 let the percent rise 5 points at once on a calm reading. (Replayed in the
+    simulator, a soft start alone, 10-90 s, is still seen by v3's run or trend; with the wake it is not. v3 also
+    misses a charger it boots on, and plug-ins under heavy Wi-Fi noise.) v4 measures the settled level against the
+    levels before it, across a load (`step_base`), adds a slow trend over calm minutes (`trend_slow`, confirmed by
+    the charge's further rise or dropped: `no_rise`) and never raises the percent on battery.
+    Still no charger status: per the schematic notes above, nothing from the ETA6098 reaches a GPIO or the TCA9554
+    (its status output drives only the LED; EXIO6-8 are not listed as used). Not re-checked against the schematic
+    PDF for v4. A hardware fix, if wanted: a wire from the charge LED's driven node through ~10 kΩ to a free input
+    (TP1 = GPIO12, or a free EXIO), after checking the ETA6098 datasheet for that pin's type and level.

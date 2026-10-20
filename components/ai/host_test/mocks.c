@@ -179,9 +179,41 @@ esp_err_t audio_out_begin(uint32_t rate, uint8_t ch)
     g_out_begins++;
     return ESP_OK;
 }
+// Speaker ring of g_out_ring_cap bytes (0 = unlimited) played out at g_out_drain_bps on the mock clock; a full
+// ring takes only what fits, as the stream buffer does with wait 0.
+size_t g_out_ring_cap, g_out_drain_bps, g_out_full_hits;
+static size_t s_ring_level;
+static int64_t s_ring_t;
+static void ring_drain(void)
+{
+    size_t played = (size_t)((g_now_us - s_ring_t) * (int64_t)g_out_drain_bps / 1000000);
+    if (played) {
+        s_ring_level = played > s_ring_level ? 0 : s_ring_level - played;
+        s_ring_t = g_now_us;
+    }
+}
+void audio_out_get_stats(audio_out_stats_t *s)
+{
+    memset(s, 0, sizeof(*s));
+    ring_drain();
+    s->rate = g_out_rate;
+    s->queued_bytes = g_out_ring_cap ? s_ring_level : 0;
+}
 size_t audio_out_write(const void *p, size_t n, TickType_t w)
 {
     (void)w;
+    if (g_out_ring_cap) {
+        ring_drain();
+        size_t room = g_out_ring_cap - s_ring_level;
+        if (n > room) {
+            g_out_full_hits++;
+            n = room;
+        }
+        s_ring_level += n;
+        if (!n) {
+            return 0;
+        }
+    }
     if (g_out_bytes + n > s_out_cap) {
         s_out_cap = (g_out_bytes + n) * 2;
         g_out_buf = realloc(g_out_buf, s_out_cap);
@@ -227,6 +259,9 @@ void mock_reset(void)
     g_out_bytes = 0;
     g_out_begins = 0;
     g_out_stops = 0;
+    g_out_ring_cap = g_out_drain_bps = g_out_full_hits = 0;
+    s_ring_level = 0;
+    s_ring_t = g_now_us;
 }
 void mock_push(const mock_reply_t *r) { g_script[g_script_n++] = *r; }
 void mock_push_json(int status, const char *json)

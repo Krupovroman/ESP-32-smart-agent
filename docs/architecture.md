@@ -206,10 +206,15 @@ uint8_t   board_backlight_get(void);
 esp_err_t board_buttons_start(board_btn_cb_t cb, void *ctx);   /* espressif/button 4.2.1: iot_button_new_gpio_device,
                                                                   active_level 0, long_press_time BOOT 1500 / PWR 3000 ms */
 int       board_battery_mv(void);       /* adc_oneshot ch7 + adc_cali curve fitting, ×3; -1 on error */
-/* battery model v3 (ui.md 3.16): the app calls sample() every poll_ms (5 s, 2 s while a step is measured); median
+/* battery model v4 (ui.md 3.16): the app calls sample() every poll_ms (5 s, 2 s while a step is measured); median
    of 5, Li-ion curve scaled by 4200 / v_full; external power = USB host (usb_serial_jtag_is_connected), a settled
-   voltage step of 35 mV (a wall charger; down = unplugged), the host lost without a step down = kept (macOS
-   suspend); CHARGING / FULL (plug-in step < 15 mV near v_full, flat 4 min, or the charger stopping near v_full;
+   voltage step of 35 mV (a wall charger; down = unplugged), a settled level 35 mV above the levels before it, also
+   across a load (v4 step_base: soft starts, plug-ins with the screen woken), calm minutes rising steadily (v4
+   trend_slow: booted on a charger; dropped without the charge's further rise: no_rise), a rise back to the
+   levels of 3-12 min ago is no charger, the host lost without a step down = kept (macOS suspend); on battery the
+   percent never rises and follows the cell down in constant use too (v4); reads board_backlight_get() (a level
+   taken with more backlight read lower); CHARGING / FULL (plug-in step < 15 mV near v_full, flat 4 min, or the
+   charger stopping near v_full;
    held 15 min, its highest level is learned as v_full) / USB_DRAIN (settled -20 mV in 3 min with the host below
    v_full - 120, or FULL under v_full - 160); the ETA6098 has no status pin to the MCU and the system load hangs on
    the cell */
@@ -490,7 +495,8 @@ void      settings_on_change(void (*cb)(const char *key, void *ctx), void *ctx);
 | `ai_model_fb` | str 97 | `google/gemini-3.5-flash-lite` | `""` = send `"model"`, not `"models"` |
 | `ai_effort` | str 13 | `auto` | `auto` = rule in protocol §2.1 rule 2; `""` = omit; never `none` |
 | `ai_stream` | u8 | 0 | 0 = v1 non-streaming; 1 = SSE (v1.1, §1.10) |
-| `ai_maxtok` | u16 | 1024 | 64–4096 (the translator uses 768) |
+| `ai_maxtok` | u16 | 1024 | 64–4096 (the translator uses 768). Only raises `max_tokens`: an assistant request sends max(`ai_maxtok`, the `ai_len` floor) |
+| `ai_len` | u8 | 1 | reply length (protocol §4.1): 0 short (~300, max 600 characters, `max_tokens` floor 1024), 1 normal (~600 / 1200, 2048), 2 detailed (~1200 / 2500, 4096); S → "Длина ответа" |
 | `ai_web` | u8 | 1 | assistant web search (protocol §2.8): 0 off, 1 auto (`needs_web`, then a re-run with the plugin), 2 always; OpenRouter and its relays only |
 | `ai_web_n` | u8 | 3 | 1–5 `max_results` of the web plugin (about $0.004 each) |
 | `hist_n` | u8 | 6 | 0–10 exchanges |
@@ -702,7 +708,7 @@ esp_err_t stt_client_transcribe(uint32_t turn, const audio_clip_t *clip, const c
 **TTS request:** `POST {tts_url}/audio/speech` with `{"model","input","voice","response_format":"pcm"}`, plus `"speed"` only when it is not 1.0. The rules come from protocol §5:
 
 - **Sanitise:** strip `* _ # \` ~ > |`, emoji and URLs.
-- **Split** (§5.4): chunk 1 is at most 200 code points; later chunks are packed greedily up to 400 and emitted at 150 or more; no piece is shorter than 20; there is an abbreviation list. The text is capped at 1500 characters per turn.
+- **Split** (§5.4): chunk 1 is at most 200 code points; later chunks are packed greedily up to 400 and emitted at 150 or more; no piece is shorter than 20; there is an abbreviation list. The text is capped at 3000 characters per turn (a detailed reply, `ai_len` 2). When the 2 MB speaker ring (~43 s) is full, the stream waits for room (10 ms polls, TCP throttles the server), it never drops PCM; a later chunk is requested only once at most 20 s is queued (keeps it within the 60 s total); the app's playback watchdog is 6 min.
 - **Route** (§5.5/§5.6): fallback routes on 400, 403 or 404. A failed route is remembered in RAM for 1 h.
 
 **TTS response:**

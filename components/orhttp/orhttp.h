@@ -18,6 +18,7 @@ typedef struct {
 } or_timeouts_t;
 #define OR_TO_CHAT {10000, 10000, 30000, 15000, 45000}
 #define OR_TO_WEB  {10000, 10000, 30000, 15000, 30000}   // auto-mode web search request (text only)
+#define OR_TO_TRDIR {10000, 10000, 15000, 10000, 25000}  // translator direction retry: one short attempt
 #define OR_TO_SSE  {10000, 10000, 30000, 20000, 60000}
 #define OR_TO_TTS  {10000, 10000, 15000, 10000, 60000}
 #define OR_TO_STT  {10000, 10000, 30000, 15000, 45000}

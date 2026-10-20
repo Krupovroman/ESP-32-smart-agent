@@ -6,7 +6,7 @@
 #include <string.h>
 #include <strings.h>
 
-#define MAX_CP        1500     // TTS cap per turn (protocol §5.3 rule 9)
+#define MAX_CP        3000     // TTS cap per turn (protocol §5.3 rule 9): a detailed reply (ai_len 2) and some
 #define FIRST_MAX     200
 #define FIRST_SHORT   40
 #define LATER_MAX     400

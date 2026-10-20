@@ -20,7 +20,7 @@
 #define BIT_RESULT   BIT0
 #define BIT_TTS      BIT1
 #define TURN_WAIT_MS 120000
-#define TTS_WAIT_MS  180000
+#define TTS_WAIT_MS  360000          // a 3000-character reply: the last chunk is queued ~43 s before its end
 #define DRAIN_WAIT_MS 60000
 
 // What the blocking command waits for, filled by the listener (ai / tts task). In PSRAM:
@@ -267,8 +267,9 @@ static int run_turn_cmd(ai_mode_t mode, bool voice, int argc, char **argv)
     if (mode == AI_MODE_ASSISTANT) {
         printf("lang: %s\n", res->lang);
     } else {
-        printf("src_lang: %s target: %s speak: %s%s\n", res->src_lang, res->lang, res->tts_lang[0] ? res->tts_lang : "-",
-               res->other_lang ? " (Другой язык)" : "");
+        printf("src_lang: %s target: %s speak: %s%s%s\n", res->src_lang, res->lang,
+               res->tts_lang[0] ? res->tts_lang : "-", res->other_lang ? " (Другой язык)" : "",
+               res->tr_retry ? " (direction retry)" : "");
     }
     if (res->notice_ru) {
         printf("notice: %s\n", res->notice_ru);

@@ -10,7 +10,7 @@ typedef struct {
     char id[8];
     char transcript[512], text[512], lang[8], src_lang[8], tts_lang[8];
     bool truncated, unheard, stt_used;
-    bool web, web_failed;
+    bool web, web_failed, tr_retry;
     char source[48], notice[64];
     uint32_t retries, web_ms;
     double cost;
@@ -42,6 +42,7 @@ static void cap(const ai_event_t *e, void *ctx)
         v->stt_used = e->result->stt_used;
         v->web = e->result->web;
         v->web_failed = e->result->web_failed;
+        v->tr_retry = e->result->tr_retry;
         strlcpy(v->source, e->result->source, sizeof(v->source));
         strlcpy(v->notice, e->result->notice_ru ? e->result->notice_ru : "", sizeof(v->notice));
         v->retries = e->result->t.retries;
@@ -162,7 +163,7 @@ static void t_voice_body(void)
     cJSON *models = cJSON_GetObjectItem(root, "models");
     CHECK(cJSON_GetArraySize(models) == 2 && !cJSON_GetObjectItem(root, "model"));
     CHECK(cJSON_IsFalse(cJSON_GetObjectItem(root, "stream")));
-    CHECK(cJSON_GetObjectItem(root, "max_tokens")->valueint == 1024);
+    CHECK(cJSON_GetObjectItem(root, "max_tokens")->valueint == 2048);    // ai_len 1 floor over ai_maxtok 1024
     CHECK(cJSON_IsTrue(cJSON_GetObjectItem(cJSON_GetObjectItem(root, "provider"), "require_parameters")));
     cJSON *rs = cJSON_GetObjectItem(root, "reasoning");
     CHECK(rs && !strcmp(cJSON_GetObjectItem(rs, "effort")->valuestring, "minimal") &&
@@ -444,6 +445,24 @@ static void t_translator(void)
     const char *sp = cJSON_GetObjectItem(cJSON_GetArrayItem(cJSON_GetObjectItem(root, "messages"), 0), "content")->valuestring;
     CHECK(strstr(sp, "between Russian (ru) and English (en)") != NULL);
     CHECK(cJSON_GetArraySize(cJSON_GetObjectItem(root, "messages")) == 2);
+    // target_lang (B first, then A) before translation, required; temperature 0; typed text in <utterance>
+    cJSON *props = cJSON_GetObjectItem(cJSON_GetObjectItem(js, "schema"), "properties");
+    cJSON *tl = cJSON_GetObjectItem(cJSON_GetObjectItem(props, "target_lang"), "enum");
+    CHECK(cJSON_GetArraySize(tl) == 2 && !strcmp(cJSON_GetArrayItem(tl, 0)->valuestring, "en") &&
+          !strcmp(cJSON_GetArrayItem(tl, 1)->valuestring, "ru"));
+    CHECK(strstr(g_reqs[0].body, "\"target_lang\":{") && strstr(g_reqs[0].body, "\"target_lang\":{") <
+                                                            strstr(g_reqs[0].body, "\"translation\":{"));
+    bool req_tl = false;
+    cJSON *it;
+    cJSON_ArrayForEach(it, cJSON_GetObjectItem(cJSON_GetObjectItem(js, "schema"), "required")) {
+        req_tl |= !strcmp(it->valuestring, "target_lang");
+    }
+    CHECK(req_tl);
+    cJSON *temp = cJSON_GetObjectItem(root, "temperature");
+    CHECK(temp && cJSON_IsNumber(temp) && temp->valuedouble == 0);
+    cJSON *um = cJSON_GetArrayItem(cJSON_GetObjectItem(root, "messages"), 1);
+    CHECK(!strcmp(cJSON_GetObjectItem(um, "content")->valuestring, "<utterance>Where is the station?</utterance>"));
+    CHECK(g_nreq == 1 && r && !r->retries);
     cJSON_Delete(root);
 
     // other language, tr_other = 1 -> nothing to speak
@@ -497,6 +516,9 @@ static void t_translator(void)
     en = cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(js, "schema"), "properties"),
                                                  "src_lang"), "enum");
     CHECK(cJSON_GetArraySize(en) == 1 && !strcmp(cJSON_GetArrayItem(en, 0)->valuestring, "en"));
+    en = cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(js, "schema"), "properties"),
+                                                 "target_lang"), "enum");
+    CHECK(cJSON_GetArraySize(en) == 1 && !strcmp(cJSON_GetArrayItem(en, 0)->valuestring, "ru"));
     cJSON *msgs = cJSON_GetObjectItem(root, "messages");
     cJSON *parts = cJSON_GetObjectItem(cJSON_GetArrayItem(msgs, cJSON_GetArraySize(msgs) - 1), "content");
     CHECK(!strcmp(cJSON_GetObjectItem(cJSON_GetArrayItem(parts, 0), "text")->valuestring, "Utterance in English:"));
@@ -902,6 +924,292 @@ static void t_web_modes(void)
     cJSON_Delete(a);
 }
 
+// ---- translator direction check (protocol §3) ----
+
+// A translator body in its own buffer; the strings carry no quotes or backslashes.
+static const char *tr_body(const char *src, const char *transcript, const char *tgt, const char *translation,
+                           double cost)
+{
+    char c[1024];
+    snprintf(c, sizeof(c), "{\\\"src_lang\\\":\\\"%s\\\",\\\"transcript\\\":\\\"%s\\\",\\\"target_lang\\\":\\\"%s\\\","
+             "\\\"translation\\\":\\\"%s\\\"}", src, transcript, tgt, translation);
+    return web_body(c, cost, NULL);
+}
+
+static cJSON *tr_enum(cJSON *root, const char *field)
+{
+    cJSON *s = cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(root, "response_format"), "json_schema"),
+                                   "schema");
+    return cJSON_GetObjectItem(cJSON_GetObjectItem(cJSON_GetObjectItem(s, "properties"), field), "enum");
+}
+
+static bool enum_is(cJSON *e, const char *a, const char *b)
+{
+    int n = b ? 2 : 1;
+    return cJSON_GetArraySize(e) == n && !strcmp(cJSON_GetArrayItem(e, 0)->valuestring, a) &&
+           (!b || !strcmp(cJSON_GetArrayItem(e, 1)->valuestring, b));
+}
+
+static job_t tr_job(const char *a, const char *b, const char *text, const int16_t *pcm, size_t n)
+{
+    job_t j = mkjob(AI_MODE_TRANSLATOR, text, pcm, n);
+    strlcpy(j.lang_a, a, sizeof(j.lang_a));
+    strlcpy(j.lang_b, b, sizeof(j.lang_b));
+    return j;
+}
+
+static void t_tr_direction(void)
+{
+    printf("t_tr_direction\n");
+    // answered in the same language: exactly one retry, direction fixed, as text
+    setup();
+    mock_push_json(200, tr_body("ru", "Сколько тебе лет?", "en", "Мне двадцать пять лет.", 0.0001));
+    mock_push_json(200, tr_body("ru", "Сколько тебе лет?", "en", "How old are you?", 0.0002));
+    job_t j = tr_job("ru", "en", "Сколько тебе лет?", NULL, 0);
+    run(&j);
+    const ev_t *r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && r && r->tr_retry && !strcmp(r->text, "How old are you?") && !strcmp(r->tts_lang, "en"));
+    CHECK(r && fabs(r->cost - 0.0003) < 1e-9 && count_ev(AI_EV_RETRY) == 0 && !find_ev(AI_EV_ERROR));
+    CHECK(r && !strcmp(r->transcript, "Сколько тебе лет?"));
+    cJSON *b = cJSON_Parse(g_reqs[1].body);
+    CHECK(b && enum_is(tr_enum(b, "target_lang"), "en", NULL) && enum_is(tr_enum(b, "src_lang"), "ru", NULL));
+    CHECK(b && strstr(sys_of(b), "Translate this utterance into English only") &&
+          !strcmp(last_user_text(b), "<utterance>Сколько тебе лет?</utterance>"));
+    CHECK(b && cJSON_GetObjectItem(b, "temperature"));
+    cJSON_Delete(b);
+    b = cJSON_Parse(g_reqs[0].body);
+    CHECK(b && enum_is(tr_enum(b, "target_lang"), "en", "ru") && !strstr(sys_of(b), "Translate this utterance"));
+    cJSON_Delete(b);
+
+    // a wrong src_lang: the transcript's script decides, the copy in the wrong script gets the retry
+    setup();
+    mock_push_json(200, tr_body("ru", "Hello, how are you?", "en", "Hello, how are you?", 0.0001));
+    mock_push_json(200, tr_body("en", "Hello, how are you?", "ru", "Привет, как дела?", 0.0001));
+    j = tr_job("ru", "en", "Hello, how are you?", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && r && r->tr_retry && !strcmp(r->src_lang, "en") && !strcmp(r->lang, "ru") &&
+          !strcmp(r->text, "Привет, как дела?"));
+    b = cJSON_Parse(g_reqs[1].body);
+    CHECK(b && enum_is(tr_enum(b, "target_lang"), "ru", NULL) && enum_is(tr_enum(b, "src_lang"), "en", NULL));
+    cJSON_Delete(b);
+
+    // right translation: one request; the model's target_lang alone does not decide (device rule wins)
+    setup();
+    mock_push_json(200, tr_body("en", "Where is the station?", "en", "Где вокзал?", 0.0001));
+    j = tr_job("ru", "en", "Where is the station?", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 1 && r && !r->tr_retry && !strcmp(r->lang, "ru") && !strcmp(r->tts_lang, "ru"));
+
+    // en-de share a script: same-looking words are fine, a copied sentence is not
+    setup();
+    mock_push_json(200, tr_body("en", "Taxi", "de", "Taxi", 0.0001));
+    j = tr_job("en", "de", "Taxi", NULL, 0);
+    run(&j);
+    CHECK(g_nreq == 1 && find_ev(AI_EV_RESULT) && !find_ev(AI_EV_RESULT)->tr_retry);
+    setup();
+    mock_push_json(200, tr_body("en", "Good morning, see you later", "de", "Guten Morgen, bis später", 0.0001));
+    j = tr_job("en", "de", "Good morning, see you later", NULL, 0);
+    run(&j);
+    CHECK(g_nreq == 1 && find_ev(AI_EV_RESULT) && !find_ev(AI_EV_RESULT)->tr_retry);
+    setup();
+    mock_push_json(200, tr_body("en", "Where is the station?", "de", "Where is the station?", 0.0001));
+    mock_push_json(200, tr_body("en", "Where is the station?", "de", "Wo ist der Bahnhof?", 0.0001));
+    j = tr_job("en", "de", "Where is the station?", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && r && r->tr_retry && !strcmp(r->text, "Wo ist der Bahnhof?") && !strcmp(r->lang, "de"));
+
+    // CJK target: Han passes, Russian gets the retry
+    setup();
+    mock_push_json(200, tr_body("ru", "Сколько тебе лет?", "zh", "你多大了？", 0.0001));
+    j = tr_job("ru", "zh", "Сколько тебе лет?", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 1 && r && !r->tr_retry && !strcmp(r->tts_lang, "zh"));
+    setup();
+    mock_push_json(200, tr_body("ru", "Сколько тебе лет?", "zh", "Мне двадцать лет.", 0.0001));
+    mock_push_json(200, tr_body("ru", "Сколько тебе лет?", "zh", "你多大了？", 0.0001));
+    j = tr_job("ru", "zh", "Сколько тебе лет?", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && r && r->tr_retry && !strcmp(r->text, "你多大了？"));
+    b = cJSON_Parse(g_reqs[1].body);
+    CHECK(b && enum_is(tr_enum(b, "target_lang"), "zh", NULL) && strstr(sys_of(b), "into Chinese"));
+    cJSON_Delete(b);
+
+    // the retry still wrong: shown as it is, no third request
+    setup();
+    mock_push_json(200, tr_body("ru", "да", "en", "да", 0.0001));
+    mock_push_json(200, tr_body("ru", "да", "en", "да", 0.0001));
+    j = tr_job("ru", "en", "да", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && r && r->tr_retry && !strcmp(r->text, "да") && !strcmp(r->lang, "en"));
+
+    // a copy in a pair sharing a script, the source taken for the other language: the direction is not forced
+    // again, the model decides anew, told that a copy is wrong
+    setup();
+    mock_push_json(200, tr_body("en", "Wo ist der Bahnhof?", "de", "Wo ist der Bahnhof?", 0.0001));
+    mock_push_json(200, tr_body("de", "Wo ist der Bahnhof?", "en", "Where is the station?", 0.0001));
+    j = tr_job("en", "de", "Wo ist der Bahnhof?", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && r && r->tr_retry && !strcmp(r->text, "Where is the station?") && !strcmp(r->lang, "en") &&
+          !strcmp(r->src_lang, "de") && !strcmp(r->tts_lang, "en"));
+    b = cJSON_Parse(g_reqs[1].body);
+    CHECK(b && cJSON_GetArraySize(tr_enum(b, "src_lang")) == 3 && enum_is(tr_enum(b, "target_lang"), "de", "en"));
+    CHECK(b && strstr(sys_of(b), "repeated the utterance unchanged") && !strstr(sys_of(b), "Translate this utterance"));
+    cJSON_Delete(b);
+
+    // a Cyrillic copy labelled "other" in ru-en: the typed text's script fixes the direction ru -> en
+    setup();
+    mock_push_json(200, tr_body("other", "Где находится вокзал?", "ru", "Где находится вокзал?", 0.0001));
+    mock_push_json(200, tr_body("ru", "Где находится вокзал?", "en", "Where is the station?", 0.0001));
+    j = tr_job("ru", "en", "Где находится вокзал?", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && r && r->tr_retry && !strcmp(r->text, "Where is the station?") && !strcmp(r->lang, "en"));
+    b = cJSON_Parse(g_reqs[1].body);
+    CHECK(b && enum_is(tr_enum(b, "src_lang"), "ru", NULL) && enum_is(tr_enum(b, "target_lang"), "en", NULL));
+    cJSON_Delete(b);
+
+    // a right translation keeping a Latin brand name: no second request
+    setup();
+    mock_push_json(200, tr_body("ru", "Я работаю в Google", "zh", "我在Google工作", 0.0001));
+    j = tr_job("ru", "zh", "Я работаю в Google", NULL, 0);
+    run(&j);
+    CHECK(g_nreq == 1 && find_ev(AI_EV_RESULT) && !find_ev(AI_EV_RESULT)->tr_retry);
+    setup();
+    mock_push_json(200, tr_body("en", "Open WhatsApp on my iPhone", "ru", "Открой WhatsApp на iPhone", 0.0001));
+    j = tr_job("ru", "en", "Open WhatsApp on my iPhone", NULL, 0);
+    run(&j);
+    CHECK(g_nreq == 1 && find_ev(AI_EV_RESULT) && !find_ev(AI_EV_RESULT)->tr_retry);
+
+    // zh-ko answered in Chinese: hangul expected, the retry is forced zh -> ko
+    setup();
+    mock_push_json(200, tr_body("zh", "现在几点？", "ko", "现在下午三点。", 0.0001));
+    mock_push_json(200, tr_body("zh", "现在几点？", "ko", "지금 몇 시예요?", 0.0001));
+    j = tr_job("zh", "ko", "现在几点？", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && r && r->tr_retry && !strcmp(r->text, "지금 몇 시예요?") && !strcmp(r->tts_lang, "ko"));
+
+    // too late in the turn for the retry: the first translation as it is
+    setup();
+    mock_push_json(200, tr_body("ru", "Сколько тебе лет?", "en", "Мне двадцать лет.", 0.0001));
+    j = tr_job("ru", "en", "Сколько тебе лет?", NULL, 0);
+    j.t_submit_us -= 41LL * 1000 * 1000;
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 1 && r && !r->tr_retry && !strcmp(r->text, "Мне двадцать лет."));
+}
+
+// A translator body with its own finish_reason (malloc'ed; the strings carry no quotes or backslashes).
+static const char *tr_body_fin(const char *src, const char *transcript, const char *tgt, const char *translation,
+                               const char *finish)
+{
+    size_t n = strlen(translation) + 1024;
+    char *b = malloc(n);
+    snprintf(b, n,
+             "{\"id\":\"gen-t\",\"provider\":\"Google AI Studio\",\"model\":\"google/gemini-3.1-flash-lite\","
+             "\"choices\":[{\"index\":0,\"finish_reason\":\"%s\",\"message\":{\"role\":\"assistant\",\"content\":"
+             "\"{\\\"src_lang\\\":\\\"%s\\\",\\\"transcript\\\":\\\"%s\\\",\\\"target_lang\\\":\\\"%s\\\","
+             "\\\"translation\\\":\\\"%s\\\"}\"}}],\"usage\":{\"prompt_tokens\":300,\"completion_tokens\":768,"
+             "\"cost\":0.0001}}", finish, src, transcript, tgt, translation);
+    return b;
+}
+
+static void t_tr_direction_voice(void)
+{
+    printf("t_tr_direction_voice\n");
+    // voice: the retry sends the transcript as text, the clip goes once; the shown transcript is the clip's
+    setup();
+    mock_push_json(200, tr_body("ru", "Да.", "en", "Да.", 0.0004));
+    mock_push_json(200, tr_body("ru", "echo", "en", "Yes.", 0.0001));
+    job_t j = tr_job("ru", "en", NULL, s_pcm, s_npcm);
+    run(&j);
+    const ev_t *r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && g_len_mismatch == 0 && count_ev(AI_EV_RELEASED) == 1 && count_ev(AI_EV_UPLOAD_DONE) == 1);
+    CHECK(r && r->tr_retry && !strcmp(r->text, "Yes.") && !strcmp(r->transcript, "Да.") && !strcmp(r->tts_lang, "en"));
+    CHECK(strstr(g_reqs[0].body, "input_audio") && !strstr(g_reqs[1].body, "input_audio") && g_reqs[1].len < 16384);
+    cJSON *b = cJSON_Parse(g_reqs[1].body);
+    CHECK(b && last_user_text(b) && !strcmp(last_user_text(b), "<utterance>Да.</utterance>"));
+    cJSON_Delete(b);
+
+    // the retry fails for good: the first translation is kept, no error card
+    setup();
+    mock_push_json(200, tr_body("ru", "Сколько тебе лет?", "en", "Мне двадцать лет.", 0.0001));
+    for (int k = 0; k < 4; k++) {
+        mock_push_json(503, "{\"error\":{\"code\":503,\"message\":\"Service Unavailable\"}}");
+    }
+    j = tr_job("ru", "en", "Сколько тебе лет?", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(r && r->tr_retry && !strcmp(r->text, "Мне двадцать лет.") && !find_ev(AI_EV_ERROR));
+    // one short attempt: no backoff retries, no "retry" status for a request the user never asked for
+    CHECK(g_nreq == 2 && count_ev(AI_EV_RETRY) == 0 && r && r->retries == 0);
+    printf("    retry failed after %d requests: first translation kept\n", g_nreq);
+
+    // a copy of a clip (the transcript may be written already translated): the text cannot tell the direction,
+    // so the clip goes again with the copy note, nothing forced; its transcript is the one shown
+    setup();
+    mock_push_json(200, tr_body("ru", "Where is the station?", "en", "Where is the station?", 0.0004));
+    mock_push_json(200, tr_body("ru", "Где вокзал?", "en", "Where is the station?", 0.0004));
+    j = tr_job("ru", "en", NULL, s_pcm, s_npcm);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && strstr(g_reqs[1].body, "input_audio") && count_ev(AI_EV_RELEASED) == 1);
+    CHECK(r && r->tr_retry && !strcmp(r->text, "Where is the station?") && !strcmp(r->lang, "en") &&
+          !strcmp(r->tts_lang, "en") && !strcmp(r->transcript, "Где вокзал?"));
+    b = cJSON_Parse(g_reqs[1].body);
+    CHECK(b && strstr(sys_of(b), "repeated the utterance unchanged") && cJSON_GetArraySize(tr_enum(b, "src_lang")) == 3);
+    cJSON_Delete(b);
+
+    // "other" and the wrong script: the target is fixed, the source left open but not the target language, and the
+    // shown language follows the fixed target
+    setup();
+    mock_push_json(200, tr_body("other", "Bonjour, ça va?", "ru", "Hello, how are you?", 0.0004));
+    mock_push_json(200, tr_body("other", "Bonjour, ça va?", "ru", "Привет, как дела?", 0.0001));
+    j = tr_job("ru", "en", NULL, s_pcm, s_npcm);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && !strstr(g_reqs[1].body, "input_audio"));
+    CHECK(r && r->tr_retry && !strcmp(r->text, "Привет, как дела?") && !strcmp(r->lang, "ru"));
+    b = cJSON_Parse(g_reqs[1].body);
+    CHECK(b && enum_is(tr_enum(b, "src_lang"), "en", "other") && enum_is(tr_enum(b, "target_lang"), "ru", NULL));
+    cJSON_Delete(b);
+
+    // a looping answer at temperature 0 (max_tokens, far longer than the utterance): asked again without it
+    setup();
+    char loop[1200] = "";
+    while (strlen(loop) < 1000) strcat(loop, "yes yes ");
+    mock_push_json(200, tr_body_fin("ru", "Да", "en", loop, "length"));
+    mock_push_json(200, tr_body_fin("ru", "Да", "en", "Yes.", "stop"));
+    j = tr_job("ru", "en", "Да", NULL, 0);
+    run(&j);
+    r = find_ev(AI_EV_RESULT);
+    CHECK(g_nreq == 2 && r && r->tr_retry && !strcmp(r->text, "Yes.") && !r->truncated);
+    CHECK(strstr(g_reqs[0].body, "\"temperature\":0") && !strstr(g_reqs[1].body, "temperature"));
+    // a long translation cut at max_tokens is no loop
+    setup();
+    mock_push_json(200, tr_body_fin("ru", "Длинный рассказ", "en", "A long story", "length"));
+    j = tr_job("ru", "en", "Длинный рассказ", NULL, 0);
+    run(&j);
+    CHECK(g_nreq == 1 && find_ev(AI_EV_RESULT) && find_ev(AI_EV_RESULT)->truncated);
+
+    // an endpoint without temperature: sent again without it (an auto-fix, not a retry)
+    setup();
+    mock_push_json(404, "{\"error\":{\"message\":\"No endpoints found that can handle the requested parameters.\","
+                        "\"code\":404}}");
+    mock_push_json(200, tr_body("en", "Hi", "ru", "Привет", 0.0001));
+    j = tr_job("ru", "en", "Hi", NULL, 0);
+    run(&j);
+    CHECK(g_nreq == 2 && find_ev(AI_EV_RESULT) && count_ev(AI_EV_RETRY) == 0);
+    CHECK(strstr(g_reqs[0].body, "\"temperature\":0") && !strstr(g_reqs[1].body, "temperature"));
+}
+
 void test_ai(void)
 {
     ai_add_listener(cap, NULL);
@@ -935,4 +1243,6 @@ void test_ai(void)
     t_web_voice();
     t_web_fail();
     t_web_modes();
+    t_tr_direction();
+    t_tr_direction_voice();
 }

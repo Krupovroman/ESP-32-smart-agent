@@ -81,6 +81,7 @@ you and the person you talk to, and it works out by itself who is speaking which
 - The model takes the audio directly (Gemini Flash Lite, strict JSON output), so no separate speech recognition is needed.
 - The answer comes as chat text and as speech (MAI Voice). Text-only mode is one button away; the device also works with no speaker at all.
 - Interrupt at any time: a press stops the speech, a hold starts a new question right away.
+- Answer length setting: short, normal (default) or detailed.
 - Short conversation memory (the last few turns) and the conversation history on its own screen.
 - Questions can also be typed on the round keyboard.
 
@@ -111,7 +112,7 @@ you and the person you talk to, and it works out by itself who is speaking which
   battery ring.
 - Charging animation: a comet running along the ring, a breathing ring, a glowing bolt, rising particles.
 - Honest power states: "charging", "charged", "USB: not enough power". The board has no charge signal, so the state is
-  inferred from how the voltage behaves (model v3, with a ~12 h log: `bat log`).
+  inferred from how the voltage behaves (model v4, with a ~12 h log: `bat log`).
 - Warnings at 15 % and 5 %; when idle: dim, then a clock, then screen off.
 
 **Reliability**
@@ -253,7 +254,7 @@ URL under Settings → Provider.
 | Translator utterance, spoken (estimate) | ≈ $0.0015 |
 | 30 spoken questions a day (estimate) | ≈ $4 a month, ≈ $0.5 text-only |
 
-Speech makes up most of the cost, which is why the assistant keeps its answers short. The calculation is in
+Speech makes up most of the cost; the answer length is a setting (short / normal / detailed). The calculation is in
 [docs/protocol.md, §10](docs/protocol.md#10-estimated-cost-per-turn).
 
 ## Project layout
@@ -360,7 +361,7 @@ An honest list of what is missing or works with caveats:
 - **The RTC, IMU and microSD slot** on the board are not used yet.
 - **Developer tooling is Windows-centric** (PowerShell scripts, MSVC host tests). Building with `idf.py` should work
   wherever ESP-IDF does, but the author has not tried it on Linux or macOS.
-- The project is a release candidate (`v0.7-rc2`) and has been tested on one revision 2.1 board.
+- The project is a release candidate (`v0.8-rc1`) and has been tested on one revision 2.1 board.
 
 Next (ideas, not promises): streamed answers for lower latency, a time zone setting, using the RTC.
 

@@ -8,7 +8,7 @@
 #include "tts_client.h"
 
 #define AI_HIST_MAX_N   10        // ring size; the setting picks how many are sent
-#define AI_HIST_MAX_CP  3000      // protocol §4.3 budget in code points
+#define AI_HIST_MAX_CP  6000      // protocol §4.3 budget in code points (two detailed exchanges)
 
 // ---- ai_util.c --------------------------------------------------------------------------------
 void *ai_malloc(size_t n);                               // PSRAM first, internal as a fallback
@@ -69,12 +69,34 @@ typedef enum {
     AI_WEB_AUTO,                  // schema has needs_web; the turn is re-run with the plugin when it is true
     AI_WEB_ON,                    // "plugins":[{"id":"web"}] on this request
 } ai_web_t;
-// PSRAM; {WEB} gets the rule line of web, {DATETIME} filled or its line removed.
+// PSRAM; {WEB} gets the rule line of web, {LEN_HOW} {LEN} {LEN_MAX} the reply length of ai_len, {DATETIME} filled
+// or its line removed.
 char *ai_prompt_assistant(ai_web_t web);
-char *ai_prompt_translator(const char *a, const char *b);
+// Reply length (setting ai_len, protocol §4.1): 0 short, 1 normal (default), 2 detailed; out-of-range values clamp.
+int ai_reply_len_level(void);
+// max_tokens of an assistant request: the level's floor (1024 / 2048 / 4096) or ai_maxtok, whichever is higher.
+int ai_reply_max_tokens(void);
+// tgt: "" normally; a code when the direction is forced (protocol §3 retry): one more rule line names it.
+// copy_note (with no tgt): the retry line saying the previous answer repeated the utterance.
+char *ai_prompt_translator(const char *a, const char *b, const char *tgt, bool copy_note);
 const char *ai_lang_name(const char *code);              // English name used in the prompt
 bool ai_lang_in_enum(const char *code);                  // assistant "lang" enum (other excluded)
 void ai_datetime_ru(char *out, size_t len);              // "" when the clock is not set
+
+// ---- ai_trcheck.c (translator output check, protocol §3) ---------------------------------------
+enum {
+    AI_SC_LATIN = 1 << 0, AI_SC_CYRILLIC = 1 << 1, AI_SC_GREEK = 1 << 2, AI_SC_HEBREW = 1 << 3,
+    AI_SC_ARABIC = 1 << 4, AI_SC_DEVANAGARI = 1 << 5, AI_SC_THAI = 1 << 6, AI_SC_HANGUL = 1 << 7,
+    AI_SC_KANA = 1 << 8, AI_SC_HAN = 1 << 9, AI_SC_OTHER = 1 << 10,
+};
+uint32_t ai_script_of(uint32_t cp);                      // one AI_SC_* bit, 0 for a non-letter
+uint32_t ai_lang_scripts(const char *code);              // scripts a language is written in, 0 = unknown
+// The pair language (a or b) the transcript's script points to, or NULL: other scripts, mixed text, or a pair whose
+// languages share a script (en-de, zh-ja).
+const char *ai_tr_src_by_script(const char *transcript, const char *a, const char *b);
+// NULL when the translation into tgt looks right; else the reason ("script": written in another script, "copy": the
+// utterance repeated) for one direction retry. other: the pair's other language (German there: no name exception).
+const char *ai_tr_check(const char *transcript, const char *translation, const char *tgt, const char *other);
 
 // ---- ai_history.c -----------------------------------------------------------------------------
 void hist_init(void);

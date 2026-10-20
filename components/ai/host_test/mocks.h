@@ -44,6 +44,7 @@ extern uint32_t g_out_rate, g_out_begins;
 extern uint8_t g_out_ch;
 extern size_t g_out_bytes, g_out_stops;
 extern uint8_t *g_out_buf;
+extern size_t g_out_ring_cap, g_out_drain_bps, g_out_full_hits;   // speaker ring simulation (cap 0 = off)
 
 void mock_reset(void);
 void mock_push(const mock_reply_t *r);

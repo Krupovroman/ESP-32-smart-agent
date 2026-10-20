@@ -24,9 +24,12 @@ static const char *TAG = "ai";
 #define AI_CORE         0
 #define AI_Q_LEN        6
 #define MAX_LISTENERS   4
-#define LAST_REQ_CAP    (16 * 1024)
+#define LAST_REQ_CAP    (32 * 1024)    // redacted copy; long history (up to 6000 code points) plus the prompt
 #define MAX_TOK_TR      768
 #define TURN_RETRY_US   (65LL * 1000 * 1000)     // 45 s per attempt + 20 s of retries
+// No translator direction retry after this much of the turn: its OR_TO_TRDIR attempt (25 s) must end before the app's
+// 75 s turn watchdog, which would throw the first translation away.
+#define TR_RETRY_LATE_US (40LL * 1000 * 1000)
 #define VOICE_TEXT_AS   "Голосовое сообщение пользователя."
 #define VOICE_TEXT_TR   "Utterance:"
 
@@ -49,23 +52,20 @@ static const char SCHEMA_NEEDS_WEB[] =
     "your knowledge cutoff. Not for the current date or time when the system prompt gives them. Then reply is only "
     "a very short holding phrase: the device searches the web and asks again.\"},";
 
+// The two %s are the src_lang and target_lang enums: [A, B, "other"] and [B, A] normally; a source forced by the user
+// (hold a language chip, "wrong language") has that code only, and so has a target fixed by the direction retry
+// (protocol §3). target_lang comes before translation: the model commits to the direction first.
 static const char SCHEMA_TRANSLATOR[] =
     "{\"type\":\"object\",\"properties\":{"
-    "\"src_lang\":{\"type\":\"string\",\"enum\":[\"%s\",\"%s\",\"other\"],\"description\":\"Language of the "
-    "utterance: one of the two selected codes, or other.\"},"
+    "\"src_lang\":{\"type\":\"string\",\"enum\":[%s],\"description\":\"Language of the utterance: one of the listed "
+    "codes (other: neither of the two languages).\"},"
     "\"transcript\":{\"type\":\"string\",\"description\":\"Verbatim transcript in the original language; empty if "
     "no intelligible speech.\"},"
-    "\"translation\":{\"type\":\"string\",\"description\":\"Only the translated text.\"}"
-    "},\"required\":[\"src_lang\",\"transcript\",\"translation\"],\"additionalProperties\":false}";
-
-// Source forced by the user (hold a language chip, "wrong language"): the enum has that code only.
-static const char SCHEMA_TRANSLATOR_FORCED[] =
-    "{\"type\":\"object\",\"properties\":{"
-    "\"src_lang\":{\"type\":\"string\",\"enum\":[\"%s\"],\"description\":\"Language of the utterance.\"},"
-    "\"transcript\":{\"type\":\"string\",\"description\":\"Verbatim transcript in the original language; empty if "
-    "no intelligible speech.\"},"
-    "\"translation\":{\"type\":\"string\",\"description\":\"Only the translated text.\"}"
-    "},\"required\":[\"src_lang\",\"transcript\",\"translation\"],\"additionalProperties\":false}";
+    "\"target_lang\":{\"type\":\"string\",\"enum\":[%s],\"description\":\"Language of the translation, as the system "
+    "prompt says; never the language of the utterance.\"},"
+    "\"translation\":{\"type\":\"string\",\"description\":\"Only the translated text, written in target_lang. Never "
+    "an answer to the utterance.\"}"
+    "},\"required\":[\"src_lang\",\"transcript\",\"target_lang\",\"translation\"],\"additionalProperties\":false}";
 
 static const char NOTICE_P3[] = "(ответ обрезан)";
 static const char NOTICE_P4[] = "Не расслышал. Повторите, пожалуйста.";
@@ -105,6 +105,9 @@ typedef struct {
     int web_n;                               // its max_results
     char lang_a[8], lang_b[8];
     char src[8];                             // forced translator source, "" = detect
+    char tgt[8];                             // translator target fixed by the direction retry, "" = by src_lang
+    bool copy_note;                          // direction retry after a copy, direction left to the model
+    bool temp0;                              // "temperature":0 (translator; dropped when the endpoint rejects it)
     const char *user_text;                   // typed or Whisper text; NULL = voice
     const int16_t *pcm;
     size_t samples;
@@ -323,12 +326,22 @@ static cJSON *schema_json(const chat_t *ch)
         free(buf);
         return s;
     }
-    char buf[sizeof(SCHEMA_TRANSLATOR) + 16];
+    char src[40], tgt[24], buf[sizeof(SCHEMA_TRANSLATOR) + 64];
     if (ch->src[0]) {
-        snprintf(buf, sizeof(buf), SCHEMA_TRANSLATOR_FORCED, ch->src);
+        snprintf(src, sizeof(src), "\"%s\"", ch->src);
+    } else if (ch->tgt[0]) {
+        snprintf(src, sizeof(src), "\"%s\",\"other\"", strcmp(ch->tgt, ch->lang_a) ? ch->lang_a : ch->lang_b);
     } else {
-        snprintf(buf, sizeof(buf), SCHEMA_TRANSLATOR, ch->lang_a, ch->lang_b);
+        snprintf(src, sizeof(src), "\"%s\",\"%s\",\"other\"", ch->lang_a, ch->lang_b);
     }
+    if (ch->tgt[0]) {
+        snprintf(tgt, sizeof(tgt), "\"%s\"", ch->tgt);
+    } else if (ch->src[0]) {
+        snprintf(tgt, sizeof(tgt), "\"%s\"", strcmp(ch->src, ch->lang_a) ? ch->lang_a : ch->lang_b);
+    } else {
+        snprintf(tgt, sizeof(tgt), "\"%s\",\"%s\"", ch->lang_b, ch->lang_a);
+    }
+    snprintf(buf, sizeof(buf), SCHEMA_TRANSLATOR, src, tgt);
     return cJSON_Parse(buf);
 }
 
@@ -367,7 +380,7 @@ static esp_err_t chat_build(chat_t *ch)
     }
     cJSON *schema = schema_json(ch);
     char *sys = ch->mode == AI_MODE_ASSISTANT ? ai_prompt_assistant(ch->web)
-                                              : ai_prompt_translator(ch->lang_a, ch->lang_b);
+                                              : ai_prompt_translator(ch->lang_a, ch->lang_b, ch->tgt, ch->copy_note);
     cJSON *root = cJSON_CreateObject();
     if (!schema || !sys || !root) {
         cJSON_Delete(schema);
@@ -423,6 +436,16 @@ static esp_err_t chat_build(chat_t *ch)
         cJSON_AddStringToObject(ia, "data", ph);
         cJSON_AddStringToObject(ia, "format", "wav");
         cJSON_AddItemToArray(parts, a);
+    } else if (ch->mode == AI_MODE_TRANSLATOR) {
+        // typed (or Whisper) text in tags, so that a question reads as material to translate, not as a prompt
+        const char *t = ch->user_text ? ch->user_text : "";
+        size_t n = strlen(t) + 32;
+        char *u = ai_malloc(n);
+        if (u) {
+            snprintf(u, n, "<utterance>%s</utterance>", t);
+        }
+        cJSON_AddStringToObject(m, "content", u ? u : t);
+        free(u);
     } else {
         cJSON_AddStringToObject(m, "content", ch->user_text ? ch->user_text : "");
     }
@@ -445,6 +468,9 @@ static esp_err_t chat_build(chat_t *ch)
         cJSON_AddBoolToObject(rs, "exclude", true);
     }
     cJSON_AddNumberToObject(root, "max_tokens", ch->max_tokens);
+    if (ch->temp0) {
+        cJSON_AddNumberToObject(root, "temperature", 0);     // translator: the most literal reading (protocol §3)
+    }
     cJSON_AddBoolToObject(root, "stream", false);
     if (ch->openrouter && ch->web == AI_WEB_ON) {
         // protocol §2.8: OpenRouter's web plugin; each result is billed (about $0.004), so keep max_results small
@@ -571,7 +597,8 @@ static void trim_clip(const int16_t *pcm, size_t n, uint32_t rate, size_t *first
 
 typedef struct {
     char *transcript, *text;
-    char lang[8], src_lang[8], finish[16], model[64], provider[32], gen_id[64];
+    char lang[8], src_lang[8], tgt_lang[8], finish[16], model[64], provider[32], gen_id[64];
+    char tr_tgt[8];                            // translator: the device's target for this answer (tr_review)
     char source[48];                           // host of the first url_citation annotation
     bool truncated;
     bool needs_web;                            // assistant, auto web mode: current data was asked for
@@ -715,6 +742,11 @@ static esp_err_t parse_chat(const chat_t *ch, const char *body, parsed_t *out, c
     out->transcript = ai_strdup(tr);
     out->text = ai_strdup(tx);
     out->needs_web = ch->mode == AI_MODE_ASSISTANT && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(o, "needs_web"));
+    if (ch->mode == AI_MODE_TRANSLATOR) {
+        const char *tg = ai_json_str(o, "target_lang");
+        strlcpy(out->tgt_lang, tg ? tg : "", sizeof(out->tgt_lang));
+        lower_ascii(out->tgt_lang);
+    }
     char l[8];
     strlcpy(l, lg ? lg : "", sizeof(l));
     lower_ascii(l);
@@ -901,11 +933,69 @@ static bool web_rerun(chat_t *ch, const char *query, parsed_t *pr, ai_result_t *
     return alive;
 }
 
+static const char *pair_other(const chat_t *ch, const char *code)
+{
+    return strcmp(code, ch->lang_a) ? ch->lang_a : ch->lang_b;
+}
+
+// Translator (protocol §3). pr->tr_tgt gets the device target: the one fixed by the direction retry, else the pair
+// language that src_lang is not; the model's target_lang only gets a log line. Returns why the translation needs the
+// direction retry ("script", "copy", "loop"), NULL when it looks right.
+static const char *tr_review(const chat_t *ch, const char *said, parsed_t *pr)
+{
+    const char *t = ch->tgt[0] ? ch->tgt : !strcmp(pr->src_lang, ch->lang_a) ? ch->lang_b : ch->lang_a;
+    strlcpy(pr->tr_tgt, t, sizeof(pr->tr_tgt));
+    if (pr->tgt_lang[0] && strcmp(pr->tgt_lang, t)) {
+        ESP_LOGW(TAG, "turn %" PRIu32 ": model target_lang %s, device rule %s (src_lang %s)", ch->turn, pr->tgt_lang,
+                 t, pr->src_lang);
+    }
+    if (pr->truncated) {
+        // max_tokens on a translation far longer than the utterance: a loop (temperature 0), not a long text
+        return utf8_cp_len(pr->text) > 2 * utf8_cp_len(said) + 40 ? "loop" : NULL;
+    }
+    return ai_tr_check(said, pr->text, t, pair_other(ch, t));
+}
+
+// Sets up the protocol §3 direction retry after the first answer failed with why. said is what was checked; typed:
+// it is the real input (typed or Whisper text), not the model's echo of a clip.
+static void tr_retry_setup(chat_t *ch, const parsed_t *first, const char *why, const char *said, bool typed)
+{
+    if (!strcmp(why, "loop")) {
+        ch->temp0 = false;                   // the same request at the provider's default temperature
+        return;
+    }
+    // the model's own direction failed: the script of typed text is a sure sign of the source when the pair is written
+    // differently (a clip's echo is not: the model may have written the transcript already translated)
+    const char *by_script = typed && !ch->src[0] ? ai_tr_src_by_script(said, ch->lang_a, ch->lang_b) : NULL;
+    if (ch->src[0]) {
+        strlcpy(ch->tgt, first->tr_tgt, sizeof(ch->tgt));        // forced by the user: the direction stays
+    } else if (by_script) {
+        if (strcmp(by_script, first->src_lang)) {
+            ESP_LOGW(TAG, "turn %" PRIu32 ": src_lang %s, but the text is in the script of %s", ch->turn,
+                     first->src_lang, by_script);
+        }
+        strlcpy(ch->src, by_script, sizeof(ch->src));
+        strlcpy(ch->tgt, pair_other(ch, by_script), sizeof(ch->tgt));
+    } else if (!strcmp(why, "copy")) {
+        // a copy in a pair sharing a script (en-de), or of a clip: the text does not tell which language the utterance
+        // is in, most often the model took it for the other one. It decides again, told that a copy is wrong.
+        ch->copy_note = true;
+    } else {
+        strlcpy(ch->tgt, first->tr_tgt, sizeof(ch->tgt));        // the model's direction in the wrong script
+        if (strcmp(first->src_lang, "other")) {
+            strlcpy(ch->src, first->src_lang, sizeof(ch->src));
+        }
+    }
+}
+
 static void run_turn(job_t *j)
 {
     ai_result_t res = { .turn = j->turn, .mode = j->mode };
     or_err_t err;
     parsed_t pr = { 0 };
+    parsed_t tr_first = { 0 };               // translator: the answer that got the direction retry
+    bool tr_retry = false;
+    bool tr_audio = false;                   // ... sent the clip again (after a copy)
     char *stt_text = NULL;
     chat_t *ch = ai_calloc(1, sizeof(chat_t));
     bool voice_in = j->pcm && j->samples;
@@ -932,7 +1022,8 @@ static void run_turn(job_t *j)
     }
     int32_t wn = cfg_int("ai_web_n", 3);
     ch->web_n = wn < 1 ? 1 : wn > 5 ? 5 : (int)wn;
-    ch->max_tokens = j->mode == AI_MODE_ASSISTANT ? (int)cfg_int("ai_maxtok", 1024) : MAX_TOK_TR;
+    ch->max_tokens = j->mode == AI_MODE_ASSISTANT ? ai_reply_max_tokens() : MAX_TOK_TR;
+    ch->temp0 = j->mode == AI_MODE_TRANSLATOR;
     pick_effort(ch);
     strlcpy(ch->lang_a, j->lang_a, sizeof(ch->lang_a));
     strlcpy(ch->lang_b, j->lang_b, sizeof(ch->lang_b));
@@ -1017,6 +1108,9 @@ static void run_turn(job_t *j)
             .referer = ch->referer, .to = OR_TO_CHAT, .body_len = body_len(ch),
             .write_body = chat_write_body, .body_ctx = ch, .abort = ai_abort_turn, .abort_ctx = &ch->turn,
         };
+        if (tr_retry) {
+            q.to = (or_timeouts_t)OR_TO_TRDIR;
+        }
         or_resp_t r;
         char *body = NULL;
         ch->t_attempt_us = esp_timer_get_time();
@@ -1036,6 +1130,32 @@ static void run_turn(job_t *j)
                     row = "P2";
                 } else {
                     free(body);
+                    const char *said = ch->user_text ? ch->user_text : pr.transcript;
+                    const char *bad = ch->mode == AI_MODE_TRANSLATOR && pr.transcript[0] ? tr_review(ch, said, &pr)
+                                                                                         : NULL;
+                    if (bad && !tr_retry && esp_timer_get_time() - j->t_submit_us > TR_RETRY_LATE_US) {
+                        ESP_LOGW(TAG, "turn %" PRIu32 ": translation fails the %s check, too late to ask again",
+                                 j->turn, bad);
+                    } else if (bad && !tr_retry) {
+                        // Protocol §3 direction retry, once, in one short attempt (an error keeps this answer).
+                        // The transcript goes as text, except after a copy of a clip: only the audio tells then.
+                        tr_retry = dirty = true;
+                        tr_first = pr;
+                        memset(&pr, 0, sizeof(pr));
+                        tr_retry_setup(ch, &tr_first, bad, said, !ch->pcm);
+                        ESP_LOGW(TAG, "turn %" PRIu32 ": translation fails the %s check, asking again (%s -> %s)",
+                                 j->turn, bad, ch->src[0] ? ch->src : "?", ch->tgt[0] ? ch->tgt : "?");
+                        if (ch->pcm && !ch->copy_note) {
+                            ch->pcm = NULL;
+                            ch->user_text = tr_first.transcript;
+                        }
+                        tr_audio = ch->pcm != NULL;
+                        continue;
+                    }
+                    if (bad && tr_retry) {
+                        ESP_LOGW(TAG, "turn %" PRIu32 ": translation still fails the %s check, shown as it is",
+                                 j->turn, bad);
+                    }
                     failed = false;
                     break;
                 }
@@ -1047,8 +1167,8 @@ static void run_turn(job_t *j)
             or_classify(OR_KIND_CHAT, &r, body, &err);
         }
         free(body);
-        if (!strcmp(err.id, "AB") || !strcmp(err.id, "P5")) {
-            goto done;
+        if (!strcmp(err.id, "AB") || !strcmp(err.id, "P5") || tr_retry) {
+            goto done;                           // a failed direction retry keeps the first translation at once
         }
         // Automatic fixes of protocol §9.1 (not counted as retries).
         // "endpoint" alone is not enough: "No endpoints found that can handle the requested
@@ -1057,6 +1177,13 @@ static void run_turn(job_t *j)
         static const char *const W_REASON[] = { "reasoning", "effort" };
         static const char *const W_SCHEMA[] = { "response_format", "schema", "structured" };
         static const char *const W_WEB[] = { "plugin", "web search", "web_search" };
+        static const char *const W_TEMP[] = { "temperature", "requested parameters" };
+        if (ch->temp0 && (!strcmp(err.id, "400") || !strcmp(err.id, "404")) && mentions_any(err.message, W_TEMP, 2)) {
+            ESP_LOGW(TAG, "temperature rejected, sending without it");
+            ch->temp0 = false;
+            dirty = true;
+            continue;
+        }
         if (ch->web == AI_WEB_ON && !fix_web && (!strcmp(err.id, "400") || !strcmp(err.id, "404")) &&
             mentions_any(err.message, W_WEB, 3)) {
             ESP_LOGW(TAG, "web search rejected, sending without it");
@@ -1121,6 +1248,28 @@ done:
         ai_event_t ev = { .type = AI_EV_RELEASED, .turn = j->turn };
         ai_emit(&ev);
     }
+    if (tr_retry) {
+        res.tr_retry = true;
+        if (failed && strcmp(err.id, "AB")) {
+            // the direction retry itself failed: the first translation is better than an error card
+            ESP_LOGW(TAG, "turn %" PRIu32 ": direction retry failed (%s), keeping the first translation", j->turn,
+                     err.id);
+            parsed_free(&pr);
+            pr = tr_first;
+            memset(&tr_first, 0, sizeof(tr_first));
+            failed = false;
+        } else if (!failed) {
+            res.cost += tr_first.cost;           // both requests are billed
+            pr.prompt_tokens += tr_first.prompt_tokens;
+            pr.completion_tokens += tr_first.completion_tokens;
+            pr.audio_tokens += tr_first.audio_tokens;
+            if (voice_in && !res.stt_used && !tr_audio) {
+                char *t = pr.transcript;         // the clip's transcript, not the echo of the text re-run
+                pr.transcript = tr_first.transcript;
+                tr_first.transcript = t;
+            }
+        }
+    }
     res.t.ai_ms = (uint32_t)((esp_timer_get_time() - j->t_submit_us) / 1000);
     if (ch) {
         free_body(ch);
@@ -1158,7 +1307,8 @@ done:
         } else {
             strlcpy(res.src_lang, pr.src_lang[0] ? pr.src_lang : "other", sizeof(res.src_lang));
             res.other_lang = !strcmp(res.src_lang, "other");
-            const char *target = !strcmp(res.src_lang, j->lang_a) ? j->lang_b : j->lang_a;
+            // the target the answer was checked against (fixed by a direction retry), else by src_lang
+            const char *target = pr.tr_tgt[0] ? pr.tr_tgt : !strcmp(res.src_lang, j->lang_a) ? j->lang_b : j->lang_a;
             strlcpy(res.lang, target, sizeof(res.lang));
             bool ignore = res.other_lang && cfg_int("tr_other", 0) == 1;
             strlcpy(res.tts_lang, ignore ? "" : target, sizeof(res.tts_lang));
@@ -1181,6 +1331,7 @@ done:
         ai_emit(&ev);
     }
     parsed_free(&pr);
+    parsed_free(&tr_first);
     free(stt_text);
     free(ch);
 }

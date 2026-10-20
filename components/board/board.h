@@ -47,11 +47,12 @@ int board_battery_mv(void);
 // single cell's range (no battery).
 int board_battery_pct(int mv);
 
-// Battery model v3 (docs/ui.md 3.16). The ETA6098 charger has no status pin (nor VBUS) to the MCU and the system load
+// Battery model v4 (docs/ui.md 3.16). The ETA6098 charger has no status pin (nor VBUS) to the MCU and the system load
 // hangs on the cell, so external power is seen from the USB host's start-of-frame packets
-// (usb_serial_jtag_is_connected()) or from a voltage step (a settled reading 35 mV above the settled readings just
-// before it: a wall charger sends no packets), and it does not mean "charging": a PC port gives about 0.5 A and the
-// speaker at full volume takes more, and a full cell takes nothing. The voltage decides:
+// (usb_serial_jtag_is_connected()) or from the voltage (a wall charger sends no packets): a settled reading 35 mV
+// above the settled readings just before it, a settled level 35 mV above the levels before it (also across a load,
+// v4), or calm readings rising; and it does not mean "charging": a PC port gives about 0.5 A and the speaker at full
+// volume takes more, and a full cell takes nothing. The voltage decides:
 typedef enum {
     BOARD_PWR_BATTERY,      // no external power seen (also while a plug-in's step is being measured, a few seconds)
     BOARD_PWR_CHARGING,     // external power, the settled voltage stepped up on plugging in or keeps rising
@@ -72,7 +73,8 @@ typedef enum {
 typedef enum {
     BOARD_EXT_NONE,
     BOARD_EXT_USB,          // the USB host's packets
-    BOARD_EXT_CHARGER,      // a voltage step up (or a 2 min rise) without a host: a wall charger
+    BOARD_EXT_CHARGER,      // a voltage step up (or a rise against the baseline, a 2 min rise, a slow trend) without a
+                            // host: a wall charger
     BOARD_EXT_KEPT,         // the host's packets stopped without a voltage step down: still plugged (macOS suspends
                             // an idle CDC device), until a step down or a fall
     BOARD_EXT__N
@@ -96,8 +98,11 @@ typedef enum {
     BOARD_BEV_CHG_STOP,     // ... with the host still there, or CHARGING's settled level 20 mV under 3 min ago (30
                             // under its peak) with no long session meanwhile: the charger stopped (FULL at >= v_full
                             // - 120 mV, else USB_DRAIN)
-    BOARD_BEV_TREND_UP,     // calm readings rose 15 mV within 2 min: a charger whose step was missed (d = the rise)
-    BOARD_BEV_FALL,         // no host: the settled level 35 mV (FULL: 60) under its highest: power lost (d = fall)
+    BOARD_BEV_TREND_UP,     // calm readings rose 15 mV within 2 min (the newer minute's upper quartile against the
+                            // older one's, 6 readings in a row): a charger whose step was missed (d = the rise)
+    BOARD_BEV_FALL,         // no host: the settled level 35 mV (FULL: 60; any reading 60) under its highest (plus
+                            // the backlight's sag, 0.3 mV per % more than then, at most 25; within 10 min of a long
+                            // session only on a calm reading): power lost (d = the fall)
     BOARD_BEV_PLATEAU,      // CHARGING: not risen > 5 mV in 4 min at >= v_full - 100 mV (> 10 mV in 15 min at
                             // >= 3.95 V): FULL (d = the change)
     BOARD_BEV_RISE,         // FULL: a calm level 20 mV above its lowest, rising: CHARGING again (d = the rise)
@@ -113,6 +118,14 @@ typedef enum {
                             // ends; changes under 8 mV are not taken
     BOARD_BEV_LOAD_END,     // on battery, a step up back to the level before a step down of the last 10 min: a
                             // load the app does not grade ended, no charger (d = the step)
+    BOARD_BEV_STEP_BASE,    // v4: a settled level (median of 3) 35 mV above the baseline before it (the settled
+                            // levels of the 2 min before, or before the last load, <= 20 min old), twice in a row: a
+                            // charger whose step was spread (soft start) or hidden by a load (d = the rise)
+    BOARD_BEV_TREND_SLOW,   // v4: calm minutes rising 12 mV over 6-16 min, not slowing down (a load's recovery
+                            // decays) and not within 10 min of a long session: a charger in its CC phase (d = rise)
+    BOARD_BEV_NO_RISE,      // v4: a charger found by a trend (TREND_UP / TREND_SLOW) whose calm level 20 min later
+                            // has not risen 6 mV (below v_full - 120 mV, no long session meanwhile): none, BATTERY
+                            // (d = the change)
     BOARD_BEV__N
 } board_bat_ev_t;
 

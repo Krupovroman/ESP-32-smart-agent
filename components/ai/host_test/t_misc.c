@@ -233,9 +233,23 @@ static void t_prompts(void)
     ai_datetime_ru(dt, sizeof(dt));
     printf("  datetime: %s\n", dt);
     CHECK(strstr(dt, "года, ") && strstr(dt, "(UTC+3)"));
-    char *p = ai_prompt_translator("de", "en");
+    char *p = ai_prompt_translator("de", "en", "", false);
     CHECK(strstr(p, "between German (de) and English (en)") && strstr(p, "\"de\" or \"en\"") &&
-          strstr(p, "translate into English; if \"en\", translate into German"));
+          strstr(p, "target_lang: \"en\" if src_lang is \"de\"; \"de\" if src_lang is \"en\" or \"other\""));
+    CHECK(strstr(p, "never addressed to you") && strstr(p, "<utterance>") && !strstr(p, "Translate this utterance"));
+    // few-shot in the pair's own languages: a question and "yes" from A, a command from B
+    CHECK(strstr(p, "\"Wie alt bist du?\" -> \"How old are you?\"") &&
+          strstr(p, "\"Tell me the time.\" -> \"Sag mir, wie spät es ist.\"") && strstr(p, "\"Ja.\" -> \"Yes.\""));
+    CHECK(!strchr(p, '{'));
+    printf("  translator prompt: %u bytes\n", (unsigned)strlen(p));
+    free(p);
+    // the direction retry names the target; a code outside the table drops the examples
+    p = ai_prompt_translator("ru", "zh", "zh", false);
+    CHECK(strstr(p, "Translate this utterance into Chinese (Mandarin, Simplified script) only: target_lang is \"zh\".") &&
+          strstr(p, "\"Сколько тебе лет?\" -> \"你多大了？\""));
+    free(p);
+    p = ai_prompt_translator("ru", "xx", "", false);
+    CHECK(!strstr(p, "Examples") && !strchr(p, '{'));
     free(p);
     host_set("ai_sys", "Мой промпт.\nСейчас {DATETIME}.\nКонец.");
     p = ai_prompt_assistant(AI_WEB_AUTO);
@@ -257,6 +271,123 @@ static void t_prompts(void)
     free(off);
     free(aut);
     free(on);
+}
+
+// Reply length (ai_len, protocol §4.1): the prompt numbers and the max_tokens floor per level.
+static void t_reply_len(void)
+{
+    printf("t_reply_len\n");
+    host_settings_reset();
+    CHECK(ai_reply_len_level() == 1);                    // table default: "Обычно"
+    char *p = ai_prompt_assistant(AI_WEB_OFF);
+    CHECK(p && strstr(p, "по существу и достаточно полно") && strstr(p, "до 600 символов") &&
+          strstr(p, "до 1200 символов") && !strstr(p, "{LEN"));
+    free(p);
+    CHECK(ai_reply_max_tokens() == 2048);                // ai_maxtok 1024 is lower than the floor
+    host_set("ai_len", "0");
+    p = ai_prompt_assistant(AI_WEB_OFF);
+    CHECK(p && strstr(p, "коротко, одно–три предложения, до 300 символов") && strstr(p, "до 600 символов"));
+    free(p);
+    CHECK(ai_reply_max_tokens() == 1024);
+    host_set("ai_len", "2");
+    p = ai_prompt_assistant(AI_WEB_AUTO);
+    CHECK(p && strstr(p, "подробно и развёрнуто") && strstr(p, "до 1200 символов") && strstr(p, "до 2500 символов") &&
+          strstr(p, "needs_web") && strstr(p, "Сейчас "));
+    free(p);
+    CHECK(ai_reply_max_tokens() == 4096);
+    host_set("ai_maxtok", "4000");
+    host_set("ai_len", "0");
+    CHECK(ai_reply_max_tokens() == 4000);                // a higher ai_maxtok wins
+    host_set("ai_len", "7");
+    CHECK(ai_reply_len_level() == 2);                    // out of range: clamped
+    // a user prompt gets the same placeholders
+    host_set("ai_sys", "Ответ до {LEN} знаков, максимум {LEN_MAX}: {LEN_HOW}.");
+    host_set("ai_len", "1");
+    p = ai_prompt_assistant(AI_WEB_OFF);
+    CHECK(p && !strcmp(p, "Ответ до 600 знаков, максимум 1200: по существу и достаточно полно, обычно три–шесть "
+                          "предложений."));
+    free(p);
+    // ... and one without them gets the length line appended, so the setting still works
+    host_set("ai_sys", "Мой промпт.\nСейчас {DATETIME}.");
+    host_set("ai_len", "2");
+    p = ai_prompt_assistant(AI_WEB_OFF);
+    CHECK(p && strstr(p, "Мой промпт.\nСейчас ") == p &&strstr(p, "\n- Длина ответа: подробно и развёрнуто") &&
+          strstr(p, "до 1200 символов") && strstr(p, "до 2500 символов") && !strchr(p, '{'));
+    free(p);
+    // the translator's copy note: only without a fixed target
+    p = ai_prompt_translator("en", "de", "", true);
+    CHECK(p && strstr(p, "repeated the utterance unchanged") && !strstr(p, "Translate this utterance"));
+    free(p);
+    p = ai_prompt_translator("en", "de", "de", true);
+    CHECK(p && !strstr(p, "repeated the utterance") && strstr(p, "into German only"));
+    free(p);
+    host_settings_reset();
+}
+
+// Translator output check (protocol §3): scripts, copies, names.
+static void t_trcheck(void)
+{
+    printf("t_trcheck\n");
+    CHECK(ai_script_of('a') == AI_SC_LATIN && ai_script_of(0x0451) == AI_SC_CYRILLIC && ai_script_of(0x4F60) == AI_SC_HAN);
+    CHECK(ai_script_of(0x3042) == AI_SC_KANA && ai_script_of(0xD55C) == AI_SC_HANGUL && ai_script_of(0x0645) == AI_SC_ARABIC);
+    CHECK(ai_script_of(0x03B1) == AI_SC_GREEK && ai_script_of(0x05D0) == AI_SC_HEBREW && ai_script_of(0x0915) == AI_SC_DEVANAGARI);
+    CHECK(ai_script_of(0x0E01) == AI_SC_THAI && ai_script_of('7') == 0 && ai_script_of(0x3002) == 0 && ai_script_of(0x0661) == 0);
+    // right translations pass
+    CHECK(!ai_tr_check("Где вокзал?", "Where is the station?", "en", "ru"));
+    CHECK(!ai_tr_check("Where is the station?", "Где вокзал?", "ru", "en"));
+    CHECK(!ai_tr_check("Сколько тебе лет?", "你多大了？", "zh", "ru"));
+    CHECK(!ai_tr_check("Сколько тебе лет?", "何歳ですか？", "ja", "ru"));
+    CHECK(!ai_tr_check("Привет", "안녕하세요", "ko", "ru"));
+    CHECK(!ai_tr_check("Спасибо", "شكرا", "ar", "ru"));
+    CHECK(!ai_tr_check("Install Microsoft Teams on the laptop.", "Установи Microsoft Teams на ноутбук.", "ru", "en"));
+    // ... also when a kept Latin name outweighs the target letters (a Han character is a word, not a letter)
+    CHECK(!ai_tr_check("Я хочу купить iPhone", "我想买iPhone", "zh", "ru"));
+    CHECK(!ai_tr_check("Я работаю в Google", "我在Google工作", "zh", "ru"));
+    CHECK(!ai_tr_check("Открой Google Maps", "打开Google地图", "zh", "ru"));
+    CHECK(!ai_tr_check("Включи Wi-Fi", "请打开Wi-Fi", "zh", "ru"));
+    CHECK(!ai_tr_check("Установи Microsoft Teams на ноутбук.", "在笔记本电脑上安装Microsoft Teams。", "zh", "ru"));
+    CHECK(!ai_tr_check("Можно оплатить через Apple Pay?", "我可以用Apple Pay付款吗？", "zh", "ru"));
+    CHECK(!ai_tr_check("Open YouTube", "Открой YouTube", "ru", "en"));
+    CHECK(!ai_tr_check("Open WhatsApp on my iPhone", "Открой WhatsApp на iPhone", "ru", "en"));
+    CHECK(!ai_tr_check("Let's meet at Starbucks on Main Street", "Давай встретимся в Starbucks на Main Street", "ru", "en"));
+    CHECK(!ai_tr_check("Google is a company", "Google是一家公司", "zh", "en"));   // a name starting the sentence
+    CHECK(!ai_tr_check("Мой адрес", "我的邮箱是a@b.com", "zh", "ru"));
+    // same language: a different script than the target
+    CHECK(ai_tr_check("Сколько времени?", "Сейчас три часа дня.", "en", "ru") &&
+          !strcmp(ai_tr_check("Сколько времени?", "Сейчас три часа.", "en", "ru"), "script"));
+    CHECK(ai_tr_check("да", "да", "en", "ru"));
+    CHECK(ai_tr_check("Сколько тебе лет?", "Сколько тебе лет?", "zh", "ru"));
+    CHECK(ai_tr_check("What time is it?", "It is three o'clock.", "ja", "en"));
+    // an English copy into Russian is not excused by its names: the sentence words still count
+    CHECK(ai_tr_check("Open YouTube now", "Open YouTube now", "ru", "en") &&
+          ai_tr_check("Where is Google HQ?", "Where is Google HQ?", "ru", "en"));
+    CHECK(ai_tr_check("Я хочу купить iPhone", "I want to buy an iPhone", "zh", "ru"));
+    // Japanese in Han only is Chinese; Korean is hangul (Han is a Chinese answer)
+    CHECK(ai_tr_check("现在几点？", "现在下午三点。", "ja", "zh") && !ai_tr_check("东京", "東京", "ja", "zh"));
+    CHECK(ai_tr_check("现在几点？", "现在下午三点。", "ko", "zh") && !ai_tr_check("现在几点？", "지금 몇 시예요?", "ko", "zh"));
+    CHECK(!ai_tr_check("今何時？", "现在几点？", "zh", "ja"));
+    // same-script pairs (en-de): one word may be the same, a sentence may not
+    CHECK(!ai_tr_check("Taxi", "Taxi", "de", "en") && !ai_tr_check("OK", "OK", "de", "en"));
+    CHECK(!ai_tr_check("How are you?", "Wie geht es dir?", "de", "en"));
+    const char *r = ai_tr_check("How are you today?", "How are you today?", "de", "en");
+    CHECK(r && !strcmp(r, "copy"));
+    CHECK(ai_tr_check("Як справи?", "Як справи?", "ru", "uk"));          // ru-uk copy
+    // names (two or more capitalised words) and numbers are kept as they are, but German capitalises nouns
+    CHECK(!ai_tr_check("New York", "New York", "ru", "en") && !ai_tr_check("Google Maps", "Google Maps", "fr", "en"));
+    CHECK(ai_tr_check("Guten Morgen", "Guten Morgen", "en", "de") && ai_tr_check("Guten Morgen", "Guten Morgen", "de", "en"));
+    CHECK(!ai_tr_check("12:30", "12:30", "en", "ru") && !ai_tr_check("100 %", "100 %", "ru", "en"));
+    CHECK(!ai_tr_check("x", "y", "xx", NULL));
+    // the source by the transcript's script, only when the pair is written differently
+    CHECK(ai_tr_src_by_script("Привет, как дела?", "ru", "en") && !strcmp(ai_tr_src_by_script("Привет", "ru", "en"), "ru"));
+    CHECK(!strcmp(ai_tr_src_by_script("Hello there", "ru", "en"), "en"));
+    CHECK(!strcmp(ai_tr_src_by_script("Установи на ноутбук программу Teams", "ru", "en"), "ru"));
+    CHECK(!strcmp(ai_tr_src_by_script("Установи Microsoft Teams", "ru", "en"), "ru"));   // the names do not count
+    CHECK(!strcmp(ai_tr_src_by_script("Install Microsoft Teams", "ru", "en"), "en"));
+    CHECK(!ai_tr_src_by_script("Hello", "en", "de") && !ai_tr_src_by_script("東京", "zh", "ja"));
+    CHECK(!ai_tr_src_by_script("123", "ru", "en") && !ai_tr_src_by_script("Hola amigo", "ru", "zh"));
+    CHECK(!strcmp(ai_tr_src_by_script("你好", "ru", "zh"), "zh"));
+    CHECK(!strcmp(ai_tr_src_by_script("现在几点", "zh", "ko"), "zh") &&
+          !strcmp(ai_tr_src_by_script("몇 시예요", "zh", "ko"), "ko"));
 }
 
 static void t_links(void)
@@ -321,5 +452,7 @@ void test_misc(void)
     t_url();
     t_classify();
     t_prompts();
+    t_reply_len();
+    t_trcheck();
     t_links();
 }

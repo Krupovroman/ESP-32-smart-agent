@@ -8,7 +8,7 @@
 #include "freertos/semphr.h"
 
 #define TRANSCRIPT_MAX_CP 600
-#define REPLY_MAX_CP      1200
+#define REPLY_MAX_CP      2500      // the longest reply length level (ai_len 2)
 
 typedef struct {
     char *transcript, *reply;

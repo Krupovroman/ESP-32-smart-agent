@@ -4,6 +4,7 @@
 #include "audio_out.h"
 
 #include <inttypes.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +26,7 @@ static const char *TAG = "tts";
 #define READ_BUF      4096
 #define OUT_POLL_MS   10            // ring full: wait this long, then retry (TCP throttles the server)
 #define OUT_STALL_MS  10000
+#define AHEAD_S       20            // a later chunk is requested once at most this much audio is queued
 #define MAX_ROUTES    6
 
 typedef struct {
@@ -159,6 +161,36 @@ static bool out_write(sink_t *s, const uint8_t *p, size_t n)
         }
     }
     return true;
+}
+
+// Before a later chunk of a long reply: with the 2 MB ring (~43 s) full, a chunk would download only as fast as it
+// plays, and a slow 400-character chunk could run into the 60 s OR_TO_TTS total. So the request waits until at most
+// AHEAD_S of audio is queued (still far more than the next chunk's first byte takes). False when cancelled.
+static bool wait_ahead(tts_job_t *j)
+{
+    if (s_out_turn != j->turn || !s_out_rate) {
+        return true;
+    }
+    size_t ahead = (size_t)s_out_rate * s_out_ch * 2 * AHEAD_S;
+    size_t last = SIZE_MAX;
+    int64_t t_last = esp_timer_get_time();
+    for (;;) {
+        if (abort_job(j)) {
+            return false;
+        }
+        audio_out_stats_t st;
+        audio_out_get_stats(&st);
+        if (st.queued_bytes <= ahead) {
+            return true;
+        }
+        if (st.queued_bytes < last) {
+            last = st.queued_bytes;
+            t_last = esp_timer_get_time();
+        } else if (esp_timer_get_time() - t_last > (int64_t)OUT_STALL_MS * 1000) {
+            return true;            // the speaker does not drain: out_write() reports it
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
 }
 
 static bool push_pcm(sink_t *s, const uint8_t *p, size_t n)
@@ -519,6 +551,11 @@ static void run_speak(tts_job_t *j)
         or_retry_init(&rs, false);
         size_t progress = 0;
         bool voice_fixed = false;
+        if (k > 0 && !j->fetch && !wait_ahead(j)) {
+            or_err_local(&err, "AB");
+            failed = true;
+            break;
+        }
         for (;;) {
             if (cancelled(j->turn)) {
                 or_err_local(&err, "AB");

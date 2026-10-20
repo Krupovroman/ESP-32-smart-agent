@@ -6,9 +6,27 @@ repository (`m1`, `m2` are bring-up milestones, `vX.Y-rcN` are release candidate
 
 ## [Unreleased]
 
+## [v0.8-rc1] - 2026-10-21
+
 ### Added
+- Reply length setting (Settings → "Длина ответа": short / normal / detailed, normal is the new default and about
+  twice as long as before); the token limit follows the level.
+- Translator self-check: the model states `target_lang` before translating, and the device checks the alphabet of
+  the translation and whether it just repeats the utterance; on a miss it retries once with the direction fixed.
+- `tools/tr_eval.py`: PC-side check of tricky translator phrases.
 - Public repository: Apache-2.0 license, README in Russian and English, changelog, contributing and security notes,
   issue and pull request templates, `.editorconfig`.
+
+### Changed
+- Translator prompt: the utterance is never addressed to the interpreter (questions and commands are translated,
+  not answered), short examples, typed text wrapped in `<utterance>`; temperature 0 for translator requests.
+- Battery model v4: a charger is detected against a baseline of earlier settled readings (also across a screen
+  wake or a turn) and by a slow voltage trend; on battery the percent never goes up.
+- Longer speech and console limits for long answers (3000 characters per reply).
+
+### Fixed
+- Translator sometimes answered the question or "translated" into the same language.
+- Plugging in a wall charger raised the percent but the charging state was not shown.
 
 ## [v0.7-rc2] - 2026-10-18
 
@@ -126,7 +144,8 @@ First integrated firmware: assistant, translator and the full UI, verified on ha
 - LVGL port and a dev console with screenshots and touch injection.
 - Hardware reference, requirements, OpenRouter protocol spec and UI design drafts; factory flash backup notes.
 
-[Unreleased]: https://github.com/Krupovroman/ESP-32-smart-agent/compare/v0.7-rc2...HEAD
+[Unreleased]: https://github.com/Krupovroman/ESP-32-smart-agent/compare/v0.8-rc1...HEAD
+[v0.8-rc1]: https://github.com/Krupovroman/ESP-32-smart-agent/compare/v0.7-rc2...v0.8-rc1
 [v0.7-rc2]: https://github.com/Krupovroman/ESP-32-smart-agent/compare/v0.7-rc1...v0.7-rc2
 [v0.7-rc1]: https://github.com/Krupovroman/ESP-32-smart-agent/compare/v0.6-rc3...v0.7-rc1
 [v0.6-rc3]: https://github.com/Krupovroman/ESP-32-smart-agent/compare/v0.6-rc2...v0.6-rc3

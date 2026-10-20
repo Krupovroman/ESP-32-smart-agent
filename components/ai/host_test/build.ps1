@@ -26,7 +26,7 @@ $inc = @("/I$here\stubs", "/I$here", "/I$repo\components\orhttp", "/I$repo\compo
 # t_ai.c, t_tts.c and t_models.c include ai_client.c, tts_client.c and ai_models.c to reach their statics
 $src = @("$here\main.c", "$here\mocks.c", "$here\t_misc.c", "$here\t_models.c", "$here\t_ai.c", "$here\t_tts.c",
          "$repo\components\orhttp\orconn.c", "$repo\components\orhttp\orerr.c",
-         "$repo\components\ai\ai_util.c", "$repo\components\ai\ai_prompts.c", "$repo\components\ai\ai_history.c",
+         "$repo\components\ai\ai_util.c", "$repo\components\ai\ai_prompts.c", "$repo\components\ai\ai_history.c", "$repo\components\ai\ai_trcheck.c",
          "$repo\components\ai\tts_split.c", "$repo\components\ai\tts_voices.c", "$repo\components\ai\stt_client.c",
          "$cjson\cJSON.c")
 & $cl /nologo /std:c11 /utf-8 /W3 /wd4996 /wd4244 /wd4267 /wd4018 /Od /Zi /FI"$here\stubs\host_shim.h" `

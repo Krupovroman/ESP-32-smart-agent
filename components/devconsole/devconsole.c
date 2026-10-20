@@ -29,7 +29,7 @@ static const char *TAG = "devcon";
 #define TASK_PRIO       3
 #define MAX_CMDS        64
 #define CAP_BYTES       (24 * 1024)
-#define OUT_LINE_BYTES  2048
+#define OUT_LINE_BYTES  12288    // PSRAM; "reply: …" of a detailed answer (2500+ characters, 3 bytes each in CJK)
 #define USB_CHUNK       512
 #define FMT_BYTES       640
 #define LOGBUF_BYTES    512

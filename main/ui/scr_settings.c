@@ -13,7 +13,7 @@
 #include <string.h>
 
 enum {
-    R_WIFI, R_PHONE, R_MODEL, R_VOICE, R_TEXT_ONLY, R_SPEAKER, R_VOLUME, R_BRIGHT, R_DISPLAY, R_FACE, R_UILANG,
+    R_WIFI, R_PHONE, R_MODEL, R_REPLY_LEN, R_VOICE, R_TEXT_ONLY, R_SPEAKER, R_VOLUME, R_BRIGHT, R_DISPLAY, R_FACE, R_UILANG,
     R_TRANSLATOR, R_PROVIDER, R_HISTORY, R_ABOUT, R__N
 };
 
@@ -57,12 +57,19 @@ static void dim_text(int32_t s, char *out, size_t len)
     snprintf(out, len, ui_s(S_S_DIM_FMT), v);
 }
 
+// ai_len (protocol §4.1): 0 short, 1 normal (default), 2 detailed
+static const char *len_text(int32_t v)
+{
+    return ui_s(v == 0 ? S_LEN_SHORT : v == 2 ? S_LEN_LONG : S_LEN_NORMAL);
+}
+
 static void refresh(void)
 {
     char buf[112], tmp[100];
     ui_cfg_str("ai_model", tmp, sizeof(tmp));
     ui_short_model(tmp, buf, sizeof(buf));
     ui_row_set_sub(s_rows[R_MODEL], buf);
+    ui_row_set_sub(s_rows[R_REPLY_LEN], len_text(ui_cfg_int("ai_len")));
     ui_cfg_str("tts_voice", tmp, sizeof(tmp));
     ui_short_voice(tmp, buf, sizeof(buf));
     ui_row_set_sub(s_rows[R_VOICE], buf);
@@ -103,6 +110,14 @@ static void row_cb(lv_event_t *e)
     case R_WIFI: ui_nav_push(UI_SCR_WIFI, 0); break;
     case R_PHONE: ui_nav_push(UI_SCR_QR, 0); break;
     case R_MODEL: ui_nav_push(UI_SCR_MODELS, 0); break;
+    case R_REPLY_LEN: {
+        // a tap cycles Обычно -> Подробно -> Коротко -> Обычно, like "Поиск в сети" in P
+        int32_t v = ui_cfg_int("ai_len");
+        int32_t to = v == 1 ? 2 : v == 2 ? 0 : 1;
+        ui_save_int("ai_len", to);
+        ui_row_set_sub(s_rows[R_REPLY_LEN], len_text(to));
+        break;
+    }
     case R_VOICE: ui_nav_push(UI_SCR_VOICE, 0); break;
     case R_TEXT_ONLY: {
         if (!ui_get(g_s_speaker)) {
@@ -174,6 +189,7 @@ lv_obj_t *scr_settings_build(uint32_t arg)
         [R_WIFI] = { "s_wifi", SYM_WIFI, S_T_WIFI, UI_ROW_CHEVRON },
         [R_PHONE] = { "s_phone", SYM_QRCODE, S_T_PHONE, UI_ROW_CHEVRON },
         [R_MODEL] = { "s_model", SYM_ROBOT, S_T_MODELS, UI_ROW_CHEVRON },
+        [R_REPLY_LEN] = { "s_replylen", SYM_COMMENT, S_S_REPLY_LEN, UI_ROW_NONE },
         [R_VOICE] = { "s_voice", SYM_PLAY, S_T_VOICE, UI_ROW_CHEVRON },
         [R_TEXT_ONLY] = { "s_textonly", SYM_COMMENT, S_VOICE_REPLY, UI_ROW_TOGGLE },
         [R_SPEAKER] = { "s_speaker", SYM_VOLUME, S_S_SPEAKER, UI_ROW_NONE },

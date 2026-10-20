@@ -18,7 +18,7 @@
 #define APP_WEB_MAX_MS      35000   // ... or this long after a web search re-run started (ai: 30 s for it)
 #define APP_TTS_FIRST_MS    15000   // voice on, no first audio: text only, "голос недоступен"
 #define APP_REVEAL_MS       2500    // voice on: the reply appears with its audio, at the latest after this
-#define APP_SPEAK_MAX_MS    180000  // playback watchdog
+#define APP_SPEAK_MAX_MS    360000  // playback watchdog: the 3000-character TTS cap takes ~4 min at 0.8x speed
 #define APP_SAVE_DELAY_MS   2000    // UI-originated settings are written 2 s later, in IDLE
 #define APP_SPK_TAIL_MS     150     // speaker DMA (80 ms) + flush + room echo: the mic still hears the
                                     // device's own speech this long after it was stopped
