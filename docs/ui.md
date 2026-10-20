@@ -687,9 +687,9 @@ The geometry is identical to §3.2/§3.3. The orb idle accent is `translator`.
 
 - **Scale:** a version-3 code has 29 modules × 6 = 174 px. The panel margin is 24 px = 4 modules, a true quiet zone. A version-2 code (25 × 6 = 150) gets an extra 12 px of light canvas margin.
 - **Step 1: join the device's network.**
-  - Payload `WIFI:T:WPA;S:Orb-7568;P:k7m2q9x4;;` (34 bytes) → version 3 at ECC M.
+  - Payload `WIFI:T:WPA;S:Orb-A1B2;P:k7m2q9x4;;` (34 bytes) → version 3 at ECC M.
   - The SSID suffix is the last 2 MAC bytes. The password is 8 random characters from `23456789abcdefghjkmnpqrstuvwxyz`, new each session.
-  - Captions: "Сеть: Orb-7568" / "Пароль: k7m2q9x4".
+  - Captions: "Сеть: Orb-A1B2" / "Пароль: k7m2q9x4".
 - **Step 2: open the portal.** Shown on `WIFI_EVENT_AP_STACONNECTED`.
   - Payload `http://192.168.4.1/` (19 bytes, version 2).
   - Captions: "Откройте 192.168.4.1" / "Ждём данные…".

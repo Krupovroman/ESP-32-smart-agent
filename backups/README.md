@@ -1,7 +1,7 @@
 # Backups
 
 `factory_full_16MB.bin` is a full dump of the board's flash as it came from the factory
-(Waveshare ESP32-S3-Touch-LCD-1.85 rev 2.1, MAC 7c:0c:5f:56:75:68), taken 2026-10-17.
+(Waveshare ESP32-S3-Touch-LCD-1.85 rev 2.1), taken 2026-10-17.
 
 - SHA-256: `90151CB92E6D224D02B19A6956D8EC9AD5F7ADE0008EE24E97012210F8802AE9`
 - Factory app: `ESP32-S3-Touch-LCD-1.85-Test` v1, ESP-IDF v5.3.1, built Feb 27 2025

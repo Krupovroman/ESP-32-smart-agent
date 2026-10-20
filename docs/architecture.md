@@ -2,7 +2,7 @@
 
 **Board:** Waveshare ESP32-S3-Touch-LCD-1.85 rev 2.1. ESP32-S3R8 with 8 MB octal PSRAM and 16 MB QIO flash, native USB-Serial-JTAG on COM7.
 **Toolchain:** ESP-IDF v6.1, installed by EIM in `C:\esp\v6.1\esp-idf`. C. LVGL 9.5.0 through esp_lvgl_port 2.9.0.
-**Repository:** `C:\Users\krupo\esp32-ai-assistant`. The path is ASCII with no spaces.
+**Repository:** `<repo>`, any ASCII path with no spaces (e.g. `C:\esp32-ai-assistant`).
 
 ## Status read from the repo on 2026-10-17
 
@@ -1492,9 +1492,9 @@ Targets: UI visible within 1.5 s, self-test verdict within 3 s.
 . 'C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1'
 # non-interactive one-shot (agent, CI, Git Bash). tools\idf.ps1 dot-sources the profile quietly and removes
 # MSYSTEM, which makes idf.py refuse to run under MSYS/MinGW
-powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\krupo\esp32-ai-assistant\tools\idf.ps1 build
+powershell -NoProfile -ExecutionPolicy Bypass -File <repo>\tools\idf.ps1 build
 # EIM alternative
-Set-Location C:\Users\krupo\esp32-ai-assistant; & 'C:\esp\tools-eim\eim.exe' run "idf.py build" v6.1
+Set-Location <repo>; & 'C:\esp\tools-eim\eim.exe' run "idf.py build" v6.1
 ```
 
 ### 9.3 Commands, from the repo root

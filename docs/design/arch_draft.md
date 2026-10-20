@@ -2,7 +2,7 @@
 
 Board: Waveshare ESP32-S3-Touch-LCD-1.85 rev 2.1 (ESP32-S3R8, 8 MB octal PSRAM, 16 MB flash, COM7).
 Toolchain: ESP-IDF v6.1 (EIM, `C:\esp\v6.1\esp-idf`), C, LVGL 9.5.0 via esp_lvgl_port 2.9.0.
-Repository: `C:\Users\krupo\esp32-ai-assistant`. This document replaces the `C:\dev\round-assistant` path used in the research. The existing repo path has no spaces and is ASCII only, so it already meets the IDF path rule.
+Repository: `<repo>`, any ASCII path with no spaces (e.g. `C:\esp32-ai-assistant`). This document replaces the `C:\dev\round-assistant` path used in the research; either path meets the IDF path rule.
 
 Status: architecture for M1 to M6. Every value marked *(xiaozhi)* is copied from the proven xiaozhi board port, commit `d91d682`, mirrored in `third_party/xiaozhi_ref/`. Every value marked *(measure)* must be confirmed on the device at the milestone named.
 
@@ -1027,9 +1027,9 @@ Activation:
 # interactive PowerShell session
 . 'C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1'
 # non-interactive one-shot (agent, CI, Git Bash) - wrapper removes MSYSTEM, which makes idf.py abort under Git Bash
-powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\krupo\esp32-ai-assistant\tools\idf.ps1 build
+powershell -NoProfile -ExecutionPolicy Bypass -File <repo>\tools\idf.ps1 build
 # EIM alternative: sources the activation script of the given version, runs one command in the current directory
-Set-Location C:\Users\krupo\esp32-ai-assistant; & 'C:\esp\tools-eim\eim.exe' run "idf.py build" v6.1
+Set-Location <repo>; & 'C:\esp\tools-eim\eim.exe' run "idf.py build" v6.1
 ```
 
 Commands (from the repo root):

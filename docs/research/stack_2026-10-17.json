@@ -415,7 +415,7 @@
    },
    {
     "topic": "Windows path constraint (critical for this PC)",
-    "claim": "ESP-IDF docs: the build system does not support spaces in the path to ESP-IDF or to projects. The IDF/tools path must be at most 90 characters and should be ASCII-only unless Windows UTF-8 support is on. The user's working dir C:\\Users\\krupo\\OneDrive\\Рабочий стол has both a space and Cyrillic, so put IDF in e.g. C:\\esp and the project in e.g. C:\\dev\\round-assistant, outside OneDrive.",
+    "claim": "ESP-IDF docs: the build system does not support spaces in the path to ESP-IDF or to projects. The IDF/tools path must be at most 90 characters and should be ASCII-only unless Windows UTF-8 support is on. The user's working dir C:\\Users\\<user>\\OneDrive\\Рабочий стол has both a space and Cyrillic, so put IDF in e.g. C:\\esp and the project in e.g. C:\\dev\\round-assistant, outside OneDrive.",
     "source_url": "https://docs.espressif.com/projects/esp-idf/en/v5.5.6/esp32s3/get-started/windows-setup.html",
     "confidence": "high"
    },

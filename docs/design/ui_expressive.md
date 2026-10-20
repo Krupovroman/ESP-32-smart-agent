@@ -535,7 +535,7 @@ No header back zone and no swipe navigation on this screen.
 ### 4.12 Phone setup (S11)
 
 - The device starts a SoftAP `Orbi-XXXX` (last two MAC bytes) with a random 8-digit WPA2 password and a captive portal.
-- Step 1 QR `WIFI:T:WPA;S:Orbi-7568;P:48151623;;` joins the network from the phone camera.
+- Step 1 QR `WIFI:T:WPA;S:Orbi-A1B2;P:48151623;;` joins the network from the phone camera.
 - On `WIFI_EVENT_AP_STACONNECTED` the QR crossfades (200 ms, card area only) to step 2: `http://192.168.4.1/?k=<6-char token>`.
 
 | Element | Geometry |
@@ -544,7 +544,7 @@ No header back zone and no swipe navigation on this screen.
 | Card | 210×210 at (75,47), radius 24, fill `#F3F4FA`. Corner caps: \|(99,71) − C\| = 135.8, +24 = 159.8 |
 | `lv_qrcode` | `lv_qrcode_set_size(qr, 170)` at (95,67); `lv_qrcode_set_quiet_zone(qr, false)` (the card margin is the quiet zone: about 6 modules); dark `#0B0C14`, light `#F3F4FA`. A version-3 code (29 modules) → integer scale 5 → 145 px code, about 0.65 mm modules |
 | Caption 1 | F20 «1 Наведите камеру телефона» / «2 Откройте страницу», y 264–290 |
-| Caption 2 | F14 «Сеть: Orbi-7568», y 294–312 |
+| Caption 2 | F14 «Сеть: Orbi-A1B2», y 294–312 |
 | Caption 3 | F14 «Пароль: 48151623» / «192.168.4.1», y 314–332 |
 
 - The QR buffer is 1 bpp (`LV_COLOR_FORMAT_I1`): about 22 B × 170 rows ≈ 3.7 KB.

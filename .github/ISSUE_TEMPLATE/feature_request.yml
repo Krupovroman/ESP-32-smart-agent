@@ -1,0 +1,39 @@
+name: "Идея / Feature request"
+description: "Предложить улучшение / Suggest an improvement"
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за идею! Посмотрите раздел «Ограничения и планы» в README — возможно, это уже известно.
+        Thanks! Check "Limitations and plans" in the README first — it may already be listed.
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Какую задачу это решает / What problem does it solve"
+      placeholder: "Хочу, чтобы … потому что … / I'd like … because …"
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: "Как это могло бы работать / Proposed solution"
+      description: "Экран, кнопки, настройки; помните про круглый экран 360×360 / Screens, buttons, settings; keep the round 360×360 screen in mind"
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Альтернативы / Alternatives considered"
+  - type: input
+    id: version
+    attributes:
+      label: "Версия прошивки / Firmware version"
+      description: "Настройки → О системе / Settings → About"
+      placeholder: "v0.7-rc2"
+  - type: checkboxes
+    id: help
+    attributes:
+      label: "Участие / Contribution"
+      options:
+        - label: "Готов(а) помочь с реализацией или тестом на плате / I can help implement or test it on a board"

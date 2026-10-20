@@ -126,7 +126,7 @@ static void t_url(void)
     CHECK(or_url_origin("https://h.example:8443/x", o, sizeof(o)) && !strcmp(o, "https://h.example:8443"));
     CHECK(!or_url_origin("ftp://x", o, sizeof(o)));
     CHECK(or_is_openrouter("https://openrouter.ai/api/v1"));
-    CHECK(or_is_openrouter("https://server-ip.sslip.io/abcdef/api/v1/chat/completions"));
+    CHECK(or_is_openrouter("https://relay.example.com/abcdef/api/v1/chat/completions"));
     CHECK(!or_is_openrouter("https://api.openai.com/v1"));
     CHECK(!or_is_openrouter("https://notopenrouter.ai/v1"));
     CHECK(or_is_openrouter("https://eu.openrouter.ai/v1"));

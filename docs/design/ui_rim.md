@@ -364,11 +364,11 @@ Both apply live. Brightness uses LEDC 10-bit duty = `round(1023·(v/100)^2.2)` w
 | North arclabel | "Шаг 1/2 · Подключите телефон" → "Шаг 2/2 · Откройте страницу" |
 | Step dots | Two Ø 8 dots at r = 132, θ 262° / 278° (active dot = `primary`) |
 | QR | `lv_qrcode_create`, `lv_qrcode_set_size(qr, 192)`, `lv_qrcode_set_quiet_zone(qr, true)`, light `#FFFFFF`, dark `#0A0D12`, centred (180,172), bounding box x 84–276, y 76–268. Corners (96,104) → r 141.5 ✓. |
-| Fallback text | South CCW arclabel `font_t16`: "RoundAI-7568 · 48151623" (SSID · password) at step 1, "192.168.4.1" at step 2 |
+| Fallback text | South CCW arclabel `font_t16`: "RoundAI-A1B2 · 48151623" (SSID · password) at step 1, "192.168.4.1" at step 2 |
 | Bottom cap | Absent (the hint occupies it). Next and back use the top cap, PWR or swipe. |
 
 - **Payloads:**
-  - Step 1 is `WIFI:T:WPA;S:RoundAI-7568;P:48151623;;`: 39 bytes, so version 3 at ECC M (lv_qrcode uses `qrcodegen_Ecc_MEDIUM` with the minimum version that fits). That is 29 modules plus the quiet zone, giving a scale of 5 px/module (≈ 0.65 mm).
+  - Step 1 is `WIFI:T:WPA;S:RoundAI-A1B2;P:48151623;;`: 39 bytes, so version 3 at ECC M (lv_qrcode uses `qrcodegen_Ecc_MEDIUM` with the minimum version that fits). That is 29 modules plus the quiet zone, giving a scale of 5 px/module (≈ 0.65 mm).
   - Step 2 is `http://192.168.4.1/` (19 bytes, v2).
 - **Lifecycle:**
   - Auto-advance to step 2 on `WIFI_EVENT_AP_STACONNECTED`.

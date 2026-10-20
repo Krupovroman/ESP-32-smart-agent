@@ -256,7 +256,7 @@ static const str_def_t s_tab[S__N] = {
     E(S_H_DELETE, "Удалить", "Delete", SLOT_DLG_BTN),
     E(S_H_CLEARED, "История очищена", "History cleared", SLOT_TOAST),
 
-    // with "RoundAI-7568" / "12345678": 158 / 145 px (caption 2 holds 150)
+    // with "RoundAI-A1B2" / "12345678": 158 / 145 px (caption 2 holds 150)
     E(S_Q_NET_FMT, "Сеть: %s", "Network: %s", SLOT_NONE),
     E(S_Q_PASS_FMT, "Пароль: %s", "Pass: %s", SLOT_NONE),
     E(S_Q_OPEN, "Откройте 192.168.4.1", "Open 192.168.4.1", SLOT_QR1),

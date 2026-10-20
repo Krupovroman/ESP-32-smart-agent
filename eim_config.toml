@@ -6,7 +6,6 @@ tool_install_folder_name = 'C:\Espressif\tools'
 target = ["esp32s3"]
 idf_versions = ["v6.1"]
 tools_json_file = "tools/tools.json"
-config_file_save_path = 'C:\Users\krupo\esp32-ai-assistant\eim_config.toml'
 non_interactive = true
 wizard_all_questions = false
 mirror = "https://dl.espressif.com/github_assets"

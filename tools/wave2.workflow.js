@@ -8,7 +8,7 @@ export const meta = {
 }
 
 const COMMON = `You are a senior embedded engineer working on the ESP32-S3 "Round Assistant" firmware (ESP-IDF v6.1, C, LVGL 9.5).
-Your git worktree is WT_PATH (branch WT_BRANCH, created from the latest commit of the main branch of C:\\Users\\krupo\\esp32-ai-assistant, which already contains the merged wave-1 work: components/ai + orhttp (OpenRouter chat/TTS/STT clients, verified on hardware), main/ui (UI foundation: theme, fonts, orb, rim, Home/HIST/RD/touch screens, ui console), dev console protocol v2 + tools/dev.py v2, components/ota, main/selftest.c, audio injection). Your shell does NOT start there: work ONLY inside this worktree. Use absolute paths under WT_PATH for Read/Write/Edit; start every PowerShell command with "Set-Location WT_PATH;" and every Bash command with a cd into it (in Bash the path is /c/Users/krupo/ra-wt/<name>). Never modify C:\\Users\\krupo\\esp32-ai-assistant itself or the other worktrees under C:\\Users\\krupo\\ra-wt.
+Your git worktree is WT_PATH (branch WT_BRANCH, created from the latest commit of the main branch of C:\\esp32-ai-assistant, which already contains the merged wave-1 work: components/ai + orhttp (OpenRouter chat/TTS/STT clients, verified on hardware), main/ui (UI foundation: theme, fonts, orb, rim, Home/HIST/RD/touch screens, ui console), dev console protocol v2 + tools/dev.py v2, components/ota, main/selftest.c, audio injection). Your shell does NOT start there: work ONLY inside this worktree. Use absolute paths under WT_PATH for Read/Write/Edit; start every PowerShell command with "Set-Location WT_PATH;" and every Bash command with a cd into it (in Bash the path is /c/ra-wt/<name>). Never modify C:\\esp32-ai-assistant itself or the other worktrees under C:\\ra-wt.
 
 Read first (files inside WT_PATH): docs/requirements.md, docs/hardware.md, docs/architecture.md (authoritative), docs/protocol.md, docs/ui.md (authoritative UI spec), and the existing code: main/main.c, main/ui/*.h (ui.h is the UI API: ui_post/ui_post_text messages, ui_set_input_cb input events, ui_lock), components/ai/*.h (ai_client.h: async turns with events; tts_client.h), components/audio/*.h, components/settings/settings_table.inc, components/net/*.h, components/devconsole/devconsole.h.
 
@@ -23,7 +23,7 @@ Hard rules:
 - Write and edit C sources with the Write/Edit tools, never via shell heredocs or Python string literals (escapes get mangled in this shell).
 - Do not install anything; no downloads (fonts already exist; if you need extra glyphs, regenerate with the existing tools/mkfonts script and the fonts already in assets/fonts).
 - Stay inside your area; integration edits elsewhere must be minimal and listed in your report. Follow the existing code style (plain C, 4-space indent, short why-comments, ESP_RETURN_ON_ERROR, public functions declared in headers with one-line comments).
-- Commit on your branch when it builds (git add -A; git -c user.name=krupo commit -m "<summary>" with a body ending with the line: Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>). Do not push or touch other branches.`
+- Commit on your branch when it builds (git add -A; git commit -m "<summary>" with a body ending with the line: Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>). Do not push or touch other branches.`
 
 const REPORT = {
   type: 'object',
@@ -47,7 +47,7 @@ const REVIEW = {
   required: ['verdict', 'fixes_committed', 'remaining_issues', 'commit'],
 }
 
-const WT = k => ({ path: 'C:\\Users\\krupo\\ra-wt\\' + k, branch: 'wave2-' + k })
+const WT = k => ({ path: 'C:\\ra-wt\\' + k, branch: 'wave2-' + k })
 const common = k => COMMON.split('WT_PATH').join(WT(k).path).split('WT_BRANCH').join(WT(k).branch)
 
 const TASKS = [

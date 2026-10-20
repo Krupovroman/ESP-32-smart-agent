@@ -469,9 +469,9 @@ There is a 4 px gap between ✕ (x 51–101) and the field (x 105). About 13 cha
 Steps:
 
 1. **Join the device's network.**
-   - QR payload: `WIFI:T:WPA;S:Orb-7568;P:k7m2q9x4;;` (34 bytes → version 3 at ECC M, which LVGL uses → 29 modules × **scale 5 = 145 px**; margin 22 px ≈ 4.5 modules).
+   - QR payload: `WIFI:T:WPA;S:Orb-A1B2;P:k7m2q9x4;;` (34 bytes → version 3 at ECC M, which LVGL uses → 29 modules × **scale 5 = 145 px**; margin 22 px ≈ 4.5 modules).
    - The SSID suffix is the last 2 MAC bytes. The password is 8 random characters from `23456789abcdefghjkmnpqrstuvwxyz`, new each session.
-   - Captions: "Сеть: Orb-7568" / "Пароль: k7m2q9x4".
+   - Captions: "Сеть: Orb-A1B2" / "Пароль: k7m2q9x4".
 2. **Open the portal** (shown automatically when `WIFI_EVENT_AP_STACONNECTED` fires).
    - QR payload: `http://192.168.4.1/` (19 bytes → version 2 → 25 modules × **scale 6 = 150 px**).
    - Captions: "Откройте 192.168.4.1" / "Ждём данные…" with a busy arc.

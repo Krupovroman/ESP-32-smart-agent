@@ -1,0 +1,97 @@
+name: "Ошибка / Bug report"
+description: "Что-то работает не так / Something does not work as expected"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Не публикуйте секреты!** Ключи OpenRouter (`sk-or-…`), пароли Wi-Fi, адрес и секретный путь своего
+        ретранслятора, MAC-адреса и личные переписки из чата — уберите или замените на `***` перед отправкой.
+
+        **Never post secrets!** Remove or mask (`***`) OpenRouter keys (`sk-or-…`), Wi-Fi passwords, your relay
+        address and secret path, MAC addresses and personal chat content before submitting.
+  - type: input
+    id: version
+    attributes:
+      label: "Версия прошивки / Firmware version"
+      description: "Настройки → О системе (или только поле `ver` из `python tools/dev.py info`) / Settings → About (or just the `ver` field of `dev.py info`)"
+      placeholder: "v0.7-rc2"
+    validations:
+      required: true
+  - type: dropdown
+    id: board
+    attributes:
+      label: "Плата / Board"
+      options:
+        - "Waveshare ESP32-S3-Touch-LCD-1.85, rev 2.1"
+        - "Waveshare ESP32-S3-Touch-LCD-1.85, rev 2.0 / другая ревизия / other revision"
+        - "Другая плата (1.85B, 1.85C, …) / Other board"
+    validations:
+      required: true
+  - type: input
+    id: extras
+    attributes:
+      label: "Подключено / Attached hardware"
+      description: "Динамик, аккумулятор, питание (USB от ПК, зарядное устройство) / Speaker, battery, power source"
+      placeholder: "динамик 8 Ом 2 Вт, Li-ion 1000 мА·ч, USB от ноутбука"
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Где проблема / Area"
+      options:
+        - "Ассистент / Assistant"
+        - "Переводчик / Translator"
+        - "Интерфейс, экран, тач / UI, display, touch"
+        - "Звук: микрофон, динамик / Audio"
+        - "Wi-Fi, настройка с телефона / Wi-Fi, phone setup"
+        - "Батарея, питание, блокировка / Battery, power, lock screen"
+        - "Сборка, прошивка, OTA / Build, flashing, OTA"
+        - "Dev-консоль, инструменты / Dev console, tools"
+        - "Другое / Other"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Как воспроизвести / Steps to reproduce"
+      placeholder: |
+        1. Режим «Ассистент», громкость 60 %
+        2. Удерживаю BOOT, спрашиваю …
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Что ожидалось и что произошло / Expected vs actual"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Логи / Logs"
+      description: |
+        Например / for example: `python tools/dev.py log 30`, `python tools/dev.py events 30`, `python tools/dev.py info`,
+        `python tools/dev.py ota info`, для батареи / for the battery: `python tools/dev.py bat log 60`.
+        `dev.py info` печатает MAC-адрес платы — удалите поле `mac` перед вставкой / `dev.py info` prints the board's
+        MAC address: delete the `mac` field before pasting.
+        Проверьте, что в логах нет ключей, паролей, имени сети Wi-Fi и адреса ретранслятора / Make sure the logs contain
+        no keys, passwords, Wi-Fi network name or relay address.
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: "Скриншоты / Screenshots"
+      description: "`python tools/dev.py shot shots/bug.png` или фото экрана / or a photo of the screen"
+  - type: input
+    id: idf
+    attributes:
+      label: "ESP-IDF и ОС (если собирали сами) / ESP-IDF and OS (if you built it)"
+      placeholder: "ESP-IDF v6.1, Windows 11"
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: "Проверка / Checklist"
+      options:
+        - label: "Я убрал(а) ключи, пароли, адрес ретранслятора и личные данные / I removed keys, passwords, the relay address and personal data"
+          required: true

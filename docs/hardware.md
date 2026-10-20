@@ -11,7 +11,7 @@ xiaozhi-esp32 board config and Waveshare demo code; each fact cross-checked by a
 
 ESP32-S3R8 (QFN56) rev v0.2, 8 MB in-package **octal** PSRAM (3.3 V), 16 MB external quad flash
 (JEDEC 0x20/0x4018 — second-source part, schematic says W25Q128JVSI), 40 MHz crystal,
-native USB-Serial/JTAG on **COM7**, MAC 7c:0c:5f:56:75:68.
+native USB-Serial/JTAG on **COM7** (MAC address omitted: it is unique per unit).
 
 ## Onboard parts
 
@@ -27,6 +27,7 @@ native USB-Serial/JTAG on **COM7**, MAC 7c:0c:5f:56:75:68.
 | Microphone | ICS-43434 I2S MEMS (rev2.x; older boards MSM261S4030H0R) | I2S1 |
 | TF card | SDMMC 1-bit only (D1/D2 not wired) | SDMMC |
 | Charger / LDO | ETA6098 / ME6217C33M5G (800 mA) | — |
+| Battery header | MX1.25 2-pin for a 3.7 V Li-ion cell, charge and discharge (Waveshare wiki); a separate header takes a rechargeable RTC cell | — |
 | Antenna | ceramic + IPEX1 (resistor-selectable) | — |
 
 ## Pin map
