@@ -372,9 +372,9 @@ python tools/dev.py ota rollback                         # вернуться к
 - [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) — справочные файлы платы, MIT ([third_party/xiaozhi_ref/LICENSE](third_party/xiaozhi_ref/LICENSE))
 
 Спасибо [Espressif](https://www.espressif.com) за ESP-IDF и компоненты, [LVGL](https://lvgl.io) за графическую
-библиотеку, [OpenRouter](https://openrouter.ai) за единый API к моделям, [Waveshare](https://www.waveshare.com) за
+библиотеку, [Waveshare](https://www.waveshare.com) за
 плату и документацию, авторам Inter, Noto CJK и Font Awesome, а также проекту xiaozhi-esp32 за образец
 инициализации платы.
 
-Как помочь проекту — [CONTRIBUTING.md](CONTRIBUTING.md). Безопасность и ключи — [SECURITY.md](SECURITY.md).
+Безопасность и ключи — [SECURITY.md](SECURITY.md).
 История версий — [CHANGELOG.md](CHANGELOG.md).
