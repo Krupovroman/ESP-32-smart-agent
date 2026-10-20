@@ -377,9 +377,9 @@ Fonts and third-party files keep their own licenses:
 - [xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) — board reference files, MIT ([third_party/xiaozhi_ref/LICENSE](third_party/xiaozhi_ref/LICENSE))
 
 Thanks to [Espressif](https://www.espressif.com) for ESP-IDF and its components, [LVGL](https://lvgl.io) for the
-graphics library, [OpenRouter](https://openrouter.ai) for one API to many models, [Waveshare](https://www.waveshare.com)
+graphics library, [Waveshare](https://www.waveshare.com)
 for the board and its documentation, the authors of Inter, Noto CJK and Font Awesome, and the xiaozhi-esp32 project
 for its board bring-up example.
 
-Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Security and keys: [SECURITY.md](SECURITY.md).
+Security and keys: [SECURITY.md](SECURITY.md).
 Version history: [CHANGELOG.md](CHANGELOG.md).
